@@ -59,23 +59,3 @@ mqc := MQConfig{
 
 > This command executes the compiled application.
 
-## Directory Structure
-
-- `mq/`: Contains the MQ connection and message handling logic.
-- `vendor/`: Vendor dependencies.
-
-> Brief explanation of the key directories and their purpose in the project.
-
-## Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request for any changes or enhancements.
-
-> Encourage community involvement and contributions to the project.
-
-## License
-
-This project is licensed under the MIT License.
-
-> Specify the licensing information for the project.
-
-> The annotations in this README file explain the purpose of each section, making it easier to understand the structure and content of the document.
