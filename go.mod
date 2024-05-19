@@ -3,12 +3,12 @@ module mqConnector
 go 1.22.0
 
 require (
+	github.com/IBM/sarama v1.43.2
 	github.com/ibm-messaging/mq-golang/v5 v5.5.4
 	github.com/streadway/amqp v1.1.0
 )
 
 require (
-	github.com/IBM/sarama v1.43.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/eapache/go-resiliency v1.6.0 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20230731223053-c322873962e3 // indirect

@@ -1,0 +1,26 @@
+<!--
+ <copyright
+ notice="lm-source-program"
+ pids="5724-H72"
+ years="2019"
+ crc="0" >
+ Licensed Materials - Property of IBM
+
+ 5724-H72
+
+ (C) Copyright IBM Corp. 2019
+
+ US Government Users Restricted Rights - Use, duplication or
+ disclosure restricted by GSA ADP Schedule Contract with
+ IBM Corp.
+ </copyright>
+-->
+
+<!--
+ SCCSID = "@(#) MQMBID sn=p935-L240201 su=_TSUFq8DwEe6a1qdb8O1Dfw pn=install/swtag/IBM_MQ_Redistributable_Client.mqtag.tag
+-->
+
+<Component>
+<ComponentName>IBM MQ Redistributable Client</ComponentName>
+</Component>
+

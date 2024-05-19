@@ -1,0 +1,172 @@
+#!/bin/sh
+# @(#) MQMBID sn=p935-L240201 su=_TSUFq8DwEe6a1qdb8O1Dfw pn=cmd/remote/runmqakm/runmqakm.sh
+#  <copyright
+#  notice="lm-source-program"
+#  pids="5724-H72"
+#  years="2009,2022"
+#  crc="2040600202" >
+#  Licensed Materials - Property of IBM
+#
+#  5724-H72
+#
+#  (C) Copyright IBM Corp. 2009, 2022 All Rights Reserved.
+#
+#  US Government Users Restricted Rights - Use, duplication or
+#  disclosure restricted by GSA ADP Schedule Contract with
+#  IBM Corp.
+#  </copyright>
+#
+umask 077
+#
+#
+LIB_SFX=""
+UNAME=`uname`
+if [ -L "$0" ]
+  then
+    SCRIPTLOC=`ls -dl "$0" | awk '{print$NF}'`
+  else
+    SCRIPTLOC="$0"
+fi
+RELDIR=`dirname "$SCRIPTLOC"`
+SCRIPTDIR=`cd "$RELDIR" && pwd -P`
+MQINSTDIR=`dirname "$SCRIPTDIR"`
+
+if [ -z "${AMQ_GSKIT_LOCATION}" ]
+  then
+    GSKDIR=${MQINSTDIR}/gskit8
+  else
+    GSKDIR=${AMQ_GSKIT_LOCATION}
+fi
+
+# If we didn't find a gskit8 directory then look in the default locs
+if [ "${UNAME}" = "AIX" ]
+  then
+    MQ_DEFAULT_INSTALLATION_PATH=/usr/mqm
+  else
+    MQ_DEFAULT_INSTALLATION_PATH=/opt/mqm
+fi
+if [ ! -d "${GSKDIR}" ]
+  then
+    GSKDIR=${MQ_DEFAULT_INSTALLATION_PATH}/gskit8
+fi
+
+if [ -x ${GSKDIR}/bin/gsk8capicmd_64 ]
+  then
+    CAPICMD=${GSKDIR}/bin/gsk8capicmd_64
+    LIB_SFX="64"
+  else
+    if [ -x ${GSKDIR}/bin/gsk8capicmd ]
+      then
+        CAPICMD=${GSKDIR}/bin/gsk8capicmd
+      else
+        echo "GSKIT NOT INSTALLED in ${GSKDIR}"
+        exit 99
+    fi
+fi
+
+GSKLIB=${GSKDIR}/lib${LIB_SFX}
+if [ "${UNAME}" = "AIX" ]
+  then
+    LIBPATH=${GSKLIB}:${LIBPATH}
+    export LIBPATH
+  else
+    LD_LIBRARY_PATH=${GSKLIB}:${LD_LIBRARY_PATH}
+    export LD_LIBRARY_PATH
+fi
+
+ARGS=
+ESCAPETYPE=0
+export ARGS
+ADDPQC=0
+SEENPQC=0
+SEENKEYDB=0
+SEENCREATE=0
+SEENCONVERT=0
+SEENCERT=0
+SEENEXPORT=0
+SEENIMPORT=0
+
+while [ $# -gt 0 ]
+do
+   case "$1" in
+      -dn)
+        ARGS="${ARGS} $1"
+        ESCAPETYPE=1
+        export ARGS
+        ;;
+      -pqc)
+        SEENPQC=1
+        ARGS="${ARGS} $1"
+        export ARGS
+        ;;
+      -keydb)
+        SEENKEYDB=1
+        ARGS="${ARGS} $1"
+        export ARGS
+        ;;
+      -create)
+        SEENCREATE=1
+        ARGS="${ARGS} $1"
+        export ARGS
+        ;;
+      -convert)
+        SEENCONVERT=1
+        ARGS="${ARGS} $1"
+        export ARGS
+        ;;
+      -cert)
+        SEENCERT=1
+        ARGS="${ARGS} $1"
+        export ARGS
+        ;;
+      -export)
+        SEENEXPORT=1
+        ARGS="${ARGS} $1"
+        export ARGS
+        ;;
+      -import)
+        SEENIMPORT=1
+        ARGS="${ARGS} $1"
+        export ARGS
+        ;;
+      -*)
+        ARGS="${ARGS} $1"
+        ESCAPETYPE=0
+        export ARGS
+        ;;
+      *)
+        if [ $ESCAPETYPE -eq 1 ]
+          then
+            ARGS="${ARGS} \"$1\""
+          else
+            ARGS="${ARGS} '$1'"
+        fi
+        export ARGS
+        ;;
+   esac
+
+   shift
+done
+
+# If we have not see -pqc but have seen -keydb -create or -keydb -convert or -cert -import or -cert -export
+if [ $SEENPQC -eq 0 ]
+  then
+    if [ $SEENKEYDB -eq 1 ] && [ $SEENCREATE -eq 1 ] || [ $SEENCONVERT -eq 1 ]
+      then
+        ADDPQC=1
+    elif [ $SEENCERT -eq 1 ] && [ $SEENIMPORT -eq 1 ] || [ $SEENEXPORT -eq 1 ]
+      then
+        ADDPQC=1
+    fi
+fi 
+
+# GSKit 8.0.55.28 made pqc default to true, but this breaks IBM Java
+# Until IBM Java catches up we will switch this back when appropriate.
+if [ $ADDPQC -eq 1 ]
+  then 
+    ARGS="${ARGS} -pqc false"
+    export ARGS
+fi
+
+eval "${CAPICMD}" "${ARGS}"
+exit $?

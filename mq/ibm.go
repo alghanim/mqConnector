@@ -12,6 +12,7 @@ type IBMMQConnector struct {
 	channel      string
 	user         string
 	password     string
+	queueName    string
 	conn         *ibmmq.MQQueueManager
 	queue        *ibmmq.MQObject
 }
@@ -38,13 +39,15 @@ func (c *IBMMQConnector) Connect() error {
 		return fmt.Errorf("error connecting to queue manager: %v", err)
 	}
 	c.conn = &qMgrObject
-	return nil
+
+	// Open the queue
+	return c.OpenQueue()
 }
 
-func (c *IBMMQConnector) OpenQueue(queueName string) error {
+func (c *IBMMQConnector) OpenQueue() error {
 	// Specify the options for opening the queue
 	od := ibmmq.NewMQOD()
-	od.ObjectName = queueName
+	od.ObjectName = c.queueName
 	od.ObjectType = ibmmq.MQOT_Q
 
 	openOptions := ibmmq.MQOO_OUTPUT | ibmmq.MQOO_INPUT_AS_Q_DEF
@@ -110,9 +113,9 @@ func (c *IBMMQConnector) ReceiveMessage() ([]byte, error) {
 	buffer := make([]byte, 1024)
 
 	// Get the message
-	_, err := c.queue.Get(msgDesc, gmo, buffer)
+	datalen, err := c.queue.Get(msgDesc, gmo, buffer)
 	if err != nil {
 		return nil, fmt.Errorf("error getting message: %v", err)
 	}
-	return buffer[:msgDesc.OriginalLength], nil
+	return buffer[:datalen], nil
 }

@@ -28,6 +28,7 @@ func NewMQConnector(queueType QueueType, config map[string]string) (MQConnector,
 			channel:      config["channel"],
 			user:         config["user"],
 			password:     config["password"],
+			queueName:    config["queueName"],
 		}, nil
 	case RabbitMQ:
 		return &RabbitMQConnector{
