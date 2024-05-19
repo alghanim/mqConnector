@@ -41,6 +41,8 @@ mqc := MQConfig{
     Password:     "password",
 }
 
+```
+
 ## Usage
 
 1. Build the application:
