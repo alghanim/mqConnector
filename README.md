@@ -1,17 +1,23 @@
 # mqConnector
 
-`mqConnector` is a Go-based connector for interfacing with IBM MQ systems. This repository provides a simple implementation to connect, send, and receive messages from an IBM MQ queue.
+`mqConnector` is a Go-based connector for interfacing with multiple messaging systems, including IBM MQ, RabbitMQ, and Kafka. This repository provides a simple implementation to connect, send, and receive messages from various queue types.
 
 ## Features
 
-- Connect to IBM MQ
+- Connect to multiple messaging systems (IBM MQ, RabbitMQ, Kafka)
 - Send messages to a queue
 - Receive messages from a queue
+
+> This section gives an overview of the key functionalities provided by the mqConnector.
 
 ## Prerequisites
 
 - Go 1.15 or later
-- IBM MQ Server
+- IBM MQ Server (if using IBM MQ)
+- RabbitMQ Server (if using RabbitMQ)
+- Kafka Server (if using Kafka)
+
+> List the software and versions required to use the mqConnector.
 
 ## Installation
 
@@ -26,21 +32,39 @@
     go mod tidy
     ```
 
+> Step-by-step instructions to download and set up the project on your local machine.
+
 ## Configuration
 
-Edit the `main.go` file to configure your MQ connection settings:
+Edit the configuration to match your messaging system. Below is an example for IBM MQ:
 
 ```go
-mqc := MQConfig{
-    QueueManager: "QM1",
-    QueueName:    "QUEUE1",
-    Channel:      "CHANNEL1",
-    Host:         "localhost",
-    Port:         "1414",
-    User:         "admin",
-    Password:     "password",
-}
+mqc := NewMQConnector(IBM, map[string]string{
+    "queueManager": "QM1",
+    "connName":     "localhost(1414)",
+    "channel":      "CHANNEL1",
+    "user":         "admin",
+    "password":     "password",
+})
 
+```
+
+For RabbitMQ:
+
+```go
+mqc := NewMQConnector(RabbitMQ, map[string]string{
+    "url":       "amqp://guest:guest@localhost:5672/",
+    "queueName": "testQueue",
+})
+```
+
+For Kafka:
+
+```go
+mqc := NewMQConnector(Kafka, map[string]string{
+    "brokers": "localhost:9092",
+    "topic":   "testTopic",
+})
 ```
 
 ## Usage
@@ -58,4 +82,3 @@ mqc := MQConfig{
     ```
 
 > This command executes the compiled application.
-
