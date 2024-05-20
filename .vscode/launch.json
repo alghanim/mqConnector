@@ -12,7 +12,7 @@
                 "CGO_CFLAGS": "-I${workspaceFolder}/ibmmq_dist/inc",
                 "CGO_LDFLAGS": "-L${workspaceFolder}/ibmmq_dist/lib64 -Wl,-rpath,${workspaceFolder}/ibmmq_dist/lib64"
             },
-            "args": []
+            "args": ["serve"]
         }
     ]
 }

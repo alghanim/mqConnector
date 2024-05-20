@@ -1,49 +1,60 @@
 package main
 
 import (
-	"fmt"
-	"mqConnector/mq"
+	"log"
+	"mqConnector/Data"
+	"mqConnector/routes"
 )
 
 func main() {
-	config := map[string]string{
-		"queueManager": "QM1",
-		"connName":     "127.0.0.1(1414)",
-		"channel":      "DEV.ADMIN.SVRCONN",
-		"user":         "admin",
-		"password":     "password",
-		"queueName":    "DEV.QUEUE.1",
+
+	app := Data.StartDB()
+	// Initialize routes
+	routes.InitRoutes(app)
+
+	// Start server
+	if err := app.Start(); err != nil {
+		log.Fatal(err)
 	}
 
-	// Example for IBM MQ
-	ibmConnector, err := mq.NewMQConnector(mq.IBM, config)
-	if err != nil {
-		fmt.Printf("Failed to create IBM MQ connector: %v\n", err)
-		return
-	}
+	// config := map[string]string{
+	// 	"queueManager": "QM1",
+	// 	"connName":     "127.0.0.1(1414)",
+	// 	"channel":      "DEV.ADMIN.SVRCONN",
+	// 	"user":         "admin",
+	// 	"password":     "password",
+	// 	"queueName":    "DEV.QUEUE.1",
+	// }
 
-	err = ibmConnector.Connect()
-	if err != nil {
-		fmt.Printf("Failed to connect to IBM MQ: %v\n", err)
-		return
-	}
-
-	defer ibmConnector.Disconnect()
-
-	// Send a message
-	// err = ibmConnector.SendMessage([]byte("Hello IBM MQ"))
+	// // Example for IBM MQ
+	// ibmConnector, err := mq.NewMQConnector(mq.IBM, config)
 	// if err != nil {
-	// 	fmt.Printf("Failed to send message: %v\n", err)
+	// 	fmt.Printf("Failed to create IBM MQ connector: %v\n", err)
 	// 	return
 	// }
 
-	// Receive a message
-	msg, err := ibmConnector.ReceiveMessage()
-	if err != nil {
-		fmt.Printf("Failed to receive message: %v\n", err)
-		return
-	}
-	fmt.Printf("Received message from IBM MQ: %s\n", string(msg))
+	// err = ibmConnector.Connect()
+	// if err != nil {
+	// 	fmt.Printf("Failed to connect to IBM MQ: %v\n", err)
+	// 	return
+	// }
+
+	// defer ibmConnector.Disconnect()
+
+	// // Send a message
+	// // err = ibmConnector.SendMessage([]byte("Hello IBM MQ"))
+	// // if err != nil {
+	// // 	fmt.Printf("Failed to send message: %v\n", err)
+	// // 	return
+	// // }
+
+	// // Receive a message
+	// msg, err := ibmConnector.ReceiveMessage()
+	// if err != nil {
+	// 	fmt.Printf("Failed to receive message: %v\n", err)
+	// 	return
+	// }
+	// fmt.Printf("Received message from IBM MQ: %s\n", string(msg))
 
 	// // Example for RabbitMQ
 	// rabbitConnector, err := mq.NewMQConnector(mq.RabbitMQ, config)

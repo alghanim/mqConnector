@@ -2,6 +2,7 @@ package mq
 
 import (
 	"fmt"
+	"log"
 )
 
 type MQConnector interface {
@@ -42,5 +43,19 @@ func NewMQConnector(queueType QueueType, config map[string]string) (MQConnector,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported queue type")
+	}
+}
+
+func GetQueueType(queueType string) QueueType {
+	switch queueType {
+	case "IBM":
+		return 0
+	case "RabbitMQ":
+		return 1
+	case "Kafka":
+		return 2
+	default:
+		log.Fatalf("Unsupported queue type: %v", queueType)
+		return -1
 	}
 }

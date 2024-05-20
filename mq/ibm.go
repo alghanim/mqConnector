@@ -108,7 +108,7 @@ func (c *IBMMQConnector) ReceiveMessage() ([]byte, error) {
 
 	// Set the get message options
 	gmo.Options = ibmmq.MQGMO_WAIT
-	gmo.WaitInterval = 3000 // Wait for 3 seconds
+	// gmo.WaitInterval = 3000 // Wait for 3 seconds
 
 	buffer := make([]byte, 1024)
 
