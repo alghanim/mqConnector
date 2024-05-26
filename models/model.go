@@ -26,6 +26,5 @@ type MQConfig struct {
 	URL          string `db:"url" json:"url"`
 	Brokers      string `db:"brokers" json:"brokers"`
 	Topic        string `db:"topic" json:"topic"`
-	Source       string `db:"source" json:"source"`
-	Destination  string `db:"destination" json:"destination"`
+	OwnerName    string `db:"ownerName" json:"ownerName"`
 }

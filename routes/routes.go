@@ -8,13 +8,12 @@ import (
 	"mqConnector/Data"
 	tools "mqConnector/Tools"
 	"mqConnector/models"
-	"mqConnector/mq"
 	"net/http"
+	"strings"
 
 	"github.com/clbanning/mxj/v2"
 	"github.com/pocketbase/dbx"
 	pbmodels "github.com/pocketbase/pocketbase/models"
-	"github.com/pocketbase/pocketbase/models/schema"
 
 	"github.com/labstack/echo/v5"
 	"github.com/pocketbase/pocketbase"
@@ -24,125 +23,125 @@ import (
 
 func InitRoutes(app *pocketbase.PocketBase) {
 
-	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
-		// Check if the collection exists
+	// app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
+	// 	// Check if the collection exists
 
-		collections, err := app.Dao().FindCollectionByNameOrId("mq_config")
-		if err == nil {
-			if collections.Name == "mq_config" {
+	// 	collections, err := app.Dao().FindCollectionByNameOrId("mq_config")
+	// 	if err == nil {
+	// 		if collections.Name == "mq_config" {
 
-				var mqConfigs []models.MQConfig
-				err = app.DB().Select("*").From(collections.Name).All(&mqConfigs)
-				if err != nil {
-					return err
-				}
+	// 			var mqConfigs []models.MQConfig
+	// 			err = app.DB().Select("*").From(collections.Name).All(&mqConfigs)
+	// 			if err != nil {
+	// 				return err
+	// 			}
 
-				for _, mqConfig := range mqConfigs {
+	// 			for _, mqConfig := range mqConfigs {
 
-					config := map[string]string{
-						"queueManager": mqConfig.QueueManager,
-						"connName":     mqConfig.ConnName,
-						"channel":      mqConfig.Channel,
-						"user":         mqConfig.User,
-						"password":     mqConfig.Password,
-						"queueName":    mqConfig.QueueName,
-						"url":          mqConfig.URL,
-						"brokers":      mqConfig.Brokers,
-						"topic":        mqConfig.Topic,
-					}
+	// 				config := map[string]string{
+	// 					"queueManager": mqConfig.QueueManager,
+	// 					"connName":     mqConfig.ConnName,
+	// 					"channel":      mqConfig.Channel,
+	// 					"user":         mqConfig.User,
+	// 					"password":     mqConfig.Password,
+	// 					"queueName":    mqConfig.QueueName,
+	// 					"url":          mqConfig.URL,
+	// 					"brokers":      mqConfig.Brokers,
+	// 					"topic":        mqConfig.Topic,
+	// 				}
 
-					var mqConnector mq.MQConnector
-					mqConnector, err = mq.NewMQConnector(mq.GetQueueType(mqConfig.Type), config)
-					if err != nil {
-						log.Fatalf("Failed to create MQ connector: %v", err)
-					}
-					// Connect to MQ
+	// 				var mqConnector mq.MQConnector
+	// 				mqConnector, err = mq.NewMQConnector(mq.GetQueueType(mqConfig.Type), config)
+	// 				if err != nil {
+	// 					log.Fatalf("Failed to create MQ connector: %v", err)
+	// 				}
+	// 				// Connect to MQ
 
-					go func() {
+	// 				go func() {
 
-						err = mqConnector.Connect()
-						if err != nil {
-							log.Fatalf("Failed to connect to MQ: %v", err)
-						}
-						defer mqConnector.Disconnect()
-						for {
-							msg, err := mqConnector.ReceiveMessage()
-							if err != nil {
-								log.Fatalf("Failed to receive message: %v", err)
-							}
-							fmt.Printf("Received message: %s\n", string(msg))
-						}
-					}()
+	// 					err = mqConnector.Connect()
+	// 					if err != nil {
+	// 						log.Fatalf("Failed to connect to MQ: %v", err)
+	// 					}
+	// 					defer mqConnector.Disconnect()
+	// 					for {
+	// 						msg, err := mqConnector.ReceiveMessage()
+	// 						if err != nil {
+	// 							log.Fatalf("Failed to receive message: %v", err)
+	// 						}
+	// 						fmt.Printf("Received message: %s\n", string(msg))
+	// 					}
+	// 				}()
 
-				}
-				return nil // Collection already exists
-			}
-			return nil
-		} else {
-			// Create the collection if it doesn't exist
-			collection := &pbmodels.Collection{
-				Name: "mq_config",
-				Schema: schema.NewSchema(
-					&schema.SchemaField{
-						Name: "type",
-						Type: schema.FieldTypeText,
-					},
-					&schema.SchemaField{
-						Name: "queueManager",
-						Type: schema.FieldTypeText,
-					},
-					&schema.SchemaField{
-						Name: "connName",
-						Type: schema.FieldTypeText,
-					},
-					&schema.SchemaField{
-						Name: "channel",
-						Type: schema.FieldTypeText,
-					},
-					&schema.SchemaField{
-						Name: "user",
-						Type: schema.FieldTypeText,
-					},
-					&schema.SchemaField{
-						Name: "password",
-						Type: schema.FieldTypeText,
-					},
-					&schema.SchemaField{
-						Name: "queueName",
-						Type: schema.FieldTypeText,
-					},
-					&schema.SchemaField{
-						Name: "url",
-						Type: schema.FieldTypeText,
-					},
-					&schema.SchemaField{
-						Name: "brokers",
-						Type: schema.FieldTypeText,
-					},
-					&schema.SchemaField{
-						Name: "topic",
-						Type: schema.FieldTypeText,
-					},
-					&schema.SchemaField{
-						Name: "source",
-						Type: schema.FieldTypeText,
-					},
-					&schema.SchemaField{
-						Name: "destination",
-						Type: schema.FieldTypeText,
-					},
-				),
-			}
+	// 			}
+	// 			return nil // Collection already exists
+	// 		}
+	// 		return nil
+	// 	} else {
+	// 		// Create the collection if it doesn't exist
+	// 		collection := &pbmodels.Collection{
+	// 			Name: "mq_config",
+	// 			Schema: schema.NewSchema(
+	// 				&schema.SchemaField{
+	// 					Name: "type",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 				&schema.SchemaField{
+	// 					Name: "queueManager",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 				&schema.SchemaField{
+	// 					Name: "connName",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 				&schema.SchemaField{
+	// 					Name: "channel",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 				&schema.SchemaField{
+	// 					Name: "user",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 				&schema.SchemaField{
+	// 					Name: "password",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 				&schema.SchemaField{
+	// 					Name: "queueName",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 				&schema.SchemaField{
+	// 					Name: "url",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 				&schema.SchemaField{
+	// 					Name: "brokers",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 				&schema.SchemaField{
+	// 					Name: "topic",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 				&schema.SchemaField{
+	// 					Name: "source",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 				&schema.SchemaField{
+	// 					Name: "destination",
+	// 					Type: schema.FieldTypeText,
+	// 				},
+	// 			),
+	// 		}
 
-			err = app.Dao().SaveCollection(collection)
-			if err != nil {
-				return err
-			}
+	// 		err = app.Dao().SaveCollection(collection)
+	// 		if err != nil {
+	// 			return err
+	// 		}
 
-		}
+	// 	}
 
-		return nil
-	})
+	// 	return nil
+	// })
 	app.OnAfterBootstrap().Add(func(e *core.BootstrapEvent) error {
 		collections, err := app.Dao().FindCollectionsByType(pbmodels.CollectionTypeBase)
 		if err != nil {
@@ -153,11 +152,14 @@ func InitRoutes(app *pocketbase.PocketBase) {
 		for _, col := range collections {
 
 			var configPaths []models.ConfigEntry
-			if col.Name != "mq_config" {
 
+			if col.Name != "mq_config" || !strings.Contains(col.Name, "MQ") || !strings.Contains(col.Name, "config") {
+
+				fmt.Println(col.Name)
 				err := app.DB().Select("FieldPath", "Enabled").From(col.Name).Where(dbx.NewExp("Enabled = False")).All(&configPaths)
 				if err != nil {
-					return err
+					// return err
+					continue
 				}
 				collectionsMap[col.Name] = configPaths
 			}
