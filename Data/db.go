@@ -35,17 +35,13 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 		ListRule:   types.Pointer(""),
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
-				Name:        "T_NAME",
-				Type:        schema.FieldTypeText,
-				Presentable: true,
-			},
-			&schema.SchemaField{
-				Name: "FieldPath",
+				Name: "T_NAME",
 				Type: schema.FieldTypeText,
 			},
 			&schema.SchemaField{
-				Name: "Enabled",
-				Type: schema.FieldTypeBool,
+				Name:        "FieldPath",
+				Type:        schema.FieldTypeText,
+				Presentable: true,
 			},
 		),
 	}
@@ -86,9 +82,26 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 	mqTypeCollection = nil
 	mqTypeCollection, err = app.Dao().FindCollectionByNameOrId("MQ_TYPES")
 
-	if err != nil {
+	record := models.NewRecord(mqTypeCollection)
+
+	record.Set("MQ_ID", 0)
+	record.Set("TYPE", "IBM")
+	if err := app.Dao().SaveRecord(record); err != nil {
 		return err
 	}
+	record = models.NewRecord(mqTypeCollection)
+	record.Set("MQ_ID", 1)
+	record.Set("TYPE", "RabbitMQ")
+	if err := app.Dao().SaveRecord(record); err != nil {
+		return err
+	}
+	record = models.NewRecord(mqTypeCollection)
+	record.Set("MQ_ID", 2)
+	record.Set("TYPE", "Kafka")
+	if err := app.Dao().SaveRecord(record); err != nil {
+		return err
+	}
+
 	mqsCollection := &models.Collection{
 		Name:       "MQS",
 		CreateRule: types.Pointer(""),
@@ -96,7 +109,11 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
 				Name: "type",
-				Type: schema.FieldTypeText,
+				Type: schema.FieldTypeRelation,
+				Options: schema.RelationOptions{
+					CollectionId: mqTypeCollection.Id,
+					MaxSelect:    types.Pointer(1),
+				},
 			},
 			&schema.SchemaField{
 				Name: "queueManager",
@@ -136,12 +153,8 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 			},
 			&schema.SchemaField{
 				Name:        "ownerName",
-				Type:        schema.FieldTypeRelation,
+				Type:        schema.FieldTypeText,
 				Presentable: true,
-				Options: schema.RelationOptions{
-					CollectionId:  mqTypeCollection.Id,
-					CascadeDelete: true,
-				},
 			},
 		),
 	}
@@ -168,6 +181,7 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 				Type: schema.FieldTypeRelation,
 				Options: schema.RelationOptions{
 					CollectionId: mqsCollection.Id,
+					MaxSelect:    types.Pointer(1), // 0 indicates no limit, allowing multiple selections
 				},
 			},
 			&schema.SchemaField{
@@ -175,15 +189,22 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 				Type: schema.FieldTypeRelation,
 				Options: schema.RelationOptions{
 					CollectionId: mqsCollection.Id,
+					MaxSelect:    types.Pointer(1), // 0 indicates no limit, allowing multiple selections
 				},
 			},
 			&schema.SchemaField{
-				Name: "Template",
-				Type: schema.FieldTypeRelation,
-				Options: schema.RelationOptions{
-					CollectionId: templateCollection.Id,
-				},
+				Name:        "connectionFriendlyName",
+				Type:        schema.FieldTypeText,
+				Presentable: true,
 			},
+			// &schema.SchemaField{
+			// 	Name: "FieldPath",
+			// 	Type: schema.FieldTypeRelation,
+			// 	Options: schema.RelationOptions{
+			// 		CollectionId: templateCollection.Id,
+			// 		MaxSelect:    nil,
+			// 	},
+			// },
 		),
 	}
 
@@ -191,6 +212,42 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 	if err != nil {
 		return err
 	}
+
+	mqLinksCollection = nil
+	mqLinksCollection, err = app.Dao().FindCollectionByNameOrId("MQ_LINKS")
+	if err != nil {
+		return err
+	}
+
+	mqFiltersCollection := &models.Collection{
+		Name: "MQ_FILTERS",
+		Type: models.CollectionTypeBase,
+		Schema: schema.NewSchema(
+			&schema.SchemaField{
+
+				Name: "connection",
+				Type: schema.FieldTypeRelation,
+				Options: schema.RelationOptions{
+					CollectionId: mqLinksCollection.Id,
+					MaxSelect:    types.Pointer(1),
+				},
+			},
+			&schema.SchemaField{
+				Name: "FieldPath",
+				Type: schema.FieldTypeRelation,
+				Options: schema.RelationOptions{
+					CollectionId: templateCollection.Id,
+					MaxSelect:    nil,
+				},
+			},
+		),
+	}
+
+	err = app.Dao().SaveCollection(mqFiltersCollection)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 func checkMainCollections(app *pocketbase.PocketBase) error {

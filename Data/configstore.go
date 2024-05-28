@@ -5,6 +5,7 @@ import (
 	"mqConnector/models"
 	"sync"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 )
 
@@ -65,7 +66,7 @@ func AddCollection(app *pocketbase.PocketBase, collectionName string) error {
 
 	// Query the database for the new collection's entries
 	var configPaths []models.ConfigEntry
-	err := app.DB().Select("FieldPath", "Enabled").From(collectionName).All(&configPaths)
+	err := app.DB().Select("FieldPath").From("Templates").Where(dbx.NewExp("T_NAME = {:tname}", dbx.Params{"tname": collectionName})).All(&configPaths)
 	if err != nil {
 		return err
 	}

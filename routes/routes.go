@@ -8,11 +8,11 @@ import (
 	"mqConnector/Data"
 	tools "mqConnector/Tools"
 	"mqConnector/models"
+	"mqConnector/mq"
 	"net/http"
 	"strings"
 
 	"github.com/clbanning/mxj/v2"
-	"github.com/pocketbase/dbx"
 	pbmodels "github.com/pocketbase/pocketbase/models"
 
 	"github.com/labstack/echo/v5"
@@ -23,126 +23,151 @@ import (
 
 func InitRoutes(app *pocketbase.PocketBase) {
 
-	// app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
-	// 	// Check if the collection exists
+	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
+		// Check if the collection exists
 
-	// 	collections, err := app.Dao().FindCollectionByNameOrId("mq_config")
-	// 	if err == nil {
-	// 		if collections.Name == "mq_config" {
+		collections, err := app.Dao().FindCollectionByNameOrId("MQ_LINKS")
+		if err == nil {
+			if collections.Name == "MQ_LINKS" {
 
-	// 			var mqConfigs []models.MQConfig
-	// 			err = app.DB().Select("*").From(collections.Name).All(&mqConfigs)
-	// 			if err != nil {
-	// 				return err
-	// 			}
+				// var source models.MQConfig
+				// var destination []models.MQConfig
+				// var mqCon map[string]interface{}
+				query := app.Dao().RecordQuery(collections.Name)
+				if err != nil {
+					return err
+				}
 
-	// 			for _, mqConfig := range mqConfigs {
+				records := []*pbmodels.Record{}
+				if err := query.All(&records); err != nil {
+					return err
+				}
 
-	// 				config := map[string]string{
-	// 					"queueManager": mqConfig.QueueManager,
-	// 					"connName":     mqConfig.ConnName,
-	// 					"channel":      mqConfig.Channel,
-	// 					"user":         mqConfig.User,
-	// 					"password":     mqConfig.Password,
-	// 					"queueName":    mqConfig.QueueName,
-	// 					"url":          mqConfig.URL,
-	// 					"brokers":      mqConfig.Brokers,
-	// 					"topic":        mqConfig.Topic,
-	// 				}
+				for _, record := range records {
+					if errs := app.Dao().ExpandRecord(record, []string{"source", "destination"}, nil); len(errs) > 0 {
+						return fmt.Errorf("failed to expand: %v", errs)
+					}
 
-	// 				var mqConnector mq.MQConnector
-	// 				mqConnector, err = mq.NewMQConnector(mq.GetQueueType(mqConfig.Type), config)
-	// 				if err != nil {
-	// 					log.Fatalf("Failed to create MQ connector: %v", err)
-	// 				}
-	// 				// Connect to MQ
+					expandedRecord := record.Expand()
 
-	// 				go func() {
+					sourceRecord, ok := expandedRecord["source"].(*pbmodels.Record)
+					if !ok {
+						return err
+					}
 
-	// 					err = mqConnector.Connect()
-	// 					if err != nil {
-	// 						log.Fatalf("Failed to connect to MQ: %v", err)
-	// 					}
-	// 					defer mqConnector.Disconnect()
-	// 					for {
-	// 						msg, err := mqConnector.ReceiveMessage()
-	// 						if err != nil {
-	// 							log.Fatalf("Failed to receive message: %v", err)
-	// 						}
-	// 						fmt.Printf("Received message: %s\n", string(msg))
-	// 					}
-	// 				}()
+					sourceConfig := map[string]string{
 
-	// 			}
-	// 			return nil // Collection already exists
-	// 		}
-	// 		return nil
-	// 	} else {
-	// 		// Create the collection if it doesn't exist
-	// 		collection := &pbmodels.Collection{
-	// 			Name: "mq_config",
-	// 			Schema: schema.NewSchema(
-	// 				&schema.SchemaField{
-	// 					Name: "type",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 				&schema.SchemaField{
-	// 					Name: "queueManager",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 				&schema.SchemaField{
-	// 					Name: "connName",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 				&schema.SchemaField{
-	// 					Name: "channel",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 				&schema.SchemaField{
-	// 					Name: "user",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 				&schema.SchemaField{
-	// 					Name: "password",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 				&schema.SchemaField{
-	// 					Name: "queueName",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 				&schema.SchemaField{
-	// 					Name: "url",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 				&schema.SchemaField{
-	// 					Name: "brokers",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 				&schema.SchemaField{
-	// 					Name: "topic",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 				&schema.SchemaField{
-	// 					Name: "source",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 				&schema.SchemaField{
-	// 					Name: "destination",
-	// 					Type: schema.FieldTypeText,
-	// 				},
-	// 			),
-	// 		}
+						"queueManager": sourceRecord.GetString("queueManager"),
+						"connName":     sourceRecord.GetString("connName"),
+						"channel":      sourceRecord.GetString("channel"),
+						"user":         sourceRecord.GetString("user"),
+						"password":     sourceRecord.GetString("password"),
+						"queueName":    sourceRecord.GetString("queueName"),
+						"url":          sourceRecord.GetString("url"),
+						"brokers":      sourceRecord.GetString("brokers"),
+						"topic":        sourceRecord.GetString("topic"),
+					}
 
-	// 		err = app.Dao().SaveCollection(collection)
-	// 		if err != nil {
-	// 			return err
-	// 		}
+					// connectionType := sourceRecord["type"]
+					if errs := app.Dao().ExpandRecord(sourceRecord, []string{"type"}, nil); len(errs) > 0 {
+						return err
+					}
 
-	// 	}
+					sourceConType := sourceRecord.Expand()
+					SourceConnnectionType, ok := sourceConType["type"].(*pbmodels.Record)
+					if !ok {
+						return err
+					}
 
-	// 	return nil
-	// })
-	app.OnAfterBootstrap().Add(func(e *core.BootstrapEvent) error {
+					sourceConfig["type"] = SourceConnnectionType.GetString("TYPE")
+
+					destinationRecord, ok := expandedRecord["destination"].(*pbmodels.Record)
+					if !ok {
+						return err
+					}
+
+					destinationConfig := map[string]string{
+						"queueManager": destinationRecord.GetString("queueManager"),
+						"connName":     destinationRecord.GetString("connName"),
+						"channel":      destinationRecord.GetString("channel"),
+						"user":         destinationRecord.GetString("user"),
+						"password":     destinationRecord.GetString("password"),
+						"queueName":    destinationRecord.GetString("queueName"),
+						"url":          destinationRecord.GetString("url"),
+						"brokers":      destinationRecord.GetString("brokers"),
+						"topic":        destinationRecord.GetString("topic"),
+					}
+					// connectionFriendlyName := sourceRecord.GetString("user")
+
+					// fieldPaths := expandedRecord["FieldPath"].([]*pbmodels.Record)
+
+					if errs := app.Dao().ExpandRecord(destinationRecord, []string{"type"}, nil); len(errs) > 0 {
+						return err
+					}
+
+					destinationConType := sourceRecord.Expand()
+					destinationConnnectionType, ok := destinationConType["type"].(*pbmodels.Record)
+					if !ok {
+						return err
+					}
+
+					destinationConfig["type"] = destinationConnnectionType.GetString("TYPE")
+					log.Println(sourceConfig, destinationConfig)
+					var sourceMQConnector mq.MQConnector
+					sourceMQConnector, err = mq.NewMQConnector(mq.GetQueueType(sourceConfig["type"]), sourceConfig)
+					if err != nil {
+						log.Fatalf("Failed to create MQ connector: %v", err)
+					}
+					// Connect to MQ
+
+					var destinationMQConnector mq.MQConnector
+					destinationMQConnector, err = mq.NewMQConnector(mq.GetQueueType(destinationConfig["type"]), destinationConfig)
+					if err != nil {
+						log.Fatalf("Failed to create MQ connector: %v", err)
+					}
+
+					go func() {
+
+						err = sourceMQConnector.Connect()
+						if err != nil {
+							log.Fatalf("Failed to connect to MQ: %v", err)
+						}
+						defer sourceMQConnector.Disconnect()
+						for {
+							msg, err := sourceMQConnector.ReceiveMessage()
+							if err != nil {
+								log.Fatalf("Failed to receive message: %v", err)
+							}
+							fmt.Printf("Received message: %s\n", string(msg))
+
+							err = destinationMQConnector.Connect()
+							if err != nil {
+								log.Fatalf("Failed to connect to MQ: %v", err)
+							}
+
+							defer destinationMQConnector.Disconnect()
+
+							if msg != nil {
+								err = destinationMQConnector.SendMessage(msg)
+								if err != nil {
+									log.Fatalf("Failed to send message: %v", err)
+								}
+							}
+
+						}
+					}()
+
+				}
+
+			}
+
+		} else {
+			return err
+		}
+
+		return nil
+	})
+	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		collections, err := app.Dao().FindCollectionsByType(pbmodels.CollectionTypeBase)
 		if err != nil {
 			return err
@@ -153,10 +178,10 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 			var configPaths []models.ConfigEntry
 
-			if col.Name != "mq_config" || !strings.Contains(col.Name, "MQ") || !strings.Contains(col.Name, "config") {
+			if col.Name != "mq_config" && !strings.Contains(col.Name, "MQ") && !strings.Contains(col.Name, "config") {
 
 				fmt.Println(col.Name)
-				err := app.DB().Select("FieldPath", "Enabled").From(col.Name).Where(dbx.NewExp("Enabled = False")).All(&configPaths)
+				err := app.DB().Select("FieldPath").From(col.Name).All(&configPaths)
 				if err != nil {
 					// return err
 					continue
@@ -261,6 +286,7 @@ func InitRoutes(app *pocketbase.PocketBase) {
 				if err != nil {
 					return err
 				}
+				// fname := c.FormValue("fname")
 
 				src, err := file.Open()
 				if err != nil {
@@ -278,16 +304,16 @@ func InitRoutes(app *pocketbase.PocketBase) {
 					return err
 				}
 
-				if rootTag != "" {
-					err := Data.CreateCollection(rootTag, app)
-					if err != nil {
-						return err
-					}
-				} else {
-					return fmt.Errorf("collection exists")
-				}
+				// if rootTag != "" {
+				// 	err := Data.CreateCollection(rootTag, app)
+				// 	if err != nil {
+				// 		return err
+				// 	}
+				// } else {
+				// 	return fmt.Errorf("collection exists")
+				// }
 
-				collection, err := app.Dao().FindCollectionByNameOrId(rootTag)
+				collection, err := app.Dao().FindCollectionByNameOrId("Templates")
 				if err != nil {
 					return err
 				}
@@ -296,8 +322,9 @@ func InitRoutes(app *pocketbase.PocketBase) {
 				for _, config := range paths {
 					record := pbmodels.NewRecord(collection)
 
-					record.Set("FieldPath", config.FieldPath)
-					record.Set("Enabled", config.Enabled)
+					record.Set("FieldPath", rootTag+"."+config.FieldPath)
+					// record.Set("Enabled", config.Enabled)
+					record.Set("T_NAME", rootTag)
 					if err := app.Dao().SaveRecord(record); err != nil {
 						return err
 					}
@@ -320,6 +347,58 @@ func InitRoutes(app *pocketbase.PocketBase) {
 	})
 
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
+
+		e.Router.AddRoute(echo.Route{
+			Method: http.MethodGet,
+			Path:   "/api/connections/:connection",
+			Handler: func(c echo.Context) error {
+
+				conn := c.PathParam("connection")
+				record, err := app.Dao().FindFirstRecordByData("MQ_FILTERS", "name", conn)
+				if err != nil {
+
+					return err
+				}
+
+				if errs := app.Dao().ExpandRecord(record, []string{"FieldPath", "connection"}, nil); len(errs) > 0 {
+					return fmt.Errorf("failed to expand: %v", errs)
+				}
+
+				expandedRecord := record.Expand()
+
+				connectionRecord, ok := expandedRecord["connection"].(*pbmodels.Record)
+				if !ok {
+					return c.JSON(http.StatusInternalServerError, map[string]string{
+						"error": "failed to convert connection record",
+					})
+				}
+				connectionFriendlyName := connectionRecord.GetString("connectionFriendlyName")
+
+				fieldPaths := expandedRecord["FieldPath"].([]*pbmodels.Record)
+
+				// Construct the custom response
+				customResponse := map[string]interface{}{
+					"Connection": map[string]interface{}{
+						"connectionFriendlyName": connectionFriendlyName,
+					},
+					"FieldPaths": []map[string]interface{}{},
+				}
+
+				for _, fieldPath := range fieldPaths {
+					fp := fieldPath
+					customResponse["FieldPaths"] = append(customResponse["FieldPaths"].([]map[string]interface{}), map[string]interface{}{
+						"FieldPath": fp.GetString("FieldPath"),
+						"T_NAME":    fp.GetString("T_NAME"),
+					})
+				}
+
+				return c.JSON(http.StatusOK, customResponse)
+			},
+			Middlewares: []echo.MiddlewareFunc{
+				apis.ActivityLogger(app),
+			},
+		},
+		)
 		return nil
 	})
 
@@ -349,19 +428,19 @@ func InitRoutes(app *pocketbase.PocketBase) {
 	// 	}
 	// 	return nil
 	// })
-	app.OnRecordAfterUpdateRequest().Add(func(e *core.RecordUpdateEvent) error {
-		col := e.Record.Collection().Name
-		configs := []models.ConfigEntry{}
-		query := fmt.Sprintf("SELECT FieldPath,Enabled FROM %s where Enabled = False", col)
-		err := app.Dao().DB().
-			NewQuery(query).
-			All(&configs)
-		if err != nil {
-			return err
-		}
-		Data.UpdateCollection(col, configs)
+	// app.OnRecordAfterUpdateRequest().Add(func(e *core.RecordUpdateEvent) error {
+	// 	col := e.Record.Collection().Name
+	// 	configs := []models.ConfigEntry{}
+	// 	query := fmt.Sprintf("SELECT FieldPath,Enabled FROM %s where Enabled = False", col)
+	// 	err := app.Dao().DB().
+	// 		NewQuery(query).
+	// 		All(&configs)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	Data.UpdateCollection(col, configs)
 
-		return nil
-	})
+	// 	return nil
+	// })
 
 }
