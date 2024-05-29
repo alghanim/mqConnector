@@ -32,6 +32,7 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 		Name:       "Templates",
 		Type:       models.CollectionTypeBase,
 		CreateRule: types.Pointer(""),
+		ViewRule:   types.Pointer(""),
 		ListRule:   types.Pointer(""),
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
@@ -61,6 +62,7 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 		Name:       "MQ_TYPES",
 		Type:       models.CollectionTypeBase,
 		CreateRule: types.Pointer(""),
+		ViewRule:   types.Pointer(""),
 		ListRule:   types.Pointer(""),
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
@@ -105,6 +107,7 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 	mqsCollection := &models.Collection{
 		Name:       "MQS",
 		CreateRule: types.Pointer(""),
+		ViewRule:   types.Pointer(""),
 		ListRule:   types.Pointer(""),
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
@@ -174,6 +177,7 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 		Name:       "MQ_LINKS",
 		Type:       models.CollectionTypeBase,
 		CreateRule: types.Pointer(""),
+		ViewRule:   types.Pointer(""),
 		ListRule:   types.Pointer(""),
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
@@ -220,8 +224,11 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 	}
 
 	mqFiltersCollection := &models.Collection{
-		Name: "MQ_FILTERS",
-		Type: models.CollectionTypeBase,
+		Name:       "MQ_FILTERS",
+		ViewRule:   types.Pointer(""),
+		CreateRule: types.Pointer(""),
+		ListRule:   types.Pointer(""),
+		Type:       models.CollectionTypeBase,
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
 
@@ -273,6 +280,7 @@ func CreateCollection(colName string, app *pocketbase.PocketBase) error {
 		Name:       colName,
 		Type:       models.CollectionTypeBase,
 		CreateRule: types.Pointer(""),
+		ViewRule:   types.Pointer(""),
 		ListRule:   types.Pointer(""),
 
 		Schema: schema.NewSchema(
