@@ -21,6 +21,8 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
+var mqLinks = make(map[string][](map[string]map[string]string))
+
 func InitRoutes(app *pocketbase.PocketBase) {
 
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
@@ -47,6 +49,7 @@ func InitRoutes(app *pocketbase.PocketBase) {
 					if errs := app.Dao().ExpandRecord(record, []string{"source", "destination"}, nil); len(errs) > 0 {
 						return fmt.Errorf("failed to expand: %v", errs)
 					}
+					// connFriendlyName := record.GetString("connectionFriendlyName")
 
 					expandedRecord := record.Expand()
 
@@ -112,7 +115,7 @@ func InitRoutes(app *pocketbase.PocketBase) {
 					}
 
 					destinationConfig["type"] = destinationConnnectionType.GetString("TYPE")
-					log.Println(sourceConfig, destinationConfig)
+					// log.Println(sourceConfig, destinationConfig)
 					var sourceMQConnector mq.MQConnector
 					sourceMQConnector, err = mq.NewMQConnector(mq.GetQueueType(sourceConfig["type"]), sourceConfig)
 					if err != nil {
@@ -157,6 +160,17 @@ func InitRoutes(app *pocketbase.PocketBase) {
 						}
 					}()
 
+					// link := map[string]map[string]string{
+					// 	"source":      sourceConfig,
+					// 	"destination": destinationConfig,
+					// }
+					//get paths
+
+					// mqLinks[connFriendlyName] = append(mqLinks[connFriendlyName], link)
+					// // mqLinks[connFriendlyName] = append(mqLinks[connFriendlyName], destinationConfig)
+
+					// jsonD, _ := json.Marshal(mqLinks)
+					// log.Println(string(jsonD))
 				}
 
 			}

@@ -1,0 +1,30 @@
+{
+    "test": [
+        {
+            "destination": {
+                "brokers": "",
+                "channel": "DEV.ADMIN.SVRCONN",
+                "connName": "localhost(1414)",
+                "password": "password",
+                "queueManager": "QM1",
+                "queueName": "DEV.QUEUE.1",
+                "topic": "",
+                "type": "IBM",
+                "url": "",
+                "user": "admin"
+            },
+            "source": {
+                "brokers": "",
+                "channel": "DEV.ADMIN.SVRCONN",
+                "connName": "localhost(1414)",
+                "password": "password",
+                "queueManager": "QM1",
+                "queueName": "testQueue",
+                "topic": "",
+                "type": "IBM",
+                "url": "",
+                "user": "admin"
+            }
+        }
+    ]
+}

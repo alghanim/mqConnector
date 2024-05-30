@@ -28,3 +28,20 @@ type MQConfig struct {
 	Topic        string `db:"topic" json:"topic"`
 	OwnerName    string `db:"ownerName" json:"ownerName"`
 }
+type Path struct {
+	ID         string
+	TemplateID string
+	FieldPath  string
+	Enabled    bool
+}
+
+type Template struct {
+	TemplateName string
+	Paths        []*Path
+}
+
+type MQConnection struct {
+	Source      MQConfig `json:"source"`
+	Destination MQConfig `json:"destination"`
+	Paths       []string `json:"paths"`
+}
