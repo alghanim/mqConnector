@@ -28,155 +28,180 @@ func InitRoutes(app *pocketbase.PocketBase) {
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		// Check if the collection exists
 
-		collections, err := app.Dao().FindCollectionByNameOrId("MQ_LINKS")
-		if err == nil {
-			if collections.Name == "MQ_LINKS" {
+		filterCollection, err := app.Dao().FindCollectionByNameOrId("MQ_FILTERS")
+		if err != nil {
+			return err
+		}
 
-				// var source models.MQConfig
-				// var destination []models.MQConfig
-				// var mqCon map[string]interface{}
-				query := app.Dao().RecordQuery(collections.Name)
-				if err != nil {
-					return err
-				}
+		filtersQuery := app.Dao().RecordQuery(filterCollection.Name)
+		if err != nil {
+			return err
+		}
 
-				records := []*pbmodels.Record{}
-				if err := query.All(&records); err != nil {
-					return err
-				}
+		filterRecords := []*pbmodels.Record{}
+		if err := filtersQuery.All(&filterRecords); err != nil {
+			return err
+		}
 
-				for _, record := range records {
-					if errs := app.Dao().ExpandRecord(record, []string{"source", "destination"}, nil); len(errs) > 0 {
-						return fmt.Errorf("failed to expand: %v", errs)
-					}
-					// connFriendlyName := record.GetString("connectionFriendlyName")
+		app.Dao().ExpandRecords(filterRecords, []string{"FieldPath", "source", "destination"}, nil)
 
-					expandedRecord := record.Expand()
+		for _, filterRecord := range filterRecords {
 
-					sourceRecord, ok := expandedRecord["source"].(*pbmodels.Record)
-					if !ok {
-						return err
-					}
+			paths := filterRecord.ExpandedAll("FieldPath")
+			// connections := filterRecord.ExpandedAll("connection")
+			// source := filterRecord.ExpandedAll("source")
+			expandedRecord := filterRecord.Expand()
 
-					sourceConfig := map[string]string{
-
-						"queueManager": sourceRecord.GetString("queueManager"),
-						"connName":     sourceRecord.GetString("connName"),
-						"channel":      sourceRecord.GetString("channel"),
-						"user":         sourceRecord.GetString("user"),
-						"password":     sourceRecord.GetString("password"),
-						"queueName":    sourceRecord.GetString("queueName"),
-						"url":          sourceRecord.GetString("url"),
-						"brokers":      sourceRecord.GetString("brokers"),
-						"topic":        sourceRecord.GetString("topic"),
-					}
-
-					// connectionType := sourceRecord["type"]
-					if errs := app.Dao().ExpandRecord(sourceRecord, []string{"type"}, nil); len(errs) > 0 {
-						return err
-					}
-
-					sourceConType := sourceRecord.Expand()
-					SourceConnnectionType, ok := sourceConType["type"].(*pbmodels.Record)
-					if !ok {
-						return err
-					}
-
-					sourceConfig["type"] = SourceConnnectionType.GetString("TYPE")
-
-					destinationRecord, ok := expandedRecord["destination"].(*pbmodels.Record)
-					if !ok {
-						return err
-					}
-
-					destinationConfig := map[string]string{
-						"queueManager": destinationRecord.GetString("queueManager"),
-						"connName":     destinationRecord.GetString("connName"),
-						"channel":      destinationRecord.GetString("channel"),
-						"user":         destinationRecord.GetString("user"),
-						"password":     destinationRecord.GetString("password"),
-						"queueName":    destinationRecord.GetString("queueName"),
-						"url":          destinationRecord.GetString("url"),
-						"brokers":      destinationRecord.GetString("brokers"),
-						"topic":        destinationRecord.GetString("topic"),
-					}
-					// connectionFriendlyName := sourceRecord.GetString("user")
-
-					// fieldPaths := expandedRecord["FieldPath"].([]*pbmodels.Record)
-
-					if errs := app.Dao().ExpandRecord(destinationRecord, []string{"type"}, nil); len(errs) > 0 {
-						return err
-					}
-
-					destinationConType := sourceRecord.Expand()
-					destinationConnnectionType, ok := destinationConType["type"].(*pbmodels.Record)
-					if !ok {
-						return err
-					}
-
-					destinationConfig["type"] = destinationConnnectionType.GetString("TYPE")
-					// log.Println(sourceConfig, destinationConfig)
-					var sourceMQConnector mq.MQConnector
-					sourceMQConnector, err = mq.NewMQConnector(mq.GetQueueType(sourceConfig["type"]), sourceConfig)
-					if err != nil {
-						log.Fatalf("Failed to create MQ connector: %v", err)
-					}
-					// Connect to MQ
-
-					var destinationMQConnector mq.MQConnector
-					destinationMQConnector, err = mq.NewMQConnector(mq.GetQueueType(destinationConfig["type"]), destinationConfig)
-					if err != nil {
-						log.Fatalf("Failed to create MQ connector: %v", err)
-					}
-
-					go func() {
-
-						err = sourceMQConnector.Connect()
-						if err != nil {
-							log.Fatalf("Failed to connect to MQ: %v", err)
-						}
-						defer sourceMQConnector.Disconnect()
-						for {
-							msg, err := sourceMQConnector.ReceiveMessage()
-							if err != nil {
-								log.Fatalf("Failed to receive message: %v", err)
-							}
-							fmt.Printf("Received message: %s\n", string(msg))
-
-							err = destinationMQConnector.Connect()
-							if err != nil {
-								log.Fatalf("Failed to connect to MQ: %v", err)
-							}
-
-							defer destinationMQConnector.Disconnect()
-
-							if msg != nil {
-								err = destinationMQConnector.SendMessage(msg)
-								if err != nil {
-									log.Fatalf("Failed to send message: %v", err)
-								}
-							}
-
-						}
-					}()
-
-					// link := map[string]map[string]string{
-					// 	"source":      sourceConfig,
-					// 	"destination": destinationConfig,
-					// }
-					//get paths
-
-					// mqLinks[connFriendlyName] = append(mqLinks[connFriendlyName], link)
-					// // mqLinks[connFriendlyName] = append(mqLinks[connFriendlyName], destinationConfig)
-
-					// jsonD, _ := json.Marshal(mqLinks)
-					// log.Println(string(jsonD))
-				}
-
+			paths, ok := expandedRecord["FieldPath"].([]*pbmodels.Record)
+			if !ok {
+				return err
 			}
 
-		} else {
-			return err
+			source, ok := expandedRecord["source"].(*pbmodels.Record)
+			if !ok {
+				return err
+			}
+			destination, ok := expandedRecord["destination"].(*pbmodels.Record)
+			if !ok {
+				return err
+			}
+
+			// log.Println("check this", testrecord)
+
+			go func(paths []*pbmodels.Record, source *pbmodels.Record, destination *pbmodels.Record) {
+
+				var filterPaths []string
+				for _, path := range paths {
+
+					filterPaths = append(filterPaths, path.GetString("FieldPath"))
+					fmt.Println(path.GetString("FieldPath"))
+				}
+
+				sourceConn := map[string]string{
+
+					"queueManager": source.GetString("queueManager"),
+					"connName":     source.GetString("connName"),
+					"channel":      source.GetString("channel"),
+					"user":         source.GetString("user"),
+					"password":     source.GetString("password"),
+					"queueName":    source.GetString("queueName"),
+					"url":          source.GetString("url"),
+					"brokers":      source.GetString("brokers"),
+					"topic":        source.GetString("topic"),
+				}
+
+				app.Dao().ExpandRecord(source, []string{"type"}, nil)
+
+				sourceType := source.Expand()
+				SourceConnnectionType, ok := sourceType["type"].(*pbmodels.Record)
+				if !ok {
+					return
+				}
+
+				sourceConn["type"] = SourceConnnectionType.GetString("TYPE")
+
+				destConn := map[string]string{
+
+					"queueManager": destination.GetString("queueManager"),
+					"connName":     destination.GetString("connName"),
+					"channel":      destination.GetString("channel"),
+					"user":         destination.GetString("user"),
+					"password":     destination.GetString("password"),
+					"queueName":    destination.GetString("queueName"),
+					"url":          destination.GetString("url"),
+					"brokers":      destination.GetString("brokers"),
+					"topic":        destination.GetString("topic"),
+				}
+
+				app.Dao().ExpandRecord(destination, []string{"type"}, nil)
+
+				destType := destination.Expand()
+				destinationConnnectionType, ok := destType["type"].(*pbmodels.Record)
+				if !ok {
+					return
+				}
+
+				destConn["type"] = destinationConnnectionType.GetString("TYPE")
+
+				// destination := connection.ExpandedAll("destination")
+
+				// for _, s := range source {
+				// 	sourceConn, ok := s.(models.MQConfig)
+				// }
+				var sourceMQConnector mq.MQConnector
+				sourceMQConnector, err = mq.NewMQConnector(mq.GetQueueType(sourceConn["type"]), sourceConn)
+				if err != nil {
+					log.Fatalf("Failed to create MQ connector: %v", err)
+				}
+
+				var destinationMQConnector mq.MQConnector
+				destinationMQConnector, err = mq.NewMQConnector(mq.GetQueueType(destConn["type"]), destConn)
+				if err != nil {
+					log.Fatalf("Failed to create MQ connector: %v", err)
+				}
+
+				err = sourceMQConnector.Connect()
+				if err != nil {
+					log.Fatalf("Failed to connect to MQ: %v", err)
+				}
+				defer sourceMQConnector.Disconnect()
+				for {
+					msg, err := sourceMQConnector.ReceiveMessage()
+					if err != nil {
+						log.Fatalf("Failed to receive message: %v", err)
+					}
+
+					mv, err := mxj.NewMapXml(msg)
+					if err != nil {
+						return
+					}
+
+					// Convert map to JSON
+					jsonData, err := json.Marshal(mv)
+					if err != nil {
+						return
+					}
+
+					// Process the JSON data (this is where you can modify the JSON as needed)
+
+					filteredJson, err := tools.RemoveJSONPaths(jsonData, filterPaths)
+
+					if err != nil {
+						return
+					}
+
+					// Convert JSON back to map
+					var processedData map[string]interface{}
+					if err := json.Unmarshal(filteredJson, &processedData); err != nil {
+						// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert JSON to map"})
+					}
+
+					// Convert map back to XML
+					xmlResponse, err := mxj.Map(processedData).Xml()
+					if err != nil {
+						// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert map to XML"})
+					}
+
+					fmt.Printf("Received message: %s\n", string(xmlResponse))
+
+					err = destinationMQConnector.Connect()
+					if err != nil {
+						log.Fatalf("Failed to connect to MQ: %v", err)
+					}
+
+					defer destinationMQConnector.Disconnect()
+
+					if msg != nil {
+						err = destinationMQConnector.SendMessage(xmlResponse)
+						if err != nil {
+							log.Fatalf("Failed to send message: %v", err)
+						}
+					}
+
+				}
+
+			}(paths, source, destination)
+
 		}
 
 		return nil
