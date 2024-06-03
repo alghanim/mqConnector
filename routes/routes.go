@@ -151,6 +151,19 @@ func InitRoutes(app *pocketbase.PocketBase) {
 						log.Fatalf("Failed to receive message: %v", err)
 					}
 
+					format, err := tools.DetectFormat(msg)
+					if err != nil {
+						return
+					}
+
+					if format == "XML" {
+						//do XML shit
+					} else if format == "JSON" {
+						//do JSON shit
+					} else {
+						return
+					}
+
 					mv, err := mxj.NewMapXml(msg)
 					if err != nil {
 						return

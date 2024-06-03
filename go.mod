@@ -4,6 +4,7 @@ go 1.22.0
 
 require (
 	github.com/IBM/sarama v1.43.2
+	github.com/beevik/etree v1.4.0
 	github.com/clbanning/mxj/v2 v2.7.0
 	github.com/ibm-messaging/mq-golang/v5 v5.5.4
 	github.com/labstack/echo/v5 v5.0.0-20230722203903-ec5b858dab61

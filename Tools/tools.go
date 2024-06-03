@@ -7,6 +7,8 @@ import (
 	"io"
 	"mqConnector/models"
 	"strings"
+
+	"github.com/beevik/etree"
 )
 
 // Function to handle the recursive mapping of nodes.
@@ -122,4 +124,53 @@ func deletePath(data *map[string]interface{}, keys []string) {
 			}
 		}
 	}
+}
+
+// detectFormat takes a []byte message and returns whether it is XML or JSON.
+func DetectFormat(message []byte) (string, error) {
+	if IsJSON(message) {
+		return "JSON", nil
+	} else if IsXML(message) {
+		return "XML", nil
+	} else {
+		return "", fmt.Errorf("unknown format")
+	}
+}
+
+// isJSON checks if the message is JSON.
+func IsJSON(message []byte) bool {
+	var js json.RawMessage
+	return json.Unmarshal(message, &js) == nil
+}
+
+// isXML checks if the message is XML.
+func IsXML(message []byte) bool {
+	return xml.Unmarshal(message, new(interface{})) == nil
+}
+
+func removeElements(elem *etree.Element, namespace, tag string) {
+	for _, child := range elem.ChildElements() {
+		if child.Space == namespace && child.Tag == tag {
+			elem.RemoveChild(child)
+		} else {
+			removeElements(child, namespace, tag)
+		}
+	}
+	// Remove whitespace-only text nodes
+	for _, child := range elem.Child {
+		if c, ok := child.(*etree.CharData); ok && strings.TrimSpace(c.Data) == "" {
+			elem.RemoveChild(child)
+		}
+	}
+}
+
+func removeEmptyLines(s string) string {
+	lines := strings.Split(s, "\n")
+	var result []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			result = append(result, line)
+		}
+	}
+	return strings.Join(result, "\n")
 }
