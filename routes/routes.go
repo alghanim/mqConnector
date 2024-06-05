@@ -142,13 +142,14 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 				err = sourceMQConnector.Connect()
 				if err != nil {
-					log.Fatalf("Failed to connect to MQ: %v", err)
+					log.Println("Failed to connect to MQ: %v", err)
+					return
 				}
 				defer sourceMQConnector.Disconnect()
 				for {
 					msg, err := sourceMQConnector.ReceiveMessage()
 					if err != nil {
-						log.Fatalf("Failed to receive message: %v", err)
+						log.Println("Failed to receive message: %v", err)
 					}
 
 					format, err := tools.DetectFormat(msg)
@@ -198,7 +199,8 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 					err = destinationMQConnector.Connect()
 					if err != nil {
-						log.Fatalf("Failed to connect to MQ: %v", err)
+						log.Println("Failed to connect to MQ: %v", err)
+						return
 					}
 
 					defer destinationMQConnector.Disconnect()
@@ -206,7 +208,7 @@ func InitRoutes(app *pocketbase.PocketBase) {
 					if msg != nil {
 						err = destinationMQConnector.SendMessage(xmlResponse)
 						if err != nil {
-							log.Fatalf("Failed to send message: %v", err)
+							log.Println("Failed to send message: %v", err)
 						}
 					}
 

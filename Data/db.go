@@ -173,55 +173,55 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 		return nil
 	}
 
-	mqLinksCollection := &models.Collection{
-		Name:       "MQ_LINKS",
-		Type:       models.CollectionTypeBase,
-		CreateRule: types.Pointer(""),
-		ViewRule:   types.Pointer(""),
-		ListRule:   types.Pointer(""),
-		Schema: schema.NewSchema(
-			&schema.SchemaField{
-				Name: "source",
-				Type: schema.FieldTypeRelation,
-				Options: schema.RelationOptions{
-					CollectionId: mqsCollection.Id,
-					MaxSelect:    types.Pointer(1), // 0 indicates no limit, allowing multiple selections
-				},
-			},
-			&schema.SchemaField{
-				Name: "destination",
-				Type: schema.FieldTypeRelation,
-				Options: schema.RelationOptions{
-					CollectionId: mqsCollection.Id,
-					MaxSelect:    types.Pointer(1), // 0 indicates no limit, allowing multiple selections
-				},
-			},
-			&schema.SchemaField{
-				Name:        "connectionFriendlyName",
-				Type:        schema.FieldTypeText,
-				Presentable: true,
-			},
-			// &schema.SchemaField{
-			// 	Name: "FieldPath",
-			// 	Type: schema.FieldTypeRelation,
-			// 	Options: schema.RelationOptions{
-			// 		CollectionId: templateCollection.Id,
-			// 		MaxSelect:    nil,
-			// 	},
-			// },
-		),
-	}
+	// mqLinksCollection := &models.Collection{
+	// 	Name:       "MQ_LINKS",
+	// 	Type:       models.CollectionTypeBase,
+	// 	CreateRule: types.Pointer(""),
+	// 	ViewRule:   types.Pointer(""),
+	// 	ListRule:   types.Pointer(""),
+	// 	Schema: schema.NewSchema(
+	// 		&schema.SchemaField{
+	// 			Name: "source",
+	// 			Type: schema.FieldTypeRelation,
+	// 			Options: schema.RelationOptions{
+	// 				CollectionId: mqsCollection.Id,
+	// 				MaxSelect:    types.Pointer(1), // 0 indicates no limit, allowing multiple selections
+	// 			},
+	// 		},
+	// 		&schema.SchemaField{
+	// 			Name: "destination",
+	// 			Type: schema.FieldTypeRelation,
+	// 			Options: schema.RelationOptions{
+	// 				CollectionId: mqsCollection.Id,
+	// 				MaxSelect:    types.Pointer(1), // 0 indicates no limit, allowing multiple selections
+	// 			},
+	// 		},
+	// 		&schema.SchemaField{
+	// 			Name:        "connectionFriendlyName",
+	// 			Type:        schema.FieldTypeText,
+	// 			Presentable: true,
+	// 		},
+	// 		// &schema.SchemaField{
+	// 		// 	Name: "FieldPath",
+	// 		// 	Type: schema.FieldTypeRelation,
+	// 		// 	Options: schema.RelationOptions{
+	// 		// 		CollectionId: templateCollection.Id,
+	// 		// 		MaxSelect:    nil,
+	// 		// 	},
+	// 		// },
+	// 	),
+	// }
 
-	err = app.Dao().SaveCollection(mqLinksCollection)
-	if err != nil {
-		return err
-	}
+	// err = app.Dao().SaveCollection(mqLinksCollection)
+	// if err != nil {
+	// 	return err
+	// }
 
-	mqLinksCollection = nil
-	mqLinksCollection, err = app.Dao().FindCollectionByNameOrId("MQ_LINKS")
-	if err != nil {
-		return err
-	}
+	// mqLinksCollection = nil
+	// mqLinksCollection, err = app.Dao().FindCollectionByNameOrId("MQ_LINKS")
+	// if err != nil {
+	// 	return err
+	// }
 
 	mqFiltersCollection := &models.Collection{
 		Name:       "MQ_FILTERS",
@@ -232,10 +232,19 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
 
-				Name: "connection",
+				Name: "source",
 				Type: schema.FieldTypeRelation,
 				Options: schema.RelationOptions{
-					CollectionId: mqLinksCollection.Id,
+					CollectionId: mqsCollection.Id,
+					MaxSelect:    types.Pointer(1),
+				},
+			},
+			&schema.SchemaField{
+
+				Name: "destination",
+				Type: schema.FieldTypeRelation,
+				Options: schema.RelationOptions{
+					CollectionId: mqsCollection.Id,
 					MaxSelect:    types.Pointer(1),
 				},
 			},

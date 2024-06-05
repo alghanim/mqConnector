@@ -3,18 +3,19 @@ package mq
 import (
 	"fmt"
 
-	"github.com/streadway/amqp"
+	"github.com/rabbitmq/amqp091-go"
 )
 
 type RabbitMQConnector struct {
 	url       string
 	queueName string
-	conn      *amqp.Connection
-	channel   *amqp.Channel
+	conn      *amqp091.Connection
+	channel   *amqp091.Channel
 }
 
 func (c *RabbitMQConnector) Connect() error {
-	conn, err := amqp.Dial(c.url)
+
+	conn, err := amqp091.Dial(c.url)
 	if err != nil {
 		return fmt.Errorf("failed to connect to RabbitMQ: %v", err)
 	}
@@ -61,7 +62,7 @@ func (c *RabbitMQConnector) SendMessage(message []byte) error {
 		c.queueName, // routing key
 		false,       // mandatory
 		false,       // immediate
-		amqp.Publishing{
+		amqp091.Publishing{
 			ContentType: "text/plain",
 			Body:        message,
 		},
