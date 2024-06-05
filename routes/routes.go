@@ -153,15 +153,14 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 					format, err := tools.DetectFormat(msg)
 					if err != nil {
-						return
+						log.Println("unknown format")
+						continue
 					}
 
 					if format == "XML" {
 						//do XML shit
 					} else if format == "JSON" {
 						//do JSON shit
-					} else {
-						return
 					}
 
 					mv, err := mxj.NewMapXml(msg)
