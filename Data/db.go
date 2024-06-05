@@ -84,6 +84,10 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 	mqTypeCollection = nil
 	mqTypeCollection, err = app.Dao().FindCollectionByNameOrId("MQ_TYPES")
 
+	if err != nil {
+		panic(err)
+	}
+
 	record := models.NewRecord(mqTypeCollection)
 
 	record.Set("MQ_ID", 0)
