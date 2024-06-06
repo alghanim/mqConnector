@@ -27,7 +27,6 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		// Check if the collection exists
-
 		filterCollection, err := app.Dao().FindCollectionByNameOrId("MQ_FILTERS")
 		if err != nil {
 			return err
@@ -47,15 +46,10 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 		for _, filterRecord := range filterRecords {
 
-			paths := filterRecord.ExpandedAll("FieldPath")
+			// paths := filterRecord.ExpandedAll("FieldPath")
 			// connections := filterRecord.ExpandedAll("connection")
 			// source := filterRecord.ExpandedAll("source")
 			expandedRecord := filterRecord.Expand()
-
-			paths, ok := expandedRecord["FieldPath"].([]*pbmodels.Record)
-			if !ok {
-				return err
-			}
 
 			source, ok := expandedRecord["source"].(*pbmodels.Record)
 			if !ok {
@@ -66,6 +60,11 @@ func InitRoutes(app *pocketbase.PocketBase) {
 				return err
 			}
 
+			paths, ok := expandedRecord["FieldPath"].([]*pbmodels.Record)
+			if !ok {
+				log.Println("Paths are not loaded or empty")
+				log.Println(paths)
+			}
 			// log.Println("check this", testrecord)
 
 			go func(paths []*pbmodels.Record, source *pbmodels.Record, destination *pbmodels.Record) {
@@ -78,7 +77,6 @@ func InitRoutes(app *pocketbase.PocketBase) {
 				}
 
 				sourceConn := map[string]string{
-
 					"queueManager": source.GetString("queueManager"),
 					"connName":     source.GetString("connName"),
 					"channel":      source.GetString("channel"),
@@ -220,6 +218,7 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 		return nil
 	})
+
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		collections, err := app.Dao().FindCollectionsByType(pbmodels.CollectionTypeBase)
 		if err != nil {
@@ -254,77 +253,57 @@ func InitRoutes(app *pocketbase.PocketBase) {
 			Method: http.MethodPost,
 			Path:   "/api/filter",
 			Handler: func(c echo.Context) error {
-
 				file, err := c.FormFile("file")
 				if err != nil {
 					return c.JSON(http.StatusBadRequest, map[string]string{"error": "Failed to get file"})
 				}
-
-				// Open the file
 				src, err := file.Open()
 				if err != nil {
 					return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to open file"})
 				}
 				defer src.Close()
-
-				// Read the file content
 				xmlData, err := io.ReadAll(src)
 				if err != nil {
 					return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to read file"})
 				}
-
-				// Convert XML to map
 				mv, err := mxj.NewMapXml(xmlData)
 				if err != nil {
 					return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid XML"})
 				}
-
-				// Convert map to JSON
 				jsonData, err := json.Marshal(mv)
 				if err != nil {
 					return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert to JSON"})
 				}
-
-				// Process the JSON data (this is where you can modify the JSON as needed)
-
 				rootTag, err := tools.GetRootTag(xmlData)
 				if err != nil {
-
 					return c.String(http.StatusInternalServerError, err.Error())
 				}
 				paths, err := Data.GetCollectionByName(rootTag)
 				if err != nil {
 					c.String(http.StatusInternalServerError, err.Error())
 				}
-
 				var arrayPaths []string
 				for _, p := range paths {
 					arrayPaths = append(arrayPaths, rootTag+"."+p.FieldPath)
 				}
 				log.Println(arrayPaths)
 				filteredJson, err := tools.RemoveJSONPaths(jsonData, arrayPaths)
-
 				if err != nil {
 					return c.String(http.StatusInternalServerError, err.Error())
 				}
-
-				// Convert JSON back to map
-				var processedData map[string]interface{}
+				var processedData map[ // Convert JSON back to map
+				string]interface{}
 				if err := json.Unmarshal(filteredJson, &processedData); err != nil {
 					return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert JSON to map"})
 				}
-
-				// Convert map back to XML
 				xmlResponse, err := mxj.Map(processedData).Xml()
 				if err != nil {
 					return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert map to XML"})
 				}
-
-				// Send the modified XML back to the client
 				return c.XMLBlob(http.StatusOK, xmlResponse)
-
-				// return c.JSON(http.StatusOK, interface{})
 			},
+			Middlewares: []echo.MiddlewareFunc{},
+			Name:        "",
 		})
 		return nil
 	})
@@ -352,6 +331,11 @@ func InitRoutes(app *pocketbase.PocketBase) {
 					return err
 				}
 
+				format, err := tools.DetectFormat(fileBytes)
+				if err != nil {
+					return c.String(http.StatusBadRequest, "unknown format")
+				}
+
 				rootTag, err := tools.GetRootTag(fileBytes)
 				if err != nil {
 					return err
@@ -374,9 +358,9 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 				for _, config := range paths {
 					record := pbmodels.NewRecord(collection)
-
 					record.Set("FieldPath", rootTag+"."+config.FieldPath)
 					// record.Set("Enabled", config.Enabled)
+					record.Set("T_TYPE", format)
 					record.Set("T_NAME", rootTag)
 					if err := app.Dao().SaveRecord(record); err != nil {
 						return err
@@ -388,7 +372,6 @@ func InitRoutes(app *pocketbase.PocketBase) {
 				if err != nil {
 					return err
 				}
-
 				return c.String(http.StatusOK, "inserted")
 			},
 			Middlewares: []echo.MiddlewareFunc{
