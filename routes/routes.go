@@ -156,44 +156,47 @@ func InitRoutes(app *pocketbase.PocketBase) {
 						continue
 					}
 
+					var msgData []byte
+					var processedData map[string]interface{}
+					var response []byte
+
 					if format == "XML" {
 						//do XML shit
+						mv, err := mxj.NewMapXml(msg)
+						if err != nil {
+							return
+						}
+						msgData, err = json.Marshal(mv)
+						if err != nil {
+							return
+						}
+						filteredJson, err := tools.RemoveJSONPaths(msgData, filterPaths)
+
+						if err != nil {
+							return
+						}
+						if err := json.Unmarshal(filteredJson, &processedData); err != nil {
+							// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert JSON to map"})
+						}
+
+						// Convert map back to XML
+						response, err = mxj.Map(processedData).Xml()
+						if err != nil {
+							// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert map to XML"})
+						}
 					} else if format == "JSON" {
 						//do JSON shit
+						msgData = msg
+						filteredJson, err := tools.RemoveJSONPaths(msgData, filterPaths)
+
+						if err != nil {
+							return
+						}
+						response = filteredJson
+
 					}
 
-					mv, err := mxj.NewMapXml(msg)
-					if err != nil {
-						return
-					}
-
-					// Convert map to JSON
-					jsonData, err := json.Marshal(mv)
-					if err != nil {
-						return
-					}
-
-					// Process the JSON data (this is where you can modify the JSON as needed)
-
-					filteredJson, err := tools.RemoveJSONPaths(jsonData, filterPaths)
-
-					if err != nil {
-						return
-					}
-
-					// Convert JSON back to map
-					var processedData map[string]interface{}
-					if err := json.Unmarshal(filteredJson, &processedData); err != nil {
-						// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert JSON to map"})
-					}
-
-					// Convert map back to XML
-					xmlResponse, err := mxj.Map(processedData).Xml()
-					if err != nil {
-						// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert map to XML"})
-					}
-
-					fmt.Printf("Received message: %s\n", string(xmlResponse))
+					fmt.Printf("Received message:\n%s\n", string(msg))
 
 					err = destinationMQConnector.Connect()
 					if err != nil {
@@ -203,11 +206,12 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 					defer destinationMQConnector.Disconnect()
 
-					if msg != nil {
-						err = destinationMQConnector.SendMessage(xmlResponse)
+					if response != nil {
+						err = destinationMQConnector.SendMessage(response)
 						if err != nil {
 							log.Println("Failed to send message: %v", err)
 						}
+						fmt.Printf("Sent message:\n%s\n", string(response))
 					}
 
 				}
