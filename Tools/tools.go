@@ -11,6 +11,18 @@ import (
 	"github.com/beevik/etree"
 )
 
+// Recursive function to extract all tags from an XML element
+func ExtractTags(element *etree.Element, tagSet map[string]struct{}) {
+	if element == nil {
+		return
+	}
+	tagWithNamespace := element.Tag
+	tagSet[tagWithNamespace] = struct{}{}
+	for _, child := range element.ChildElements() {
+		ExtractTags(child, tagSet)
+	}
+}
+
 // Function to handle the recursive mapping of nodes.
 func nodeToMap(nodes []models.Node, path string, config map[string]bool) {
 	for _, node := range nodes {
@@ -148,12 +160,12 @@ func IsXML(message []byte) bool {
 	return xml.Unmarshal(message, new(interface{})) == nil
 }
 
-func removeElements(elem *etree.Element, namespace, tag string) {
+func RemoveElements(elem *etree.Element, namespace, tag string) {
 	for _, child := range elem.ChildElements() {
 		if child.Space == namespace && child.Tag == tag {
 			elem.RemoveChild(child)
 		} else {
-			removeElements(child, namespace, tag)
+			RemoveElements(child, namespace, tag)
 		}
 	}
 	// Remove whitespace-only text nodes
@@ -164,7 +176,7 @@ func removeElements(elem *etree.Element, namespace, tag string) {
 	}
 }
 
-func removeEmptyLines(s string) string {
+func RemoveEmptyLines(s string) string {
 	lines := strings.Split(s, "\n")
 	var result []string
 	for _, line := range lines {
@@ -173,4 +185,17 @@ func removeEmptyLines(s string) string {
 		}
 	}
 	return strings.Join(result, "\n")
+}
+
+// findElement recursively finds the first element with the given namespace and tag
+func FindElement(elem *etree.Element, namespace, tag string) *etree.Element {
+	if elem.Space == namespace && elem.Tag == tag {
+		return elem
+	}
+	for _, child := range elem.ChildElements() {
+		if found := FindElement(child, namespace, tag); found != nil {
+			return found
+		}
+	}
+	return nil
 }

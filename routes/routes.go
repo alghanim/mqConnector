@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/beevik/etree"
 	"github.com/clbanning/mxj/v2"
 	pbmodels "github.com/pocketbase/pocketbase/models"
 
@@ -157,33 +159,65 @@ func InitRoutes(app *pocketbase.PocketBase) {
 					}
 
 					var msgData []byte
-					var processedData map[string]interface{}
+					// var processedData map[string]interface{}
 					var response []byte
 
 					if format == "XML" {
-						//do XML shit
-						mv, err := mxj.NewMapXml(msg)
-						if err != nil {
+						// do XML shit
+						// Parse the XML document
+						doc := etree.NewDocument()
+						if err := doc.ReadFromString(string(msg)); err != nil {
+							log.Println(err)
 							return
 						}
-						msgData, err = json.Marshal(mv)
-						if err != nil {
-							return
-						}
-						filteredJson, err := tools.RemoveJSONPaths(msgData, filterPaths)
+						namespace := doc.Root().Space
 
-						if err != nil {
-							return
-						}
-						if err := json.Unmarshal(filteredJson, &processedData); err != nil {
-							// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert JSON to map"})
+						for _, p := range filterPaths {
+							tools.RemoveElements(doc.Root(), namespace, p)
+							// Find the <cont:item> element
+							itemsElement := tools.FindElement(doc.Root(), namespace, p)
+							if itemsElement != nil {
+								// Find the <cont:item> element within <cont:items>
+								itemElement := tools.FindElement(itemsElement, namespace, p)
+								if itemElement != nil {
+									fmt.Printf("Found item: %s\n", itemElement.Text())
+								} else {
+									fmt.Println("Item element not found")
+								}
+							} else {
+								fmt.Println("Items element not found")
+							}
 						}
 
-						// Convert map back to XML
-						response, err = mxj.Map(processedData).Xml()
+						// Serialize the modified XML document
+						result, err := doc.WriteToString()
 						if err != nil {
-							// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert map to XML"})
+							panic(err)
 						}
+
+						// mv, err := mxj.NewMapXml(msg)
+						// if err != nil {
+						// 	return
+						// }
+						// msgData, err = json.Marshal(mv)
+						// if err != nil {
+						// 	return
+						// }
+						// filteredJson, err := tools.RemoveJSONPaths(msgData, filterPaths)
+
+						// if err != nil {
+						// 	return
+						// }
+						// if err := json.Unmarshal(filteredJson, &processedData); err != nil {
+						// 	// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert JSON to map"})
+						// }
+
+						// // Convert map back to XML
+						// response, err = mxj.Map(processedData).Xml()
+						// if err != nil {
+						// 	// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert map to XML"})
+						// }
+						response = []byte(result)
 					} else if format == "JSON" {
 						//do JSON shit
 						msgData = msg
@@ -313,6 +347,72 @@ func InitRoutes(app *pocketbase.PocketBase) {
 	})
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 
+		e.Router.AddRoute(echo.Route{
+			Method: http.MethodPost,
+			Path:   "/api/v2/upload/sample",
+			Handler: func(c echo.Context) error {
+				// Retrieve the file from form data
+				file, err := c.FormFile("file")
+				if err != nil {
+					return c.String(http.StatusBadRequest, "Failed to read file from request")
+				}
+
+				// Open the uploaded file
+				src, err := file.Open()
+				if err != nil {
+					return err
+				}
+				defer src.Close()
+
+				// Read the file content into a buffer
+				buf := new(bytes.Buffer)
+				buf.ReadFrom(src)
+
+				// Parse the XML content using etree
+				doc := etree.NewDocument()
+				if err := doc.ReadFromBytes(buf.Bytes()); err != nil {
+					return c.String(http.StatusBadRequest, "Failed to parse XML file")
+				}
+
+				namespace := doc.Root().Space
+				rootTag := doc.Root().Tag
+				format, err := tools.DetectFormat(buf.Bytes())
+				if err != nil {
+					return c.String(http.StatusInternalServerError, err.Error())
+				}
+
+				log.Println(namespace)
+				// Extract all tags without duplicates
+				tagSet := make(map[string]struct{})
+				tools.ExtractTags(doc.Root(), tagSet)
+
+				// Convert the set of tags to a slice
+				tags := make([]string, 0, len(tagSet))
+				for tag := range tagSet {
+					tags = append(tags, tag)
+				}
+
+				collection, err := app.Dao().FindCollectionByNameOrId("Templates")
+				if err != nil {
+					return err
+				}
+
+				for _, config := range tags {
+					record := pbmodels.NewRecord(collection)
+					record.Set("FieldPath", config)
+					record.Set("NameSpace", namespace)
+					record.Set("T_TYPE", format)
+					record.Set("T_NAME", rootTag)
+					if err := app.Dao().SaveRecord(record); err != nil {
+						return err
+					}
+
+				}
+
+				// Return the extracted tags as a JSON response
+				return c.JSON(http.StatusOK, tags)
+			},
+		})
 		e.Router.AddRoute(echo.Route{
 			Method: http.MethodPost,
 			Path:   "/api/upload/sample",

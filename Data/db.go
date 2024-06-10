@@ -42,8 +42,10 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 			&schema.SchemaField{
 				Name: "T_TYPE",
 				Type: schema.FieldTypeSelect,
+
 				Options: schema.SelectOptions{
-					Values: []string{"XML", "JSON"},
+					Values:    []string{"XML", "JSON"},
+					MaxSelect: 1,
 				},
 			},
 			&schema.SchemaField{
