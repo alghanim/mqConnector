@@ -71,14 +71,14 @@ mqc := NewMQConnector(Kafka, map[string]string{
 
 1. Build the application:
     ```sh
-    go build -o mqConnector
+    ./BuildLinuxAmd64.sh
     ```
 
-> This command compiles the Go code into an executable named `mqConnector`.
+> This command compiles the Go code into an executable named `mqConnector` as you need to set CGO_CFLAGS and CGO_LDFLAGS 
 
 2. Run the application:
     ```sh
-    ./mqConnector
+    ./Rub.sh or ./mqConnector
     ```
 
 > This command executes the compiled application.
