@@ -49,6 +49,10 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 				},
 			},
 			&schema.SchemaField{
+				Name: "NameSpace",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
 				Name:        "FieldPath",
 				Type:        schema.FieldTypeText,
 				Presentable: true,

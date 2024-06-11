@@ -23,7 +23,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-var mqLinks = make(map[string][](map[string]map[string]string))
+var dataMap = make(map[string][]map[string]map[string]string)
 
 func InitRoutes(app *pocketbase.PocketBase) {
 
@@ -48,11 +48,7 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 		for _, filterRecord := range filterRecords {
 
-			// paths := filterRecord.ExpandedAll("FieldPath")
-			// connections := filterRecord.ExpandedAll("connection")
-			// source := filterRecord.ExpandedAll("source")
 			expandedRecord := filterRecord.Expand()
-
 			source, ok := expandedRecord["source"].(*pbmodels.Record)
 			if !ok {
 				return err
@@ -65,11 +61,10 @@ func InitRoutes(app *pocketbase.PocketBase) {
 			paths, ok := expandedRecord["FieldPath"].([]*pbmodels.Record)
 			if !ok {
 				log.Println("Paths are not loaded or empty")
-				log.Println(paths)
 			}
 			// log.Println("check this", testrecord)
 
-			go func(paths []*pbmodels.Record, source *pbmodels.Record, destination *pbmodels.Record) {
+			go func(paths []*pbmodels.Record, source *pbmodels.Record, destination *pbmodels.Record) error {
 
 				var filterPaths []string
 				for _, path := range paths {
@@ -95,7 +90,7 @@ func InitRoutes(app *pocketbase.PocketBase) {
 				sourceType := source.Expand()
 				SourceConnnectionType, ok := sourceType["type"].(*pbmodels.Record)
 				if !ok {
-					return
+					return fmt.Errorf("source connection has not been loaded , due to a problem with the type: %s", sourceType["type"])
 				}
 
 				sourceConn["type"] = SourceConnnectionType.GetString("TYPE")
@@ -118,38 +113,37 @@ func InitRoutes(app *pocketbase.PocketBase) {
 				destType := destination.Expand()
 				destinationConnnectionType, ok := destType["type"].(*pbmodels.Record)
 				if !ok {
-					return
+					return fmt.Errorf("destination connection has not been loaded , due to a problem with the type: %s", destType["type"])
 				}
 
 				destConn["type"] = destinationConnnectionType.GetString("TYPE")
 
-				// destination := connection.ExpandedAll("destination")
-
-				// for _, s := range source {
-				// 	sourceConn, ok := s.(models.MQConfig)
-				// }
 				var sourceMQConnector mq.MQConnector
 				sourceMQConnector, err = mq.NewMQConnector(mq.GetQueueType(sourceConn["type"]), sourceConn)
 				if err != nil {
-					log.Fatalf("Failed to create MQ connector: %v", err)
+					return fmt.Errorf("Failed to create MQ source connector: %v", err)
 				}
 
 				var destinationMQConnector mq.MQConnector
 				destinationMQConnector, err = mq.NewMQConnector(mq.GetQueueType(destConn["type"]), destConn)
 				if err != nil {
-					log.Fatalf("Failed to create MQ connector: %v", err)
+					return fmt.Errorf("Failed to create MQ destination connector: %v", err)
 				}
 
 				err = sourceMQConnector.Connect()
 				if err != nil {
-					log.Println("Failed to connect to MQ: %v", err)
-					return
+					return fmt.Errorf("Failed to connect to MQ: %v", err)
 				}
 				defer sourceMQConnector.Disconnect()
+				Data.AddEntry(filterRecord.Id, sourceConn, destConn, filterPaths)
+
+				jD, _ := json.Marshal(Data.DataMap)
+				fmt.Println(string(jD))
+
 				for {
 					msg, err := sourceMQConnector.ReceiveMessage()
 					if err != nil {
-						log.Println("Failed to receive message: %v", err)
+						return fmt.Errorf("Failed to receive message: %v", err)
 					}
 
 					format, err := tools.DetectFormat(msg)
@@ -167,8 +161,8 @@ func InitRoutes(app *pocketbase.PocketBase) {
 						// Parse the XML document
 						doc := etree.NewDocument()
 						if err := doc.ReadFromString(string(msg)); err != nil {
-							log.Println(err)
-							return
+							log.Printf("Error in reading the XML message: %v", err)
+							continue
 						}
 						namespace := doc.Root().Space
 
@@ -224,7 +218,8 @@ func InitRoutes(app *pocketbase.PocketBase) {
 						filteredJson, err := tools.RemoveJSONPaths(msgData, filterPaths)
 
 						if err != nil {
-							return
+							log.Printf("error reading the JSON message: %v", err)
+							continue
 						}
 						response = filteredJson
 
@@ -234,8 +229,7 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 					err = destinationMQConnector.Connect()
 					if err != nil {
-						log.Println("Failed to connect to MQ: %v", err)
-						return
+						return fmt.Errorf("Failed to connect to MQ: %v", err)
 					}
 
 					defer destinationMQConnector.Disconnect()
@@ -244,6 +238,7 @@ func InitRoutes(app *pocketbase.PocketBase) {
 						err = destinationMQConnector.SendMessage(response)
 						if err != nil {
 							log.Println("Failed to send message: %v", err)
+							continue
 						}
 						fmt.Printf("Sent message:\n%s\n", string(response))
 					}

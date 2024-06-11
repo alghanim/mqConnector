@@ -24,7 +24,11 @@
                 "type": "IBM",
                 "url": "",
                 "user": "admin"
-            }
+            },
+            "paths": [
+                "/videos/",
+                "/Documents"
+            ]
         }
     ]
 }
