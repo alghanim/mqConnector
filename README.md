@@ -78,7 +78,7 @@ mqc := NewMQConnector(Kafka, map[string]string{
 
 2. Run the application:
     ```sh
-    ./Rub.sh or ./mqConnector
+    ./Run.sh or ./mqConnector
     ```
 
 > This command executes the compiled application.
