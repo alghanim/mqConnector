@@ -33,10 +33,10 @@ func Initialize(id string, sourceConn, destinationConn map[string]string, paths 
 		pathsMap[fmt.Sprintf("path%d", i+1)] = path
 	}
 
-	entry := map[string]map[string]string{
+	entry := map[string]any{
 		"destination": destinationConn,
 		"source":      sourceConn,
-		"paths":       pathsMap,
+		"paths":       paths,
 	}
 
 	DataMap[id] = entry
@@ -70,15 +70,10 @@ func UpdateEntry(id string, sourceConn, destinationConn map[string]string, paths
 		return fmt.Errorf("id %s not found", id)
 	}
 
-	pathsMap := make(map[string]string)
-	for i, path := range paths {
-		pathsMap[fmt.Sprintf("path%d", i+1)] = path
-	}
-
-	entry := map[string]map[string]string{
+	entry := map[string]any{
 		"destination": destinationConn,
 		"source":      sourceConn,
-		"paths":       pathsMap,
+		"paths":       paths,
 	}
 
 	DataMap[id] = entry

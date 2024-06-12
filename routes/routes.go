@@ -48,75 +48,14 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 		for _, filterRecord := range filterRecords {
 
-			expandedRecord := filterRecord.Expand()
-			source, ok := expandedRecord["source"].(*pbmodels.Record)
-			if !ok {
-				return err
-			}
-			destination, ok := expandedRecord["destination"].(*pbmodels.Record)
-			if !ok {
+			sourceConn, destConn, filterPaths, err := GetFilterEntities(app, filterRecord)
+			if err != nil {
 				return err
 			}
 
-			paths, ok := expandedRecord["FieldPath"].([]*pbmodels.Record)
-			if !ok {
-				log.Println("Paths are not loaded or empty")
-			}
 			// log.Println("check this", testrecord)
 
-			go func(paths []*pbmodels.Record, source *pbmodels.Record, destination *pbmodels.Record) error {
-
-				var filterPaths []string
-				for _, path := range paths {
-
-					filterPaths = append(filterPaths, path.GetString("FieldPath"))
-					fmt.Println(path.GetString("FieldPath"))
-				}
-
-				sourceConn := map[string]string{
-					"queueManager": source.GetString("queueManager"),
-					"connName":     source.GetString("connName"),
-					"channel":      source.GetString("channel"),
-					"user":         source.GetString("user"),
-					"password":     source.GetString("password"),
-					"queueName":    source.GetString("queueName"),
-					"url":          source.GetString("url"),
-					"brokers":      source.GetString("brokers"),
-					"topic":        source.GetString("topic"),
-				}
-
-				app.Dao().ExpandRecord(source, []string{"type"}, nil)
-
-				sourceType := source.Expand()
-				SourceConnnectionType, ok := sourceType["type"].(*pbmodels.Record)
-				if !ok {
-					return fmt.Errorf("source connection has not been loaded , due to a problem with the type: %s", sourceType["type"])
-				}
-
-				sourceConn["type"] = SourceConnnectionType.GetString("TYPE")
-
-				destConn := map[string]string{
-
-					"queueManager": destination.GetString("queueManager"),
-					"connName":     destination.GetString("connName"),
-					"channel":      destination.GetString("channel"),
-					"user":         destination.GetString("user"),
-					"password":     destination.GetString("password"),
-					"queueName":    destination.GetString("queueName"),
-					"url":          destination.GetString("url"),
-					"brokers":      destination.GetString("brokers"),
-					"topic":        destination.GetString("topic"),
-				}
-
-				app.Dao().ExpandRecord(destination, []string{"type"}, nil)
-
-				destType := destination.Expand()
-				destinationConnnectionType, ok := destType["type"].(*pbmodels.Record)
-				if !ok {
-					return fmt.Errorf("destination connection has not been loaded , due to a problem with the type: %s", destType["type"])
-				}
-
-				destConn["type"] = destinationConnnectionType.GetString("TYPE")
+			go func(paths []string, sourceConn map[string]string, destConn map[string]string) error {
 
 				var sourceMQConnector mq.MQConnector
 				sourceMQConnector, err = mq.NewMQConnector(mq.GetQueueType(sourceConn["type"]), sourceConn)
@@ -245,7 +184,7 @@ func InitRoutes(app *pocketbase.PocketBase) {
 
 				}
 
-			}(paths, source, destination)
+			}(filterPaths, sourceConn, destConn)
 
 		}
 
@@ -481,62 +420,6 @@ func InitRoutes(app *pocketbase.PocketBase) {
 		return nil
 	})
 
-	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
-
-		e.Router.AddRoute(echo.Route{
-			Method: http.MethodGet,
-			Path:   "/api/connections/:connection",
-			Handler: func(c echo.Context) error {
-
-				conn := c.PathParam("connection")
-				record, err := app.Dao().FindFirstRecordByData("MQ_FILTERS", "name", conn)
-				if err != nil {
-
-					return err
-				}
-
-				if errs := app.Dao().ExpandRecord(record, []string{"FieldPath", "connection"}, nil); len(errs) > 0 {
-					return fmt.Errorf("failed to expand: %v", errs)
-				}
-
-				expandedRecord := record.Expand()
-
-				connectionRecord, ok := expandedRecord["connection"].(*pbmodels.Record)
-				if !ok {
-					return c.JSON(http.StatusInternalServerError, map[string]string{
-						"error": "failed to convert connection record",
-					})
-				}
-				connectionFriendlyName := connectionRecord.GetString("connectionFriendlyName")
-
-				fieldPaths := expandedRecord["FieldPath"].([]*pbmodels.Record)
-
-				// Construct the custom response
-				customResponse := map[string]interface{}{
-					"Connection": map[string]interface{}{
-						"connectionFriendlyName": connectionFriendlyName,
-					},
-					"FieldPaths": []map[string]interface{}{},
-				}
-
-				for _, fieldPath := range fieldPaths {
-					fp := fieldPath
-					customResponse["FieldPaths"] = append(customResponse["FieldPaths"].([]map[string]interface{}), map[string]interface{}{
-						"FieldPath": fp.GetString("FieldPath"),
-						"T_NAME":    fp.GetString("T_NAME"),
-					})
-				}
-
-				return c.JSON(http.StatusOK, customResponse)
-			},
-			Middlewares: []echo.MiddlewareFunc{
-				apis.ActivityLogger(app),
-			},
-		},
-		)
-		return nil
-	})
-
 	app.OnCollectionAfterDeleteRequest().Add(func(e *core.CollectionDeleteEvent) error {
 
 		err := Data.DeleteCollection(e.Collection.Name)
@@ -563,6 +446,20 @@ func InitRoutes(app *pocketbase.PocketBase) {
 	// 	}
 	// 	return nil
 	// })
+	app.OnRecordAfterUpdateRequest("MQ_FILTERS").Add(func(e *core.RecordUpdateEvent) error {
+
+		updatedRecord := e.Record
+
+		app.Dao().ExpandRecord(updatedRecord, []string{"source", "destination", "FieldPath"}, nil)
+
+		shit := updatedRecord.Expand()
+		source := shit["source"].(*pbmodels.Record)
+		source.GetString("queueManager")
+
+		log.Println(source.GetString("queueManager"))
+
+		return nil
+	})
 	// app.OnRecordAfterUpdateRequest().Add(func(e *core.RecordUpdateEvent) error {
 	// 	col := e.Record.Collection().Name
 	// 	configs := []models.ConfigEntry{}
@@ -578,4 +475,76 @@ func InitRoutes(app *pocketbase.PocketBase) {
 	// 	return nil
 	// })
 
+}
+
+func GetFilterEntities(app *pocketbase.PocketBase, record *pbmodels.Record) (s map[string]string, d map[string]string, p []string, err error) {
+
+	expandedRecord := record.Expand()
+	source, ok := expandedRecord["source"].(*pbmodels.Record)
+	if !ok {
+		return nil, nil, nil, err
+	}
+	destination, ok := expandedRecord["destination"].(*pbmodels.Record)
+	if !ok {
+		return nil, nil, nil, err
+	}
+
+	paths, ok := expandedRecord["FieldPath"].([]*pbmodels.Record)
+	if !ok {
+		log.Println("Paths are not loaded or empty")
+	}
+
+	var filterPaths []string
+	for _, path := range paths {
+
+		filterPaths = append(filterPaths, path.GetString("FieldPath"))
+		// fmt.Println(path.GetString("FieldPath"))
+	}
+
+	sourceConn := map[string]string{
+		"queueManager": source.GetString("queueManager"),
+		"connName":     source.GetString("connName"),
+		"channel":      source.GetString("channel"),
+		"user":         source.GetString("user"),
+		"password":     source.GetString("password"),
+		"queueName":    source.GetString("queueName"),
+		"url":          source.GetString("url"),
+		"brokers":      source.GetString("brokers"),
+		"topic":        source.GetString("topic"),
+	}
+
+	app.Dao().ExpandRecord(source, []string{"type"}, nil)
+
+	sourceType := source.Expand()
+	SourceConnnectionType, ok := sourceType["type"].(*pbmodels.Record)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("source connection has not been loaded , due to a problem with the type: %s", sourceType["type"])
+	}
+
+	sourceConn["type"] = SourceConnnectionType.GetString("TYPE")
+
+	destConn := map[string]string{
+
+		"queueManager": destination.GetString("queueManager"),
+		"connName":     destination.GetString("connName"),
+		"channel":      destination.GetString("channel"),
+		"user":         destination.GetString("user"),
+		"password":     destination.GetString("password"),
+		"queueName":    destination.GetString("queueName"),
+		"url":          destination.GetString("url"),
+		"brokers":      destination.GetString("brokers"),
+		"topic":        destination.GetString("topic"),
+	}
+
+	app.Dao().ExpandRecord(destination, []string{"type"}, nil)
+
+	destType := destination.Expand()
+	destinationConnnectionType, ok := destType["type"].(*pbmodels.Record)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("destination connection has not been loaded , due to a problem with the type: %s", destType["type"])
+	}
+
+	destConn["type"] = destinationConnnectionType.GetString("TYPE")
+
+	return sourceConn, destConn, filterPaths, nil
 }
