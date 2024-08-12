@@ -1,15 +1,123 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
+	"mqConnector/Data"
 	"mqConnector/models"
+	"mqConnector/mq"
 	"strings"
 
 	"github.com/beevik/etree"
+	pbmodels "github.com/pocketbase/pocketbase/models"
 )
+
+func StartRoutine(ctx context.Context, filterPaths []string, sourceConn, destConn map[string]string, filterRecord *pbmodels.Record) error {
+	var sourceMQConnector mq.MQConnector
+	var destinationMQConnector mq.MQConnector
+
+	sourceMQConnector, err := mq.NewMQConnector(mq.GetQueueType(sourceConn["type"]), sourceConn)
+	if err != nil {
+		return fmt.Errorf("Failed to create MQ source connector: %v", err)
+	}
+
+	destinationMQConnector, err = mq.NewMQConnector(mq.GetQueueType(destConn["type"]), destConn)
+	if err != nil {
+		return fmt.Errorf("Failed to create MQ destination connector: %v", err)
+	}
+
+	err = sourceMQConnector.Connect()
+	if err != nil {
+		return fmt.Errorf("Failed to connect to MQ: %v", err)
+	}
+	defer sourceMQConnector.Disconnect()
+
+	Data.AddEntry(filterRecord.Id, sourceConn, destConn, filterPaths)
+	jD, _ := json.Marshal(Data.DataMap)
+	fmt.Println(string(jD))
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("DISCONNECTING")
+			fmt.Printf("Stopping connection for filter: %s\n", filterRecord.Id)
+			return nil
+		default:
+
+			msg, err := sourceMQConnector.ReceiveMessage()
+			if err != nil {
+				return fmt.Errorf("Failed to receive message: %v", err)
+			}
+
+			format, err := DetectFormat(msg)
+			if err != nil {
+				log.Println("unknown format")
+				continue
+			}
+
+			var response []byte
+			if format == "XML" {
+				// Handle XML
+				doc := etree.NewDocument()
+				if err := doc.ReadFromString(string(msg)); err != nil {
+					log.Printf("Error in reading the XML message: %v", err)
+					continue
+				}
+				namespace := doc.Root().Space
+
+				for _, p := range filterPaths {
+					RemoveElements(doc.Root(), namespace, p)
+					itemsElement := FindElement(doc.Root(), namespace, p)
+					if itemsElement != nil {
+						itemElement := FindElement(itemsElement, namespace, p)
+						if itemElement != nil {
+							fmt.Printf("Found item: %s\n", itemElement.Text())
+						} else {
+							fmt.Println("Item element not found")
+						}
+					} else {
+						fmt.Println("Items element not found")
+					}
+				}
+
+				result, err := doc.WriteToString()
+				if err != nil {
+					panic(err)
+				}
+				response = []byte(result)
+			} else if format == "JSON" {
+				// Handle JSON
+				filteredJson, err := RemoveJSONPaths(msg, filterPaths)
+				if err != nil {
+					log.Printf("error reading the JSON message: %v", err)
+					continue
+				}
+				response = filteredJson
+			}
+
+			fmt.Printf("Received message:\n%s\n", string(msg))
+
+			err = destinationMQConnector.Connect()
+			if err != nil {
+				return fmt.Errorf("Failed to connect to MQ: %v", err)
+			}
+			defer destinationMQConnector.Disconnect()
+
+			if response != nil {
+				err = destinationMQConnector.SendMessage(response)
+				if err != nil {
+					log.Println("Failed to send message: %v", err)
+					continue
+				}
+				fmt.Printf("Sent message:\n%s\n", string(response))
+			}
+		}
+	}
+}
 
 // Recursive function to extract all tags from an XML element
 func ExtractTags(element *etree.Element, tagSet map[string]struct{}) {

@@ -15,7 +15,7 @@ func StartDB() *pocketbase.PocketBase {
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{
 		DefaultDataDir: "./Data/pb_data",
-		DefaultDev:     true,
+		DefaultDev:     false,
 	})
 
 	err := checkMainCollections(app)

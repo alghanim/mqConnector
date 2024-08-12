@@ -1,6 +1,21 @@
 {
-    "5354353453": {
+    "06hd0pf5kbppca2": {
         "destination": {
+            "brokers": "",
+            "channel": "DEV.ADMIN.SVRCONN",
+            "connName": "localhost(1414)",
+            "password": "password",
+            "queueManager": "QM1",
+            "queueName": "DEV.QUEUE.1",
+            "topic": "",
+            "type": "IBM",
+            "url": "",
+            "user": "admin"
+        },
+        "paths": [
+            "phone"
+        ],
+        "source": {
             "brokers": "",
             "channel": "DEV.ADMIN.SVRCONN",
             "connName": "localhost(1414)",
@@ -11,10 +26,25 @@
             "type": "IBM",
             "url": "",
             "user": "admin"
+        }
+    }
+}
+{
+    "06hd0pf5kbppca2": {
+        "destination": {
+            "brokers": "",
+            "channel": "DEV.ADMIN.SVRCONN",
+            "connName": "localhost(1414)",
+            "password": "password",
+            "queueManager": "QM1",
+            "queueName": "DEV.QUEUE.1",
+            "topic": "",
+            "type": "IBM",
+            "url": "",
+            "user": "admin"
         },
         "paths": [
-            "phone",
-            "contact"
+            "phone"
         ],
         "source": {
             "brokers": "",
@@ -22,7 +52,37 @@
             "connName": "localhost(1414)",
             "password": "password",
             "queueManager": "QM1",
+            "queueName": "testQueue",
+            "topic": "",
+            "type": "IBM",
+            "url": "",
+            "user": "admin"
+        }
+    },
+    "fbb9wscn8gkuwgb": {
+        "destination": {
+            "brokers": "",
+            "channel": "DEV.ADMIN.SVRCONN",
+            "connName": "localhost(1414)",
+            "password": "password",
+            "queueManager": "QM1",
             "queueName": "DEV.QUEUE.1",
+            "topic": "",
+            "type": "IBM",
+            "url": "",
+            "user": "admin"
+        },
+        "paths": [
+            "phone",
+            "items"
+        ],
+        "source": {
+            "brokers": "",
+            "channel": "DEV.ADMIN.SVRCONN",
+            "connName": "localhost(1414)",
+            "password": "password",
+            "queueManager": "QM1",
+            "queueName": "testQueue",
             "topic": "",
             "type": "IBM",
             "url": "",
