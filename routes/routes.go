@@ -2,6 +2,7 @@ package routes
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,7 +10,6 @@ import (
 	"mqConnector/Data"
 	tools "mqConnector/Tools"
 	"mqConnector/models"
-	"mqConnector/mq"
 	"net/http"
 	"strings"
 
@@ -23,12 +23,191 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-var dataMap = make(map[string][]map[string]map[string]string)
+// var dataMap = make(map[string][]map[string]map[string]string)
+var (
+	globalCtx      context.Context
+	globalCancel   context.CancelFunc
+	activeRoutines = make(map[string]context.CancelFunc)
+)
 
 func InitRoutes(app *pocketbase.PocketBase) {
+	globalCtx, globalCancel = context.WithCancel(context.Background())
+
+	// app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
+	// 	// Check if the collection exists
+	// 	globalCancel() // Cancel all existing routines
+
+	// 	globalCtx, globalCancel = context.WithCancel(context.Background())
+	// 	activeRoutines = make(map[string]context.CancelFunc)
+
+	// 	filterCollection, err := app.Dao().FindCollectionByNameOrId("MQ_FILTERS")
+	// 	if err != nil {
+	// 		return err
+	// 	}
+
+	// 	filtersQuery := app.Dao().RecordQuery(filterCollection.Name)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+
+	// 	filterRecords := []*pbmodels.Record{}
+	// 	if err := filtersQuery.All(&filterRecords); err != nil {
+	// 		return err
+	// 	}
+
+	// 	app.Dao().ExpandRecords(filterRecords, []string{"FieldPath", "source", "destination"}, nil)
+
+	// 	for _, filterRecord := range filterRecords {
+
+	// 		sourceConn, destConn, filterPaths, err := GetFilterEntities(app, filterRecord)
+	// 		if err != nil {
+	// 			return err
+	// 		}
+
+	// 		// log.Println("check this", testrecord)
+
+	// 		go func(paths []string, sourceConn map[string]string, destConn map[string]string) error {
+
+	// 			var sourceMQConnector mq.MQConnector
+	// 			sourceMQConnector, err = mq.NewMQConnector(mq.GetQueueType(sourceConn["type"]), sourceConn)
+	// 			if err != nil {
+	// 				return fmt.Errorf("Failed to create MQ source connector: %v", err)
+	// 			}
+
+	// 			var destinationMQConnector mq.MQConnector
+	// 			destinationMQConnector, err = mq.NewMQConnector(mq.GetQueueType(destConn["type"]), destConn)
+	// 			if err != nil {
+	// 				return fmt.Errorf("Failed to create MQ destination connector: %v", err)
+	// 			}
+
+	// 			err = sourceMQConnector.Connect()
+	// 			if err != nil {
+	// 				return fmt.Errorf("Failed to connect to MQ: %v", err)
+	// 			}
+	// 			defer sourceMQConnector.Disconnect()
+	// 			Data.AddEntry(filterRecord.Id, sourceConn, destConn, filterPaths)
+
+	// 			jD, _ := json.Marshal(Data.DataMap)
+	// 			fmt.Println(string(jD))
+
+	// 			for {
+	// 				msg, err := sourceMQConnector.ReceiveMessage()
+	// 				if err != nil {
+	// 					return fmt.Errorf("Failed to receive message: %v", err)
+	// 				}
+
+	// 				format, err := tools.DetectFormat(msg)
+	// 				if err != nil {
+	// 					log.Println("unknown format")
+	// 					continue
+	// 				}
+
+	// 				var msgData []byte
+	// 				// var processedData map[string]interface{}
+	// 				var response []byte
+
+	// 				if format == "XML" {
+	// 					// do XML shit
+	// 					// Parse the XML document
+	// 					doc := etree.NewDocument()
+	// 					if err := doc.ReadFromString(string(msg)); err != nil {
+	// 						log.Printf("Error in reading the XML message: %v", err)
+	// 						continue
+	// 					}
+	// 					namespace := doc.Root().Space
+
+	// 					for _, p := range filterPaths {
+	// 						tools.RemoveElements(doc.Root(), namespace, p)
+	// 						// Find the <cont:item> element
+	// 						itemsElement := tools.FindElement(doc.Root(), namespace, p)
+	// 						if itemsElement != nil {
+	// 							// Find the <cont:item> element within <cont:items>
+	// 							itemElement := tools.FindElement(itemsElement, namespace, p)
+	// 							if itemElement != nil {
+	// 								fmt.Printf("Found item: %s\n", itemElement.Text())
+	// 							} else {
+	// 								fmt.Println("Item element not found")
+	// 							}
+	// 						} else {
+	// 							fmt.Println("Items element not found")
+	// 						}
+	// 					}
+
+	// 					// Serialize the modified XML document
+	// 					result, err := doc.WriteToString()
+	// 					if err != nil {
+	// 						panic(err)
+	// 					}
+
+	// 					// mv, err := mxj.NewMapXml(msg)
+	// 					// if err != nil {
+	// 					// 	return
+	// 					// }
+	// 					// msgData, err = json.Marshal(mv)
+	// 					// if err != nil {
+	// 					// 	return
+	// 					// }
+	// 					// filteredJson, err := tools.RemoveJSONPaths(msgData, filterPaths)
+
+	// 					// if err != nil {
+	// 					// 	return
+	// 					// }
+	// 					// if err := json.Unmarshal(filteredJson, &processedData); err != nil {
+	// 					// 	// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert JSON to map"})
+	// 					// }
+
+	// 					// // Convert map back to XML
+	// 					// response, err = mxj.Map(processedData).Xml()
+	// 					// if err != nil {
+	// 					// 	// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert map to XML"})
+	// 					// }
+	// 					response = []byte(result)
+	// 				} else if format == "JSON" {
+	// 					//do JSON shit
+	// 					msgData = msg
+	// 					filteredJson, err := tools.RemoveJSONPaths(msgData, filterPaths)
+
+	// 					if err != nil {
+	// 						log.Printf("error reading the JSON message: %v", err)
+	// 						continue
+	// 					}
+	// 					response = filteredJson
+
+	// 				}
+
+	// 				fmt.Printf("Received message:\n%s\n", string(msg))
+
+	// 				err = destinationMQConnector.Connect()
+	// 				if err != nil {
+	// 					return fmt.Errorf("Failed to connect to MQ: %v", err)
+	// 				}
+
+	// 				defer destinationMQConnector.Disconnect()
+
+	// 				if response != nil {
+	// 					err = destinationMQConnector.SendMessage(response)
+	// 					if err != nil {
+	// 						log.Println("Failed to send message: %v", err)
+	// 						continue
+	// 					}
+	// 					fmt.Printf("Sent message:\n%s\n", string(response))
+	// 				}
+
+	// 			}
+
+	// 		}(filterPaths, sourceConn, destConn)
+
+	// 	}
+
+	// 	return nil
+	// })
 
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
-		// Check if the collection exists
+		globalCancel() // Cancel all existing routines
+
+		globalCtx, globalCancel = context.WithCancel(context.Background())
+		activeRoutines = make(map[string]context.CancelFunc)
+
 		filterCollection, err := app.Dao().FindCollectionByNameOrId("MQ_FILTERS")
 		if err != nil {
 			return err
@@ -47,145 +226,19 @@ func InitRoutes(app *pocketbase.PocketBase) {
 		app.Dao().ExpandRecords(filterRecords, []string{"FieldPath", "source", "destination"}, nil)
 
 		for _, filterRecord := range filterRecords {
-
 			sourceConn, destConn, filterPaths, err := GetFilterEntities(app, filterRecord)
 			if err != nil {
 				return err
 			}
 
-			// log.Println("check this", testrecord)
+			// ctx, cancel := context.WithCancel(globalCtx)
+			activeRoutines[filterRecord.Id] = globalCancel
 
-			go func(paths []string, sourceConn map[string]string, destConn map[string]string) error {
-
-				var sourceMQConnector mq.MQConnector
-				sourceMQConnector, err = mq.NewMQConnector(mq.GetQueueType(sourceConn["type"]), sourceConn)
-				if err != nil {
-					return fmt.Errorf("Failed to create MQ source connector: %v", err)
+			go func(ctx context.Context, filterPaths []string, sourceConn, destConn map[string]string, filterRecord *pbmodels.Record) {
+				if err := tools.StartRoutine(ctx, filterPaths, sourceConn, destConn, filterRecord); err != nil {
+					log.Printf("Error in routine for filter %s: %v", filterRecord.Id, err)
 				}
-
-				var destinationMQConnector mq.MQConnector
-				destinationMQConnector, err = mq.NewMQConnector(mq.GetQueueType(destConn["type"]), destConn)
-				if err != nil {
-					return fmt.Errorf("Failed to create MQ destination connector: %v", err)
-				}
-
-				err = sourceMQConnector.Connect()
-				if err != nil {
-					return fmt.Errorf("Failed to connect to MQ: %v", err)
-				}
-				defer sourceMQConnector.Disconnect()
-				Data.AddEntry(filterRecord.Id, sourceConn, destConn, filterPaths)
-
-				jD, _ := json.Marshal(Data.DataMap)
-				fmt.Println(string(jD))
-
-				for {
-					msg, err := sourceMQConnector.ReceiveMessage()
-					if err != nil {
-						return fmt.Errorf("Failed to receive message: %v", err)
-					}
-
-					format, err := tools.DetectFormat(msg)
-					if err != nil {
-						log.Println("unknown format")
-						continue
-					}
-
-					var msgData []byte
-					// var processedData map[string]interface{}
-					var response []byte
-
-					if format == "XML" {
-						// do XML shit
-						// Parse the XML document
-						doc := etree.NewDocument()
-						if err := doc.ReadFromString(string(msg)); err != nil {
-							log.Printf("Error in reading the XML message: %v", err)
-							continue
-						}
-						namespace := doc.Root().Space
-
-						for _, p := range filterPaths {
-							tools.RemoveElements(doc.Root(), namespace, p)
-							// Find the <cont:item> element
-							itemsElement := tools.FindElement(doc.Root(), namespace, p)
-							if itemsElement != nil {
-								// Find the <cont:item> element within <cont:items>
-								itemElement := tools.FindElement(itemsElement, namespace, p)
-								if itemElement != nil {
-									fmt.Printf("Found item: %s\n", itemElement.Text())
-								} else {
-									fmt.Println("Item element not found")
-								}
-							} else {
-								fmt.Println("Items element not found")
-							}
-						}
-
-						// Serialize the modified XML document
-						result, err := doc.WriteToString()
-						if err != nil {
-							panic(err)
-						}
-
-						// mv, err := mxj.NewMapXml(msg)
-						// if err != nil {
-						// 	return
-						// }
-						// msgData, err = json.Marshal(mv)
-						// if err != nil {
-						// 	return
-						// }
-						// filteredJson, err := tools.RemoveJSONPaths(msgData, filterPaths)
-
-						// if err != nil {
-						// 	return
-						// }
-						// if err := json.Unmarshal(filteredJson, &processedData); err != nil {
-						// 	// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert JSON to map"})
-						// }
-
-						// // Convert map back to XML
-						// response, err = mxj.Map(processedData).Xml()
-						// if err != nil {
-						// 	// return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to convert map to XML"})
-						// }
-						response = []byte(result)
-					} else if format == "JSON" {
-						//do JSON shit
-						msgData = msg
-						filteredJson, err := tools.RemoveJSONPaths(msgData, filterPaths)
-
-						if err != nil {
-							log.Printf("error reading the JSON message: %v", err)
-							continue
-						}
-						response = filteredJson
-
-					}
-
-					fmt.Printf("Received message:\n%s\n", string(msg))
-
-					err = destinationMQConnector.Connect()
-					if err != nil {
-						return fmt.Errorf("Failed to connect to MQ: %v", err)
-					}
-
-					defer destinationMQConnector.Disconnect()
-
-					if response != nil {
-						err = destinationMQConnector.SendMessage(response)
-						if err != nil {
-							log.Println("Failed to send message: %v", err)
-							continue
-						}
-						fmt.Printf("Sent message:\n%s\n", string(response))
-					}
-
-				}
-
-			}(filterPaths, sourceConn, destConn)
-
+			}(globalCtx, filterPaths, sourceConn, destConn, filterRecord)
 		}
 
 		return nil
@@ -448,15 +501,37 @@ func InitRoutes(app *pocketbase.PocketBase) {
 	// })
 	app.OnRecordAfterUpdateRequest("MQ_FILTERS").Add(func(e *core.RecordUpdateEvent) error {
 
-		updatedRecord := e.Record
+		globalCancel() // Cancel all existing routines
 
-		app.Dao().ExpandRecord(updatedRecord, []string{"source", "destination", "FieldPath"}, nil)
+		globalCtx, globalCancel = context.WithCancel(context.Background())
+		activeRoutines = make(map[string]context.CancelFunc)
 
-		shit := updatedRecord.Expand()
-		source := shit["source"].(*pbmodels.Record)
-		source.GetString("queueManager")
+		filtersQuery := app.Dao().RecordQuery(e.Collection.Name)
+		log.Println(e.Collection.Name)
 
-		log.Println(source.GetString("queueManager"))
+		filterRecords := []*pbmodels.Record{}
+		if err := filtersQuery.All(&filterRecords); err != nil {
+			return err
+		}
+
+		app.Dao().ExpandRecords(filterRecords, []string{"FieldPath", "source", "destination"}, nil)
+
+		for _, filterRecord := range filterRecords {
+			sourceConn, destConn, filterPaths, err := GetFilterEntities(app, filterRecord)
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := context.WithCancel(globalCtx)
+			activeRoutines[filterRecord.Id] = cancel
+			log.Println(activeRoutines)
+
+			go func(ctx context.Context, filterPaths []string, sourceConn, destConn map[string]string, filterRecord *pbmodels.Record) {
+				if err := tools.StartRoutine(ctx, filterPaths, sourceConn, destConn, filterRecord); err != nil {
+					log.Printf("Error in routine for filter %s: %v", filterRecord.Id, err)
+				}
+			}(ctx, filterPaths, sourceConn, destConn, filterRecord)
+		}
 
 		return nil
 	})
