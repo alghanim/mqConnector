@@ -27,12 +27,6 @@ func Initialize(id string, sourceConn, destinationConn map[string]string, paths 
 	// Clear the existing map
 	DataMap = make(map[string]any)
 
-	// Prepare the entry
-	pathsMap := make(map[string]string)
-	for i, path := range paths {
-		pathsMap[fmt.Sprintf("path%d", i+1)] = path
-	}
-
 	entry := map[string]any{
 		"destination": destinationConn,
 		"source":      sourceConn,
@@ -46,11 +40,6 @@ func Initialize(id string, sourceConn, destinationConn map[string]string, paths 
 func AddEntry(id string, sourceConn, destinationConn map[string]string, paths []string) {
 	mutex.Lock()
 	defer mutex.Unlock()
-
-	pathsMap := make(map[string]string)
-	for i, path := range paths {
-		pathsMap[fmt.Sprintf("path%d", i+1)] = path
-	}
 
 	entry := map[string]any{
 		"destination": destinationConn,
