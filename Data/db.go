@@ -2,6 +2,7 @@ package Data
 
 import (
 	"log"
+	"os"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
@@ -12,9 +13,13 @@ import (
 )
 
 func StartDB() *pocketbase.PocketBase {
+	dataDir := os.Getenv("MQ_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "./Data/pb_data"
+	}
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{
-		DefaultDataDir: "./Data/pb_data",
+		DefaultDataDir: dataDir,
 		DefaultDev:     false,
 	})
 
@@ -27,13 +32,10 @@ func StartDB() *pocketbase.PocketBase {
 }
 
 func createMQConfigCollections(app *pocketbase.PocketBase) error {
-
+	// Templates collection — admin-only access (nil rules)
 	templateCollection := &models.Collection{
-		Name:       "Templates",
-		Type:       models.CollectionTypeBase,
-		CreateRule: types.Pointer(""),
-		ViewRule:   types.Pointer(""),
-		ListRule:   types.Pointer(""),
+		Name: "Templates",
+		Type: models.CollectionTypeBase,
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
 				Name: "T_NAME",
@@ -42,7 +44,6 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 			&schema.SchemaField{
 				Name: "T_TYPE",
 				Type: schema.FieldTypeSelect,
-
 				Options: schema.SelectOptions{
 					Values:    []string{"XML", "JSON"},
 					MaxSelect: 1,
@@ -65,18 +66,15 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 		return err
 	}
 
-	templateCollection = nil
 	templateCollection, err = app.Dao().FindCollectionByNameOrId("Templates")
 	if err != nil {
 		return err
 	}
 
+	// MQ_TYPES collection
 	mqTypeCollection := &models.Collection{
-		Name:       "MQ_TYPES",
-		Type:       models.CollectionTypeBase,
-		CreateRule: types.Pointer(""),
-		ViewRule:   types.Pointer(""),
-		ListRule:   types.Pointer(""),
+		Name: "MQ_TYPES",
+		Type: models.CollectionTypeBase,
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
 				Name: "MQ_ID",
@@ -92,40 +90,33 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 
 	err = app.Dao().SaveCollection(mqTypeCollection)
 	if err != nil {
-		panic(err)
+		return err
 	}
-	mqTypeCollection = nil
 	mqTypeCollection, err = app.Dao().FindCollectionByNameOrId("MQ_TYPES")
-
 	if err != nil {
-		panic(err)
-	}
-
-	record := models.NewRecord(mqTypeCollection)
-
-	record.Set("MQ_ID", 0)
-	record.Set("TYPE", "IBM")
-	if err := app.Dao().SaveRecord(record); err != nil {
-		return err
-	}
-	record = models.NewRecord(mqTypeCollection)
-	record.Set("MQ_ID", 1)
-	record.Set("TYPE", "RabbitMQ")
-	if err := app.Dao().SaveRecord(record); err != nil {
-		return err
-	}
-	record = models.NewRecord(mqTypeCollection)
-	record.Set("MQ_ID", 2)
-	record.Set("TYPE", "Kafka")
-	if err := app.Dao().SaveRecord(record); err != nil {
 		return err
 	}
 
+	// Seed MQ types
+	for _, mqType := range []struct {
+		ID   int
+		Name string
+	}{
+		{0, "IBM"},
+		{1, "RabbitMQ"},
+		{2, "Kafka"},
+	} {
+		record := models.NewRecord(mqTypeCollection)
+		record.Set("MQ_ID", mqType.ID)
+		record.Set("TYPE", mqType.Name)
+		if err := app.Dao().SaveRecord(record); err != nil {
+			return err
+		}
+	}
+
+	// MQS collection — stores MQ connection configurations
 	mqsCollection := &models.Collection{
-		Name:       "MQS",
-		CreateRule: types.Pointer(""),
-		ViewRule:   types.Pointer(""),
-		ListRule:   types.Pointer(""),
+		Name: "MQS",
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
 				Name: "type",
@@ -183,72 +174,17 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 	if err != nil {
 		log.Println(err)
 	}
-	mqsCollection = nil
 	mqsCollection, err = app.Dao().FindCollectionByNameOrId("MQS")
-
 	if err != nil {
-		return nil
+		return err
 	}
 
-	// mqLinksCollection := &models.Collection{
-	// 	Name:       "MQ_LINKS",
-	// 	Type:       models.CollectionTypeBase,
-	// 	CreateRule: types.Pointer(""),
-	// 	ViewRule:   types.Pointer(""),
-	// 	ListRule:   types.Pointer(""),
-	// 	Schema: schema.NewSchema(
-	// 		&schema.SchemaField{
-	// 			Name: "source",
-	// 			Type: schema.FieldTypeRelation,
-	// 			Options: schema.RelationOptions{
-	// 				CollectionId: mqsCollection.Id,
-	// 				MaxSelect:    types.Pointer(1), // 0 indicates no limit, allowing multiple selections
-	// 			},
-	// 		},
-	// 		&schema.SchemaField{
-	// 			Name: "destination",
-	// 			Type: schema.FieldTypeRelation,
-	// 			Options: schema.RelationOptions{
-	// 				CollectionId: mqsCollection.Id,
-	// 				MaxSelect:    types.Pointer(1), // 0 indicates no limit, allowing multiple selections
-	// 			},
-	// 		},
-	// 		&schema.SchemaField{
-	// 			Name:        "connectionFriendlyName",
-	// 			Type:        schema.FieldTypeText,
-	// 			Presentable: true,
-	// 		},
-	// 		// &schema.SchemaField{
-	// 		// 	Name: "FieldPath",
-	// 		// 	Type: schema.FieldTypeRelation,
-	// 		// 	Options: schema.RelationOptions{
-	// 		// 		CollectionId: templateCollection.Id,
-	// 		// 		MaxSelect:    nil,
-	// 		// 	},
-	// 		// },
-	// 	),
-	// }
-
-	// err = app.Dao().SaveCollection(mqLinksCollection)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// mqLinksCollection = nil
-	// mqLinksCollection, err = app.Dao().FindCollectionByNameOrId("MQ_LINKS")
-	// if err != nil {
-	// 	return err
-	// }
-
+	// MQ_FILTERS collection — links source, destination, field paths, output format, and schema
 	mqFiltersCollection := &models.Collection{
-		Name:       "MQ_FILTERS",
-		ViewRule:   types.Pointer(""),
-		CreateRule: types.Pointer(""),
-		ListRule:   types.Pointer(""),
-		Type:       models.CollectionTypeBase,
+		Name: "MQ_FILTERS",
+		Type: models.CollectionTypeBase,
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
-
 				Name: "source",
 				Type: schema.FieldTypeRelation,
 				Options: schema.RelationOptions{
@@ -257,7 +193,6 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 				},
 			},
 			&schema.SchemaField{
-
 				Name: "destination",
 				Type: schema.FieldTypeRelation,
 				Options: schema.RelationOptions{
@@ -273,6 +208,14 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 					MaxSelect:    nil,
 				},
 			},
+			&schema.SchemaField{
+				Name: "outputFormat",
+				Type: schema.FieldTypeSelect,
+				Options: schema.SelectOptions{
+					Values:    []string{"same", "XML", "JSON"},
+					MaxSelect: 1,
+				},
+			},
 		),
 	}
 
@@ -281,52 +224,266 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 		return err
 	}
 
-	return nil
-}
-func checkMainCollections(app *pocketbase.PocketBase) error {
+	mqFiltersCollection, err = app.Dao().FindCollectionByNameOrId("MQ_FILTERS")
+	if err != nil {
+		return err
+	}
 
-	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
-
-		//Check MQS collection
-		_, err := app.Dao().FindCollectionByNameOrId("MQS")
-
-		if err != nil {
-			_ = createMQConfigCollections(app)
-		}
-
-		return nil
-	})
-
-	return nil
-}
-
-func CreateCollection(colName string, app *pocketbase.PocketBase) error {
-
-	collection := &models.Collection{
-		Name:       colName,
-		Type:       models.CollectionTypeBase,
-		CreateRule: types.Pointer(""),
-		ViewRule:   types.Pointer(""),
-		ListRule:   types.Pointer(""),
-
+	// MQ_TRANSFORMS collection — field rename, mask, move rules
+	mqTransformsCollection := &models.Collection{
+		Name: "MQ_TRANSFORMS",
+		Type: models.CollectionTypeBase,
 		Schema: schema.NewSchema(
 			&schema.SchemaField{
-				Name:        "FieldPath",
-				Type:        schema.FieldTypeText,
-				Required:    true,
-				Presentable: true,
+				Name: "filter_id",
+				Type: schema.FieldTypeRelation,
+				Options: schema.RelationOptions{
+					CollectionId: mqFiltersCollection.Id,
+					MaxSelect:    types.Pointer(1),
+				},
 			},
 			&schema.SchemaField{
-				Name:     "Enabled",
-				Type:     schema.FieldTypeBool,
-				Required: false,
+				Name: "transform_type",
+				Type: schema.FieldTypeSelect,
+				Options: schema.SelectOptions{
+					Values:    []string{"rename", "mask", "move"},
+					MaxSelect: 1,
+				},
+			},
+			&schema.SchemaField{
+				Name: "source_path",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
+				Name: "target_path",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
+				Name: "mask_pattern",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
+				Name: "mask_replacement",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
+				Name:        "order",
+				Type:        schema.FieldTypeNumber,
+				Presentable: true,
 			},
 		),
 	}
 
-	if err := app.Dao().SaveCollection(collection); err != nil {
+	err = app.Dao().SaveCollection(mqTransformsCollection)
+	if err != nil {
 		return err
 	}
+
+	// MQ_ROUTING_RULES collection — content-based routing rules
+	mqRoutingRulesCollection := &models.Collection{
+		Name: "MQ_ROUTING_RULES",
+		Type: models.CollectionTypeBase,
+		Schema: schema.NewSchema(
+			&schema.SchemaField{
+				Name: "filter_id",
+				Type: schema.FieldTypeRelation,
+				Options: schema.RelationOptions{
+					CollectionId: mqFiltersCollection.Id,
+					MaxSelect:    types.Pointer(1),
+				},
+			},
+			&schema.SchemaField{
+				Name:        "condition_path",
+				Type:        schema.FieldTypeText,
+				Presentable: true,
+			},
+			&schema.SchemaField{
+				Name: "condition_operator",
+				Type: schema.FieldTypeSelect,
+				Options: schema.SelectOptions{
+					Values:    []string{"eq", "neq", "contains", "regex", "gt", "lt", "exists"},
+					MaxSelect: 1,
+				},
+			},
+			&schema.SchemaField{
+				Name: "condition_value",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
+				Name: "destination",
+				Type: schema.FieldTypeRelation,
+				Options: schema.RelationOptions{
+					CollectionId: mqsCollection.Id,
+					MaxSelect:    types.Pointer(1),
+				},
+			},
+			&schema.SchemaField{
+				Name: "priority",
+				Type: schema.FieldTypeNumber,
+			},
+			&schema.SchemaField{
+				Name: "enabled",
+				Type: schema.FieldTypeBool,
+			},
+		),
+	}
+
+	err = app.Dao().SaveCollection(mqRoutingRulesCollection)
+	if err != nil {
+		return err
+	}
+
+	// MQ_PIPELINE_STAGES collection — ordered pipeline stages per filter
+	mqPipelineStagesCollection := &models.Collection{
+		Name: "MQ_PIPELINE_STAGES",
+		Type: models.CollectionTypeBase,
+		Schema: schema.NewSchema(
+			&schema.SchemaField{
+				Name: "filter_id",
+				Type: schema.FieldTypeRelation,
+				Options: schema.RelationOptions{
+					CollectionId: mqFiltersCollection.Id,
+					MaxSelect:    types.Pointer(1),
+				},
+			},
+			&schema.SchemaField{
+				Name:        "stage_order",
+				Type:        schema.FieldTypeNumber,
+				Presentable: true,
+			},
+			&schema.SchemaField{
+				Name: "stage_type",
+				Type: schema.FieldTypeSelect,
+				Options: schema.SelectOptions{
+					Values:    []string{"filter", "transform", "route", "translate", "script"},
+					MaxSelect: 1,
+				},
+			},
+			&schema.SchemaField{
+				Name: "stage_config",
+				Type: schema.FieldTypeJson,
+			},
+			&schema.SchemaField{
+				Name: "enabled",
+				Type: schema.FieldTypeBool,
+			},
+		),
+	}
+
+	err = app.Dao().SaveCollection(mqPipelineStagesCollection)
+	if err != nil {
+		return err
+	}
+
+	// DLQ collection — dead letter queue for failed messages
+	dlqCollection := &models.Collection{
+		Name: "DLQ",
+		Type: models.CollectionTypeBase,
+		Schema: schema.NewSchema(
+			&schema.SchemaField{
+				Name: "original_message",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
+				Name:        "error_reason",
+				Type:        schema.FieldTypeText,
+				Presentable: true,
+			},
+			&schema.SchemaField{
+				Name: "filter_id",
+				Type: schema.FieldTypeRelation,
+				Options: schema.RelationOptions{
+					CollectionId: mqFiltersCollection.Id,
+					MaxSelect:    types.Pointer(1),
+				},
+			},
+			&schema.SchemaField{
+				Name: "source_queue",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
+				Name: "retry_count",
+				Type: schema.FieldTypeNumber,
+			},
+		),
+	}
+
+	err = app.Dao().SaveCollection(dlqCollection)
+	if err != nil {
+		return err
+	}
+
+	// MQ_SCHEMAS collection — JSON Schema / XSD validation schemas
+	mqSchemasCollection := &models.Collection{
+		Name: "MQ_SCHEMAS",
+		Type: models.CollectionTypeBase,
+		Schema: schema.NewSchema(
+			&schema.SchemaField{
+				Name:        "schema_name",
+				Type:        schema.FieldTypeText,
+				Presentable: true,
+			},
+			&schema.SchemaField{
+				Name: "schema_type",
+				Type: schema.FieldTypeSelect,
+				Options: schema.SelectOptions{
+					Values:    []string{"JSON_SCHEMA", "XSD"},
+					MaxSelect: 1,
+				},
+			},
+			&schema.SchemaField{
+				Name: "schema_content",
+				Type: schema.FieldTypeText,
+			},
+		),
+	}
+
+	err = app.Dao().SaveCollection(mqSchemasCollection)
+	if err != nil {
+		return err
+	}
+
+	// MQ_SCRIPTS collection — reusable transformation scripts
+	mqScriptsCollection := &models.Collection{
+		Name: "MQ_SCRIPTS",
+		Type: models.CollectionTypeBase,
+		Schema: schema.NewSchema(
+			&schema.SchemaField{
+				Name:        "script_name",
+				Type:        schema.FieldTypeText,
+				Presentable: true,
+			},
+			&schema.SchemaField{
+				Name: "description",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
+				Name: "script_content",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
+				Name: "enabled",
+				Type: schema.FieldTypeBool,
+			},
+		),
+	}
+
+	err = app.Dao().SaveCollection(mqScriptsCollection)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func checkMainCollections(app *pocketbase.PocketBase) error {
+	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
+		_, err := app.Dao().FindCollectionByNameOrId("MQS")
+		if err != nil {
+			_ = createMQConfigCollections(app)
+		}
+		return nil
+	})
 
 	return nil
 }
