@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>mqConnector - Flow Builder</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #0f172a; --surface: #1e293b; --surface2: #334155;
+            --border: #475569; --text: #e2e8f0; --text2: #94a3b8;
+            --accent: #3b82f6; --accent2: #60a5fa; --green: #22c55e;
+            --red: #ef4444; --yellow: #eab308; --purple: #a855f7;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+
+        /* Header */
+        header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; z-index: 10; }
+        header h1 { font-size: 18px; font-weight: 600; }
+        header h1 span { color: var(--accent2); }
+        .header-actions { display: flex; gap: 8px; }
+        .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer; font-size: 13px; transition: all 0.15s; }
+        .btn:hover { border-color: var(--accent); }
+        .btn-primary { background: var(--accent); border-color: var(--accent); }
+        .btn-primary:hover { background: var(--accent2); }
+
+        /* Layout */
+        .layout { display: flex; flex: 1; overflow: hidden; }
+
+        /* Sidebar */
+        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+        .sidebar-section { padding: 16px; border-bottom: 1px solid var(--border); }
+        .sidebar-section h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text2); margin-bottom: 10px; }
+        .node-item { padding: 10px 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; cursor: grab; font-size: 13px; display: flex; align-items: center; gap: 8px; transition: all 0.15s; }
+        .node-item:hover { border-color: var(--accent); transform: translateX(2px); }
+        .node-item .icon { width: 24px; height: 24px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; }
+        .node-item .icon.source { background: var(--green); color: #000; }
+        .node-item .icon.dest { background: var(--red); color: #fff; }
+        .node-item .icon.filter { background: var(--accent); color: #fff; }
+        .node-item .icon.transform { background: var(--purple); color: #fff; }
+        .node-item .icon.translate { background: var(--yellow); color: #000; }
+        .node-item .icon.route { background: #f97316; color: #fff; }
+        .node-item .icon.script { background: #14b8a6; color: #fff; }
+        .node-item .icon.validate { background: #ec4899; color: #fff; }
+
+        /* Canvas */
+        .canvas-container { flex: 1; position: relative; overflow: hidden; }
+        .canvas { width: 100%; height: 100%; position: relative; background-image: radial-gradient(circle, var(--surface2) 1px, transparent 1px); background-size: 20px 20px; }
+
+        /* Flow Nodes */
+        .flow-node { position: absolute; background: var(--surface); border: 2px solid var(--border); border-radius: 8px; min-width: 180px; cursor: move; user-select: none; z-index: 2; }
+        .flow-node.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,0.3); }
+        .flow-node-header { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; }
+        .flow-node-body { padding: 10px 12px; font-size: 12px; color: var(--text2); }
+        .flow-node-body select, .flow-node-body input, .flow-node-body textarea {
+            width: 100%; padding: 6px 8px; margin-top: 4px; margin-bottom: 8px;
+            background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+            color: var(--text); font-size: 12px; font-family: inherit;
+        }
+        .flow-node-body textarea { min-height: 60px; resize: vertical; font-family: monospace; }
+        .flow-node-body label { font-size: 11px; color: var(--text2); }
+        .flow-node .port { width: 12px; height: 12px; background: var(--accent); border: 2px solid var(--surface); border-radius: 50%; position: absolute; cursor: crosshair; z-index: 3; }
+        .flow-node .port-out { right: -6px; top: 50%; transform: translateY(-50%); }
+        .flow-node .port-in { left: -6px; top: 50%; transform: translateY(-50%); }
+        .flow-node .delete-btn { position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; background: var(--red); border-radius: 50%; display: none; align-items: center; justify-content: center; cursor: pointer; font-size: 11px; color: #fff; z-index: 4; }
+        .flow-node.selected .delete-btn { display: flex; }
+
+        /* Connections (SVG) */
+        .connections-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+        .connection-line { stroke: var(--accent); stroke-width: 2; fill: none; }
+        .connection-line-hover { stroke: var(--accent2); stroke-width: 3; fill: none; pointer-events: stroke; cursor: pointer; }
+
+        /* Properties Panel */
+        .properties { width: 280px; background: var(--surface); border-left: 1px solid var(--border); padding: 16px; overflow-y: auto; }
+        .properties h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text2); margin-bottom: 12px; }
+        .properties .empty { color: var(--text2); font-size: 13px; text-align: center; padding: 40px 0; }
+        .prop-group { margin-bottom: 16px; }
+        .prop-group label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+        .prop-group input, .prop-group select, .prop-group textarea {
+            width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border);
+            border-radius: 4px; color: var(--text); font-size: 13px;
+        }
+        .prop-group textarea { min-height: 80px; font-family: monospace; font-size: 12px; resize: vertical; }
+
+        /* Status bar */
+        .statusbar { background: var(--surface); border-top: 1px solid var(--border); padding: 6px 16px; font-size: 11px; color: var(--text2); display: flex; gap: 16px; }
+        .statusbar .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+        .statusbar .dot.green { background: var(--green); }
+        .statusbar .dot.red { background: var(--red); }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>mq<span>Connector</span> Flow Builder</h1>
+        <div class="header-actions">
+            <button class="btn" onclick="clearCanvas()">Clear</button>
+            <button class="btn" onclick="loadFromDB()">Load</button>
+            <button class="btn btn-primary" onclick="saveToDB()">Save & Deploy</button>
+        </div>
+    </header>
+
+    <div class="layout">
+        <div class="sidebar">
+            <div class="sidebar-section">
+                <h3>Connections</h3>
+                <div class="node-item" draggable="true" data-type="source">
+                    <div class="icon source">S</div> Source Queue
+                </div>
+                <div class="node-item" draggable="true" data-type="destination">
+                    <div class="icon dest">D</div> Destination Queue
+                </div>
+            </div>
+            <div class="sidebar-section">
+                <h3>Processing Stages</h3>
+                <div class="node-item" draggable="true" data-type="filter">
+                    <div class="icon filter">F</div> Field Filter
+                </div>
+                <div class="node-item" draggable="true" data-type="transform">
+                    <div class="icon transform">T</div> Transform
+                </div>
+                <div class="node-item" draggable="true" data-type="translate">
+                    <div class="icon translate">X</div> Format Translate
+                </div>
+                <div class="node-item" draggable="true" data-type="route">
+                    <div class="icon route">R</div> Content Router
+                </div>
+                <div class="node-item" draggable="true" data-type="script">
+                    <div class="icon script">JS</div> Script Transform
+                </div>
+                <div class="node-item" draggable="true" data-type="validate">
+                    <div class="icon validate">V</div> Schema Validate
+                </div>
+            </div>
+            <div class="sidebar-section" id="mq-connections-list">
+                <h3>Saved MQ Connections</h3>
+                <div style="color: var(--text2); font-size: 12px;">Loading...</div>
+            </div>
+        </div>
+
+        <div class="canvas-container">
+            <svg class="connections-svg" id="connectionsSvg"></svg>
+            <div class="canvas" id="canvas"></div>
+        </div>
+
+        <div class="properties" id="propertiesPanel">
+            <h3>Properties</h3>
+            <div class="empty">Select a node to edit its properties</div>
+        </div>
+    </div>
+
+    <div class="statusbar">
+        <span><span class="dot green" id="statusDot"></span> <span id="statusText">Ready</span></span>
+        <span id="nodeCount">Nodes: 0</span>
+        <span id="connCount">Connections: 0</span>
+    </div>
+
+    <script>
+    // State
+    let nodes = [];
+    let connections = [];
+    let selectedNode = null;
+    let nodeIdCounter = 0;
+    let draggingNode = null;
+    let dragOffset = { x: 0, y: 0 };
+    let connecting = null; // { nodeId, port: 'out' }
+    const canvas = document.getElementById('canvas');
+    const svg = document.getElementById('connectionsSvg');
+
+    // PocketBase API base
+    const API_BASE = window.location.origin;
+
+    // Drag from sidebar
+    document.querySelectorAll('.node-item[draggable]').forEach(item => {
+        item.addEventListener('dragstart', e => {
+            e.dataTransfer.setData('nodeType', item.dataset.type);
+        });
+    });
+
+    canvas.addEventListener('dragover', e => e.preventDefault());
+    canvas.addEventListener('drop', e => {
+        e.preventDefault();
+        const type = e.dataTransfer.getData('nodeType');
+        if (!type) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        addNode(type, x, y);
+    });
+
+    function addNode(type, x, y) {
+        const id = 'node-' + (++nodeIdCounter);
+        const node = { id, type, x, y, config: getDefaultConfig(type) };
+        nodes.push(node);
+        renderNode(node);
+        updateStatus();
+    }
+
+    function getDefaultConfig(type) {
+        switch(type) {
+            case 'source': return { label: 'Source', connectionId: '' };
+            case 'destination': return { label: 'Destination', connectionId: '' };
+            case 'filter': return { label: 'Filter', paths: '' };
+            case 'transform': return { label: 'Transform', transformType: 'rename', sourcePath: '', targetPath: '' };
+            case 'translate': return { label: 'Translate', outputFormat: 'JSON' };
+            case 'route': return { label: 'Router', conditionPath: '', operator: 'eq', value: '' };
+            case 'script': return { label: 'Script', script: 'msg.processed = true;\nmsg;' };
+            case 'validate': return { label: 'Validate', schemaType: 'JSON_SCHEMA', schema: '' };
+            default: return { label: type };
+        }
+    }
+
+    function getNodeColor(type) {
+        const colors = { source: '#22c55e', destination: '#ef4444', filter: '#3b82f6', transform: '#a855f7', translate: '#eab308', route: '#f97316', script: '#14b8a6', validate: '#ec4899' };
+        return colors[type] || '#64748b';
+    }
+
+    function getNodeIcon(type) {
+        const icons = { source: 'S', destination: 'D', filter: 'F', transform: 'T', translate: 'X', route: 'R', script: 'JS', validate: 'V' };
+        return icons[type] || '?';
+    }
+
+    function renderNode(node) {
+        const el = document.createElement('div');
+        el.className = 'flow-node';
+        el.id = node.id;
+        el.style.left = node.x + 'px';
+        el.style.top = node.y + 'px';
+
+        const color = getNodeColor(node.type);
+        const icon = getNodeIcon(node.type);
+
+        el.innerHTML = `
+            <div class="delete-btn" onclick="deleteNode('${node.id}')">&times;</div>
+            <div class="flow-node-header">
+                <div class="icon" style="background:${color};color:#fff;width:20px;height:20px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0">${icon}</div>
+                ${node.config.label || node.type}
+            </div>
+            <div class="flow-node-body">
+                ${getNodePreview(node)}
+            </div>
+            ${node.type !== 'source' ? '<div class="port port-in"></div>' : ''}
+            ${node.type !== 'destination' ? '<div class="port port-out"></div>' : ''}
+        `;
+
+        // Node drag
+        el.addEventListener('mousedown', e => {
+            if (e.target.classList.contains('port') || e.target.classList.contains('delete-btn')) return;
+            draggingNode = node;
+            const rect = el.getBoundingClientRect();
+            dragOffset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+            selectNode(node.id);
+            e.preventDefault();
+        });
+
+        // Port connections
+        const portOut = el.querySelector('.port-out');
+        const portIn = el.querySelector('.port-in');
+
+        if (portOut) {
+            portOut.addEventListener('mousedown', e => {
+                e.stopPropagation();
+                connecting = { nodeId: node.id, port: 'out' };
+            });
+        }
+        if (portIn) {
+            portIn.addEventListener('mouseup', e => {
+                e.stopPropagation();
+                if (connecting && connecting.nodeId !== node.id) {
+                    addConnection(connecting.nodeId, node.id);
+                }
+                connecting = null;
+            });
+        }
+
+        canvas.appendChild(el);
+    }
+
+    function getNodePreview(node) {
+        switch(node.type) {
+            case 'source':
+            case 'destination':
+                return `<span style="font-size:11px">${node.config.connectionId || 'Not configured'}</span>`;
+            case 'filter':
+                return `<span style="font-size:11px">${node.config.paths || 'No paths'}</span>`;
+            case 'transform':
+                return `<span style="font-size:11px">${node.config.transformType}: ${node.config.sourcePath || '...'}</span>`;
+            case 'translate':
+                return `<span style="font-size:11px">Output: ${node.config.outputFormat}</span>`;
+            case 'route':
+                return `<span style="font-size:11px">${node.config.conditionPath || '...'} ${node.config.operator} ${node.config.value || '...'}</span>`;
+            case 'script':
+                return `<span style="font-size:11px;font-family:monospace">${(node.config.script||'').substring(0,30)}...</span>`;
+            case 'validate':
+                return `<span style="font-size:11px">${node.config.schemaType}</span>`;
+            default:
+                return '';
+        }
+    }
+
+    function selectNode(nodeId) {
+        document.querySelectorAll('.flow-node').forEach(n => n.classList.remove('selected'));
+        const el = document.getElementById(nodeId);
+        if (el) el.classList.add('selected');
+        selectedNode = nodes.find(n => n.id === nodeId);
+        renderProperties();
+    }
+
+    function deleteNode(nodeId) {
+        nodes = nodes.filter(n => n.id !== nodeId);
+        connections = connections.filter(c => c.from !== nodeId && c.to !== nodeId);
+        const el = document.getElementById(nodeId);
+        if (el) el.remove();
+        if (selectedNode && selectedNode.id === nodeId) {
+            selectedNode = null;
+            renderProperties();
+        }
+        renderConnections();
+        updateStatus();
+    }
+
+    function addConnection(fromId, toId) {
+        if (connections.some(c => c.from === fromId && c.to === toId)) return;
+        connections.push({ from: fromId, to: toId });
+        renderConnections();
+        updateStatus();
+    }
+
+    function renderConnections() {
+        svg.innerHTML = '';
+        connections.forEach(conn => {
+            const fromEl = document.getElementById(conn.from);
+            const toEl = document.getElementById(conn.to);
+            if (!fromEl || !toEl) return;
+
+            const fromPort = fromEl.querySelector('.port-out');
+            const toPort = toEl.querySelector('.port-in');
+            if (!fromPort || !toPort) return;
+
+            const canvasRect = canvas.getBoundingClientRect();
+            const fromRect = fromPort.getBoundingClientRect();
+            const toRect = toPort.getBoundingClientRect();
+
+            const x1 = fromRect.left + 6 - canvasRect.left;
+            const y1 = fromRect.top + 6 - canvasRect.top;
+            const x2 = toRect.left + 6 - canvasRect.left;
+            const y2 = toRect.top + 6 - canvasRect.top;
+
+            const dx = Math.abs(x2 - x1) * 0.5;
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', `M${x1},${y1} C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}`);
+            path.setAttribute('class', 'connection-line');
+            svg.appendChild(path);
+        });
+    }
+
+    // Mouse move for dragging
+    document.addEventListener('mousemove', e => {
+        if (draggingNode) {
+            const canvasRect = canvas.getBoundingClientRect();
+            draggingNode.x = e.clientX - canvasRect.left - dragOffset.x;
+            draggingNode.y = e.clientY - canvasRect.top - dragOffset.y;
+            const el = document.getElementById(draggingNode.id);
+            if (el) {
+                el.style.left = draggingNode.x + 'px';
+                el.style.top = draggingNode.y + 'px';
+            }
+            renderConnections();
+        }
+    });
+
+    document.addEventListener('mouseup', () => {
+        draggingNode = null;
+        connecting = null;
+    });
+
+    // Properties panel
+    function renderProperties() {
+        const panel = document.getElementById('propertiesPanel');
+        if (!selectedNode) {
+            panel.innerHTML = '<h3>Properties</h3><div class="empty">Select a node to edit its properties</div>';
+            return;
+        }
+
+        const n = selectedNode;
+        let html = `<h3>${n.config.label || n.type} Properties</h3>`;
+        html += `<div class="prop-group"><label>Label</label><input value="${n.config.label||''}" onchange="updateProp('label', this.value)"></div>`;
+
+        switch(n.type) {
+            case 'source':
+            case 'destination':
+                html += `<div class="prop-group"><label>MQ Connection ID</label><input value="${n.config.connectionId||''}" onchange="updateProp('connectionId', this.value)" placeholder="PocketBase record ID"></div>`;
+                break;
+            case 'filter':
+                html += `<div class="prop-group"><label>Field Paths (comma-separated)</label><textarea onchange="updateProp('paths', this.value)">${n.config.paths||''}</textarea></div>`;
+                break;
+            case 'transform':
+                html += `<div class="prop-group"><label>Type</label><select onchange="updateProp('transformType', this.value)">
+                    <option value="rename" ${n.config.transformType==='rename'?'selected':''}>Rename</option>
+                    <option value="mask" ${n.config.transformType==='mask'?'selected':''}>Mask</option>
+                    <option value="move" ${n.config.transformType==='move'?'selected':''}>Move</option>
+                </select></div>`;
+                html += `<div class="prop-group"><label>Source Path</label><input value="${n.config.sourcePath||''}" onchange="updateProp('sourcePath', this.value)"></div>`;
+                html += `<div class="prop-group"><label>Target Path</label><input value="${n.config.targetPath||''}" onchange="updateProp('targetPath', this.value)"></div>`;
+                if (n.config.transformType === 'mask') {
+                    html += `<div class="prop-group"><label>Mask Pattern (regex)</label><input value="${n.config.maskPattern||''}" onchange="updateProp('maskPattern', this.value)"></div>`;
+                    html += `<div class="prop-group"><label>Mask Replacement</label><input value="${n.config.maskReplace||''}" onchange="updateProp('maskReplace', this.value)"></div>`;
+                }
+                break;
+            case 'translate':
+                html += `<div class="prop-group"><label>Output Format</label><select onchange="updateProp('outputFormat', this.value)">
+                    <option value="same" ${n.config.outputFormat==='same'?'selected':''}>Same</option>
+                    <option value="JSON" ${n.config.outputFormat==='JSON'?'selected':''}>JSON</option>
+                    <option value="XML" ${n.config.outputFormat==='XML'?'selected':''}>XML</option>
+                </select></div>`;
+                break;
+            case 'route':
+                html += `<div class="prop-group"><label>Condition Path</label><input value="${n.config.conditionPath||''}" onchange="updateProp('conditionPath', this.value)"></div>`;
+                html += `<div class="prop-group"><label>Operator</label><select onchange="updateProp('operator', this.value)">
+                    ${['eq','neq','contains','regex','gt','lt','exists'].map(op => `<option value="${op}" ${n.config.operator===op?'selected':''}>${op}</option>`).join('')}
+                </select></div>`;
+                html += `<div class="prop-group"><label>Value</label><input value="${n.config.value||''}" onchange="updateProp('value', this.value)"></div>`;
+                break;
+            case 'script':
+                html += `<div class="prop-group"><label>Script</label><textarea style="min-height:120px" onchange="updateProp('script', this.value)">${n.config.script||''}</textarea></div>`;
+                html += `<div style="font-size:11px;color:var(--text2)">Available: msg.field, delete msg.field, msg.a + msg.b, Date.now()</div>`;
+                break;
+            case 'validate':
+                html += `<div class="prop-group"><label>Schema Type</label><select onchange="updateProp('schemaType', this.value)">
+                    <option value="JSON_SCHEMA" ${n.config.schemaType==='JSON_SCHEMA'?'selected':''}>JSON Schema</option>
+                    <option value="XSD" ${n.config.schemaType==='XSD'?'selected':''}>XSD</option>
+                </select></div>`;
+                html += `<div class="prop-group"><label>Schema Content</label><textarea style="min-height:120px" onchange="updateProp('schema', this.value)">${n.config.schema||''}</textarea></div>`;
+                break;
+        }
+
+        panel.innerHTML = html;
+    }
+
+    function updateProp(key, value) {
+        if (!selectedNode) return;
+        selectedNode.config[key] = value;
+        // Re-render the node to update preview
+        const el = document.getElementById(selectedNode.id);
+        if (el) {
+            el.querySelector('.flow-node-body').innerHTML = getNodePreview(selectedNode);
+            if (key === 'label') {
+                const header = el.querySelector('.flow-node-header');
+                const color = getNodeColor(selectedNode.type);
+                const icon = getNodeIcon(selectedNode.type);
+                header.innerHTML = `<div class="icon" style="background:${color};color:#fff;width:20px;height:20px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0">${icon}</div> ${value}`;
+            }
+        }
+    }
+
+    function updateStatus() {
+        document.getElementById('nodeCount').textContent = `Nodes: ${nodes.length}`;
+        document.getElementById('connCount').textContent = `Connections: ${connections.length}`;
+    }
+
+    function clearCanvas() {
+        if (!confirm('Clear all nodes and connections?')) return;
+        nodes = [];
+        connections = [];
+        selectedNode = null;
+        canvas.innerHTML = '';
+        svg.innerHTML = '';
+        renderProperties();
+        updateStatus();
+    }
+
+    // Save flow to PocketBase
+    async function saveToDB() {
+        const statusText = document.getElementById('statusText');
+        const statusDot = document.getElementById('statusDot');
+
+        try {
+            statusText.textContent = 'Saving...';
+
+            const flowData = { nodes, connections };
+            // Store as a JSON export that can be loaded back
+            localStorage.setItem('mqconnector_flow', JSON.stringify(flowData));
+
+            statusText.textContent = 'Saved locally';
+            statusDot.className = 'dot green';
+
+            // TODO: Save to PocketBase when an admin token is available
+            // For now, save to localStorage
+            setTimeout(() => { statusText.textContent = 'Ready'; }, 2000);
+        } catch(e) {
+            statusText.textContent = 'Error: ' + e.message;
+            statusDot.className = 'dot red';
+        }
+    }
+
+    // Load flow
+    function loadFromDB() {
+        try {
+            const saved = localStorage.getItem('mqconnector_flow');
+            if (!saved) { alert('No saved flow found'); return; }
+
+            const flowData = JSON.parse(saved);
+            nodes = [];
+            connections = [];
+            canvas.innerHTML = '';
+            svg.innerHTML = '';
+
+            flowData.nodes.forEach(n => {
+                nodes.push(n);
+                nodeIdCounter = Math.max(nodeIdCounter, parseInt(n.id.split('-')[1]) || 0);
+                renderNode(n);
+            });
+
+            connections = flowData.connections || [];
+            renderConnections();
+            updateStatus();
+
+            document.getElementById('statusText').textContent = 'Flow loaded';
+            setTimeout(() => { document.getElementById('statusText').textContent = 'Ready'; }, 2000);
+        } catch(e) {
+            alert('Failed to load: ' + e.message);
+        }
+    }
+
+    // Load saved MQ connections from PocketBase
+    async function loadMQConnections() {
+        const list = document.getElementById('mq-connections-list');
+        try {
+            const resp = await fetch(API_BASE + '/api/collections/MQS/records');
+            if (!resp.ok) { list.innerHTML = '<h3>Saved MQ Connections</h3><div style="color:var(--text2);font-size:12px">Login to admin to view</div>'; return; }
+            const data = await resp.json();
+            let html = '<h3>Saved MQ Connections</h3>';
+            if (data.items && data.items.length > 0) {
+                data.items.forEach(item => {
+                    html += `<div class="node-item" style="cursor:pointer" onclick="navigator.clipboard.writeText('${item.id}')">
+                        <div class="icon source" style="font-size:9px">MQ</div>
+                        <div><div style="font-size:12px">${item.ownerName || item.id}</div><div style="font-size:10px;color:var(--text2)">${item.id}</div></div>
+                    </div>`;
+                });
+            } else {
+                html += '<div style="color:var(--text2);font-size:12px">No connections configured</div>';
+            }
+            list.innerHTML = html;
+        } catch(e) {
+            list.innerHTML = '<h3>Saved MQ Connections</h3><div style="color:var(--text2);font-size:12px">Could not load connections</div>';
+        }
+    }
+
+    // Init
+    loadMQConnections();
+
+    // Auto-load saved flow
+    const saved = localStorage.getItem('mqconnector_flow');
+    if (saved) {
+        try { loadFromDB(); } catch(e) {}
+    }
+    </script>
+</body>
+</html>

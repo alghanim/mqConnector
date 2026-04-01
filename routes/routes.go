@@ -79,6 +79,7 @@ func InitRoutes(app *pocketbase.PocketBase) context.CancelFunc {
 		registerDLQRoutes(app, e)
 		registerMetricsRoutes(app, e)
 		registerHealthRoute(app, e)
+		registerFlowBuilderUI(e)
 		InitBridgeRoutes(app, e)
 		return nil
 	})
@@ -718,4 +719,15 @@ func GetFilterEntities(app *pocketbase.PocketBase, record *pbmodels.Record) (s m
 	destConn["type"] = destConnectionType.GetString("TYPE")
 
 	return sourceConn, destConn, filterPaths, nil
+}
+
+// registerFlowBuilderUI serves the visual flow builder at /flow
+func registerFlowBuilderUI(e *core.ServeEvent) {
+	e.Router.AddRoute(echo.Route{
+		Method: http.MethodGet,
+		Path:   "/flow",
+		Handler: func(c echo.Context) error {
+			return c.File("ui/index.html")
+		},
+	})
 }

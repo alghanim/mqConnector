@@ -180,6 +180,18 @@ func BuildPipeline(
 				Rules:    routingRules,
 				Pipeline: pipeline,
 			})
+
+		case "script":
+			scriptCode := ""
+			if stage.Config != "" {
+				var cfg struct {
+					Script string `json:"script"`
+				}
+				if err := json.Unmarshal([]byte(stage.Config), &cfg); err == nil {
+					scriptCode = cfg.Script
+				}
+			}
+			pipeline.Stages = append(pipeline.Stages, &ScriptStage{Script: scriptCode})
 		}
 	}
 

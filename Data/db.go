@@ -355,7 +355,7 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 				Name: "stage_type",
 				Type: schema.FieldTypeSelect,
 				Options: schema.SelectOptions{
-					Values:    []string{"filter", "transform", "route", "translate"},
+					Values:    []string{"filter", "transform", "route", "translate", "script"},
 					MaxSelect: 1,
 				},
 			},
@@ -439,6 +439,36 @@ func createMQConfigCollections(app *pocketbase.PocketBase) error {
 	}
 
 	err = app.Dao().SaveCollection(mqSchemasCollection)
+	if err != nil {
+		return err
+	}
+
+	// MQ_SCRIPTS collection — reusable transformation scripts
+	mqScriptsCollection := &models.Collection{
+		Name: "MQ_SCRIPTS",
+		Type: models.CollectionTypeBase,
+		Schema: schema.NewSchema(
+			&schema.SchemaField{
+				Name:        "script_name",
+				Type:        schema.FieldTypeText,
+				Presentable: true,
+			},
+			&schema.SchemaField{
+				Name: "description",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
+				Name: "script_content",
+				Type: schema.FieldTypeText,
+			},
+			&schema.SchemaField{
+				Name: "enabled",
+				Type: schema.FieldTypeBool,
+			},
+		),
+	}
+
+	err = app.Dao().SaveCollection(mqScriptsCollection)
 	if err != nil {
 		return err
 	}
