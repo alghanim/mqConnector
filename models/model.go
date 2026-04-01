@@ -19,7 +19,7 @@ type MQConfig struct {
 	Type         string `db:"type" json:"type"`
 	QueueManager string `db:"queueManager" json:"queueManager"`
 	ConnName     string `db:"connName" json:"connName"`
-	Channel      string `cb:"channel" json:"channel"`
+	Channel      string `db:"channel" json:"channel"`
 	User         string `db:"user" json:"user"`
 	Password     string `db:"password" json:"password"`
 	QueueName    string `db:"queueName" json:"queueName"`
