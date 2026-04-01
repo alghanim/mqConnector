@@ -1,3 +1,4 @@
 vendor/
 out/
 Data/pb_data/
+web/node_modules/

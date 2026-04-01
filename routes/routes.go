@@ -79,7 +79,7 @@ func InitRoutes(app *pocketbase.PocketBase) context.CancelFunc {
 		registerDLQRoutes(app, e)
 		registerMetricsRoutes(app, e)
 		registerHealthRoute(app, e)
-		registerFlowBuilderUI(e)
+		registerFrontend(e)
 		InitBridgeRoutes(app, e)
 		return nil
 	})
@@ -721,13 +721,26 @@ func GetFilterEntities(app *pocketbase.PocketBase, record *pbmodels.Record) (s m
 	return sourceConn, destConn, filterPaths, nil
 }
 
-// registerFlowBuilderUI serves the visual flow builder at /flow
-func registerFlowBuilderUI(e *core.ServeEvent) {
+// registerFrontend serves the React SPA from ui/dist
+func registerFrontend(e *core.ServeEvent) {
+	// Serve static assets
 	e.Router.AddRoute(echo.Route{
 		Method: http.MethodGet,
-		Path:   "/flow",
+		Path:   "/assets/*",
 		Handler: func(c echo.Context) error {
-			return c.File("ui/index.html")
+			return c.File("ui/dist" + c.Request().URL.Path)
 		},
 	})
+
+	// SPA fallback — serve index.html for all non-API, non-asset routes
+	for _, path := range []string{"/", "/flow", "/dlq", "/connections"} {
+		p := path
+		e.Router.AddRoute(echo.Route{
+			Method: http.MethodGet,
+			Path:   p,
+			Handler: func(c echo.Context) error {
+				return c.File("ui/dist/index.html")
+			},
+		})
+	}
 }
