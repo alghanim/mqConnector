@@ -9,7 +9,7 @@ import (
 	"log/slog"
 
 	"mqConnector/internal/mq"
-	"mqConnector/internal/pipeline"
+	"mqConnector/internal/mqcfg"
 	"mqConnector/internal/storage"
 )
 
@@ -88,7 +88,7 @@ func (s *Service) Retry(ctx context.Context, id string) error {
 		return fmt.Errorf("dlq retry: destination lookup: %w", err)
 	}
 
-	cfg := pipeline.ToMQConfig(dest)
+	cfg := mqcfg.From(dest)
 	conn, release, err := s.pool.Get(ctx, "dlq-retry-"+entry.ID, cfg)
 	if err != nil {
 		return fmt.Errorf("dlq retry: pool get: %w", err)

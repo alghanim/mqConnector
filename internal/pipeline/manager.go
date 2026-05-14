@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"mqConnector/internal/mq"
+	"mqConnector/internal/mqcfg"
 	"mqConnector/internal/storage"
 )
 
@@ -179,56 +180,9 @@ func (m *Manager) ActiveCount() int {
 	return len(m.active)
 }
 
-// ToMQConfig converts a storage.Connection to an mq.Config.
+// ToMQConfig converts a storage.Connection to an mq.Config. The real work
+// lives in internal/mqcfg — kept as a thin alias so existing callers (server
+// handlers, etc.) continue to compile.
 func ToMQConfig(c *storage.Connection) mq.Config {
-	t, _ := mq.ParseType(c.Type)
-	cfg := mq.Config{
-		Type:         t,
-		QueueManager: c.QueueManager,
-		ConnName:     c.ConnName,
-		Channel:      c.Channel,
-		Username:     c.Username,
-		Password:     c.Password,
-		QueueName:    c.QueueName,
-		URL:          c.URL,
-		Topic:        c.Topic,
-	}
-	if c.Brokers != "" {
-		// Stored as comma-separated.
-		brokers := []string{}
-		for _, b := range splitAndTrim(c.Brokers, ",") {
-			if b != "" {
-				brokers = append(brokers, b)
-			}
-		}
-		cfg.Brokers = brokers
-	}
-	return cfg
-}
-
-func splitAndTrim(s, sep string) []string {
-	out := []string{}
-	cur := ""
-	for _, ch := range s {
-		if string(ch) == sep {
-			out = append(out, trimSpace(cur))
-			cur = ""
-			continue
-		}
-		cur += string(ch)
-	}
-	out = append(out, trimSpace(cur))
-	return out
-}
-
-func trimSpace(s string) string {
-	start := 0
-	for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
-		start++
-	}
-	end := len(s)
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
+	return mqcfg.From(c)
 }
