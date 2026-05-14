@@ -104,8 +104,49 @@ cd web && npm install && npm run dev
 ## Tests
 
 ```sh
-go test ./...
+go test ./...                  # full suite, ~9 s
+go test -race ./...            # race-detected suite, ~10 s
+go test -bench=. ./...         # per-stage + pool benchmarks
+go test -cover ./...           # per-package coverage summary
 ```
+
+End-to-end scenario coverage (no external broker required) lives in
+[`internal/pipeline/e2e_test.go`](internal/pipeline/e2e_test.go): it
+seeds storage, uploads a JSON Schema, configures filter + transform
+stages, drives messages through in-memory MQ connectors, and asserts
+both the destination payload and the DLQ contents.
+
+### Hot-path benchmarks (Apple M5, in-process)
+
+| Stage | ns/op | B/op | allocs |
+|---|---:|---:|---:|
+| `Detect_JSON` | 1.8 | 0 | 0 |
+| `Detect_XML`  | 3.9 | 0 | 0 |
+| `Filter_JSON` | 43 µs | 23 KB | 580 |
+| `Filter_XML`  | 89 µs | 52 KB | 1327 |
+| `Transform_RenameMask` | 52 µs | 26 KB | 612 |
+| `Translate_JSON→XML` | 47 µs | 31 KB | 585 |
+| `Route_5Rules` | 27 µs | 17 KB | 402 |
+| `Script_AssignDelete` | 47 µs | 23 KB | 588 |
+| `Validate_JSONSchema` | 27 µs | 17 KB | 394 |
+| `Pool_Get_cached` | 117 ns | 16 B | 1 |
+| `Pool_Send_cached` | 152 ns | 64 B | 2 |
+
+### Coverage
+
+| Package | Coverage |
+|---|---:|
+| `health` | 100% |
+| `metrics` | 100% |
+| `mqcfg` | 100% |
+| `config` | 86% |
+| `logging` | 82% |
+| `dlq` | 79% |
+| `pipeline` | 69% |
+| `auth` | 66% |
+| `storage` | 63% |
+| `server` | 50% |
+| `mq` | 43% |
 
 ## Operational endpoints
 
