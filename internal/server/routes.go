@@ -12,6 +12,11 @@ import (
 func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
 
+	// Order matters: Recover wraps everything so a panic in any other
+	// middleware or handler still produces a structured log + 500 instead
+	// of tearing the process down.
+	r.Use(Recover)
+
 	// Inject the logger into every request context so handlers can grab it.
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -26,10 +31,16 @@ func (s *Server) routes() http.Handler {
 		r.Use(CORS(s.cfg.Server.CORSOrigins))
 	}
 	r.Use(MaxBodyBytes(s.cfg.Server.MaxBodyBytes))
+	// Per-request hard cap so a stuck downstream can't hold a goroutine past
+	// the server's Write timeout.
+	if s.cfg.Server.WriteTimeout > 0 {
+		r.Use(RequestContextTimeout(s.cfg.Server.WriteTimeout))
+	}
 
 	// Public endpoints
 	r.Get("/api/health", s.handleHealth)
-	r.Post("/api/auth/login", s.handleLogin)
+	// Login is rate-limited per source IP to slow credential stuffing.
+	r.With(s.rateLimitLogin).Post("/api/auth/login", s.handleLogin)
 
 	// Authenticated endpoints — admin only
 	r.Group(func(r chi.Router) {

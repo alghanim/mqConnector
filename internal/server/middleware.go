@@ -101,7 +101,11 @@ func CORS(origins []string) func(http.Handler) http.Handler {
 	}
 }
 
-// SecurityHeaders adds a standard set of response headers.
+// SecurityHeaders adds a standard set of response headers. The CSP is
+// deliberately strict: the embedded SvelteKit build produces a self-contained
+// bundle, so no third-party origins are needed. If the deployment ever pulls
+// fonts/scripts from a CDN, loosen this carefully — but the brand standard
+// explicitly forbids CDN-loaded fonts, so the default is locked down.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -109,6 +113,36 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self'; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data:; "+
+				"font-src 'self' data:; "+
+				"connect-src 'self'; "+
+				"object-src 'none'; "+
+				"frame-ancestors 'none'; "+
+				"base-uri 'self'; "+
+				"form-action 'self'")
+		h.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// RequestContextTimeout sets an upper bound on how long any single handler
+// can run, regardless of the inner work. Without this, a stuck downstream
+// (e.g. an unreachable MQ broker hanging a publish) could pin a goroutine
+// past the server's Write timeout. Pair with WriteTimeout for defence in
+// depth.
+func RequestContextTimeout(timeout time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if timeout <= 0 {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }

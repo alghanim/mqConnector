@@ -47,12 +47,19 @@ This document is the explicit checklist of compliance against the Department Cod
 
 | Item | Status | Notes |
 |---|---|---|
-| TLS everywhere (no exceptions in non-dev) | ✅ | Config validation rejects `tls.enabled: false` unless `mode: dev` |
+| TLS everywhere (no exceptions in non-dev) | ✅ | Config validation rejects `tls.enabled: false` unless `mode: dev`; min TLS version configurable |
 | No hardcoded secrets | ✅ | All secrets are config values; example file uses placeholders |
-| Input size limits on uploads / publish bodies | ✅ | 10 MB cap on REST→MQ publish; 10 MB cap on sample uploads |
+| Input size limits on uploads / publish bodies | ✅ | `MaxBodyBytes` middleware caps every `/api/*` body to the configured value (default 10 MB) |
 | Auth on all mutation endpoints | ✅ | `RequireSession` middleware on every `/api/*` except `/api/auth/login` and `/api/health` |
+| Login brute-force protection | ✅ | Per-IP rate limiter on `/api/auth/login` — 10 attempts / 60 s, returns 429 with `Retry-After` |
+| Panic recovery | ✅ | `Recover` middleware wraps every request; panic → 500 + structured log, process keeps running |
+| Per-request timeout | ✅ | `RequestContextTimeout` middleware applies `server.write_timeout` as a hard ceiling on handler ctx |
 | SQL parameter binding (no string concat) | ✅ | `database/sql` `?` placeholders only |
-| Password storage (SimpleAuth handles hashing) | ✅ | bcrypt via SimpleAuth |
+| Password storage (SimpleAuth handles hashing) | ✅ | bcrypt via SimpleAuth; mqConnector itself never persists user passwords |
+| Connection password storage | ⚠️ | MQ connection passwords are stored plaintext in `storage.connections.password` so the bridge can dial brokers. SQLite file should be set to mode `0640` and live on an encrypted filesystem. Envelope encryption with a KMS master key is a planned follow-up (tracked in `BRAND-COMPLIANCE.md` deviations section if/when graduated to roadmap). |
+| Security headers | ✅ | X-Content-Type-Options, X-Frame-Options=DENY, Referrer-Policy, HSTS, Content-Security-Policy (locked-down: no inline scripts, no external origins, no framing), Permissions-Policy denies geolocation/microphone/camera |
+| HttpOnly + SameSite=Strict session cookie | ✅ | `internal/auth.SetCookie` |
+| Request ID in every log line | ✅ | `RequestID` middleware sets `X-Request-Id`, propagates through ctx |
 
 ## Operability
 
@@ -88,4 +95,4 @@ This document is the explicit checklist of compliance against the Department Cod
 
 ## Deviations
 
-None.
+- **MQ connection passwords are stored plaintext in SQLite.** The bridge needs to dial brokers without operator interaction, so a key has to live near the binary. The right next step is envelope encryption keyed by a master key from an external KMS (or an HSM-backed file). Until that lands, mitigations are: (a) SQLite file mode `0640` owned by the `mqconnector` user only, (b) deployment on an LUKS / dm-crypt volume, (c) least-privilege MQ accounts so a leak is bounded.

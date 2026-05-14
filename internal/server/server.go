@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -28,16 +29,30 @@ import (
 
 // Server is the wired HTTP layer.
 type Server struct {
-	cfg      config.Config
-	logger   *slog.Logger
-	httpSrv  *http.Server
-	auth     *auth.Service
-	store    *storage.Store
-	pool     *mq.Pool
-	metrics  *metrics.Store
-	dlq      *dlq.Service
-	pipeline *pipeline.Manager
-	health   *health.Checker
+	cfg          config.Config
+	logger       *slog.Logger
+	httpSrv      *http.Server
+	auth         *auth.Service
+	store        *storage.Store
+	pool         *mq.Pool
+	metrics      *metrics.Store
+	dlq          *dlq.Service
+	pipeline     *pipeline.Manager
+	health       *health.Checker
+	loginLimiter *loginLimiter
+	stopGC       chan struct{}
+	stopGCOnce   sync.Once
+}
+
+// shutdownGC signals the rate-limiter's GC loop to exit. Idempotent — both
+// branches of Run's select call it, so a race between server-closed and
+// context-cancelled doesn't double-close the channel.
+func (s *Server) shutdownGC() {
+	s.stopGCOnce.Do(func() {
+		if s.stopGC != nil {
+			close(s.stopGC)
+		}
+	})
 }
 
 // Deps bundles the dependencies New requires.
@@ -58,16 +73,19 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		deps.Logger = slog.Default()
 	}
 	s := &Server{
-		cfg:      cfg,
-		logger:   deps.Logger.With("component", "server"),
-		auth:     deps.Auth,
-		store:    deps.Store,
-		pool:     deps.Pool,
-		metrics:  deps.Metrics,
-		dlq:      deps.DLQ,
-		pipeline: deps.Pipeline,
-		health:   deps.Health,
+		cfg:          cfg,
+		logger:       deps.Logger.With("component", "server"),
+		auth:         deps.Auth,
+		store:        deps.Store,
+		pool:         deps.Pool,
+		metrics:      deps.Metrics,
+		dlq:          deps.DLQ,
+		pipeline:     deps.Pipeline,
+		health:       deps.Health,
+		loginLimiter: newLoginLimiter(10, time.Minute),
+		stopGC:       make(chan struct{}),
 	}
+	go s.loginLimiter.gc(s.stopGC)
 
 	router := s.routes()
 
@@ -110,8 +128,10 @@ func (s *Server) Run(ctx context.Context) error {
 		if err := s.httpSrv.Shutdown(shutdownCtx); err != nil {
 			s.logger.Warn("server shutdown error", "err", err)
 		}
+		s.shutdownGC()
 		return nil
 	case err := <-errCh:
+		s.shutdownGC()
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
