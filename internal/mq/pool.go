@@ -197,3 +197,13 @@ func (p *Pool) Size() int {
 	defer p.mu.Unlock()
 	return len(p.entries)
 }
+
+// InjectForTest preseeds the pool with a pre-built Connector under id. The
+// connector must already be Connect()'d. This is the documented hook for
+// dlq/pipeline tests that want to assert end-to-end behaviour without a real
+// broker — production code paths never reach for it.
+func (p *Pool) InjectForTest(id string, conn Connector) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.entries[id] = &poolEntry{conn: conn, lastUsed: time.Now()}
+}

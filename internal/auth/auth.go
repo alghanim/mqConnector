@@ -67,6 +67,20 @@ func NewService(opts Options) (*Service, error) {
 	return newServiceWith(client, opts), nil
 }
 
+// NewServiceForTest wraps any authClient (used by tests outside this package
+// to inject fakes — e.g. internal/server's integration tests).
+//
+// Production code MUST use NewService instead; this helper exists only so
+// the test suite can avoid a real network round-trip to SimpleAuth.
+func NewServiceForTest(client AuthClient, opts Options) *Service {
+	return newServiceWith(client, opts)
+}
+
+// AuthClient is the exported alias for the unexported authClient interface.
+// Required for NewServiceForTest because Go won't let cross-package callers
+// satisfy an unexported interface even when the type signatures match.
+type AuthClient = authClient
+
 // newServiceWith is the test seam — wraps any authClient into a Service.
 func newServiceWith(client authClient, opts Options) *Service {
 	if opts.CookieName == "" {

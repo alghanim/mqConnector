@@ -19,9 +19,15 @@ const (
 	TypeKafka    Type = "kafka"
 )
 
-// ErrUnsupported is returned when a connector is requested for a type that the
-// current build does not support (e.g. IBM MQ in a non-ibmmq build).
-var ErrUnsupported = errors.New("mq: unsupported connector type for this build")
+// Sentinel errors returned across the package.
+var (
+	// ErrUnsupported is returned when a connector is requested for a type
+	// the current build does not support (e.g. IBM MQ in a non-ibmmq build).
+	ErrUnsupported = errors.New("mq: unsupported connector type for this build")
+	// ErrNotConnected is returned when an operation is invoked on a Connector
+	// before Connect succeeded, or after Disconnect.
+	ErrNotConnected = errors.New("mq: not connected")
+)
 
 // ParseType normalises a string into a Type. Unknown strings return an error.
 func ParseType(s string) (Type, error) {
