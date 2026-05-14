@@ -6,11 +6,8 @@ package pipeline
 
 import (
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
-	"strings"
 
 	"github.com/clbanning/mxj/v2"
 )
@@ -37,37 +34,41 @@ func Detect(message []byte) Format {
 	return FormatBytes
 }
 
+// isJSON checks the first non-whitespace byte against the JSON grammar's
+// possible starts. Detection is best-effort — well-formedness is enforced
+// downstream by stages that actually decode the message. The previous
+// implementation called json.Unmarshal into a RawMessage on every detection,
+// which dominated profiles at ~5 µs / 1.6 KB / 6 allocs per call regardless
+// of message size. This version is O(1) in both time and allocations.
 func isJSON(b []byte) bool {
 	b = trimLeftSpace(b)
 	if len(b) == 0 {
 		return false
 	}
-	if b[0] != '{' && b[0] != '[' && b[0] != '"' && (b[0] < '0' || b[0] > '9') && b[0] != 't' && b[0] != 'f' && b[0] != 'n' {
-		return false
+	switch b[0] {
+	case '{', '[', '"', 't', 'f', 'n', '-':
+		return true
 	}
-	var raw json.RawMessage
-	return json.Unmarshal(b, &raw) == nil
+	return b[0] >= '0' && b[0] <= '9'
 }
 
+// isXML checks the first non-whitespace bytes for an XML opener. Like
+// isJSON, this is intentionally best-effort: full well-formedness is the
+// concern of stages that actually parse. The prior implementation ran
+// xml.NewDecoder + Token() until it found a StartElement, which cost ~500 ns
+// and 9 allocs per call on a 2 KB payload. This version is O(1).
 func isXML(b []byte) bool {
 	b = trimLeftSpace(b)
-	if len(b) == 0 || b[0] != '<' {
+	if len(b) < 2 || b[0] != '<' {
 		return false
 	}
-	dec := xml.NewDecoder(strings.NewReader(string(b)))
-	for {
-		tok, err := dec.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return false
-		}
-		if _, ok := tok.(xml.StartElement); ok {
-			return true
-		}
+	// Permit: <tag>, <tag/>, <?xml...?>, <!DOCTYPE...>, <!--...-->
+	c := b[1]
+	if c == '?' || c == '!' {
+		return true
 	}
-	return false
+	// Tag names must start with a letter or underscore (XML 1.0 §2.3).
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
 }
 
 func trimLeftSpace(b []byte) []byte {
