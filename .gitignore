@@ -1,3 +1,55 @@
-vendor/
-out/
-Data/pb_data/
+# Build artifacts
+/dist/
+/build/
+/out/
+/bin/
+mqconnector
+mqconnector-*
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# Runtime data
+/data/
+/data.db
+/data.db-*
+*.sqlite
+*.sqlite-*
+
+# Local config and secrets
+config.yaml
+config.local.yaml
+.env
+.env.local
+*.pem
+*.key
+*.crt
+!config.example.yaml
+
+# Frontend
+web/node_modules/
+web/.svelte-kit/
+web/build/
+web/.env
+web/.env.*
+!web/.env.example
+
+# Embedded frontend dist (populated by build)
+internal/web/dist/*
+!internal/web/dist/.gitkeep
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+*.iml
+
+# Logs
+*.log

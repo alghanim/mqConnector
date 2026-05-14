@@ -1,0 +1,193 @@
+# docker-compose.yml — full local mqConnector stack.
+#
+# Brings up:
+#   - mqconnector  : the bridge itself, with the embedded SvelteKit admin UI
+#   - simpleauth   : the department's auth server (sibling project)
+#   - rabbitmq     : an AMQP broker for hands-on testing
+#   - kafka        : a KRaft-mode Kafka single-broker for hands-on testing
+#   - certs-init   : one-shot helper that generates a self-signed dev cert
+#
+# Start: cp .env.example .env && docker compose up -d
+# Stop:  docker compose down
+# Logs:  docker compose logs -f mqconnector
+#
+# Production note: this stack defaults to dev mode (auto-generated cert).
+# For production, set MQC_MODE=prod in .env, mount real TLS material via
+# MQC_TLS_CERT / MQC_TLS_KEY, and put the stack behind a proper reverse
+# proxy. The compose file is intentionally a starting point, not a final
+# deployment artefact — `scripts/build-dist.sh` produces a tarball + systemd
+# unit for non-Docker deployments.
+
+name: mqconnector
+
+networks:
+  mqc:
+    driver: bridge
+
+volumes:
+  mqc-data:
+  mqc-certs:
+  simpleauth-data:
+  rabbitmq-data:
+  kafka-data:
+
+services:
+  # ---------------------------------------------------------------------------
+  # certs-init — generates a self-signed cert into the shared mqc-certs volume
+  # on first run. Exits immediately if a cert is already present.
+  # ---------------------------------------------------------------------------
+  certs-init:
+    image: alpine/openssl:latest
+    command:
+      - sh
+      - -ec
+      - |
+        if [ ! -f /certs/server.crt ] || [ ! -f /certs/server.key ]; then
+          openssl req -x509 -newkey rsa:2048 -days 365 -nodes \
+            -keyout /certs/server.key -out /certs/server.crt \
+            -subj "/CN=mqconnector" \
+            -addext "subjectAltName=DNS:mqconnector,DNS:localhost,IP:127.0.0.1"
+          chmod 0644 /certs/server.crt && chmod 0640 /certs/server.key
+          echo "Generated self-signed dev TLS cert."
+        else
+          echo "TLS cert already present, skipping."
+        fi
+    volumes:
+      - mqc-certs:/certs
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # SimpleAuth — JWT issuer + user store. Built from the sibling source tree.
+  # ---------------------------------------------------------------------------
+  simpleauth:
+    build:
+      context: ${SIMPLEAUTH_CONTEXT:-../SimpleAuth}
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${SIMPLEAUTH_VERSION:-docker}
+    container_name: mqc-simpleauth
+    restart: unless-stopped
+    networks: [mqc]
+    environment:
+      AUTH_PORT: "8080"
+      AUTH_DATA_DIR: /data
+      AUTH_ADMIN_USER: ${SIMPLEAUTH_ADMIN_USER:-admin}
+      AUTH_ADMIN_PASSWORD: ${SIMPLEAUTH_ADMIN_PASSWORD:-changeme-please}
+    volumes:
+      - simpleauth-data:/data
+    ports:
+      - "${SIMPLEAUTH_HOST_PORT:-9443}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "--spider", "-q", "https://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # mqConnector — the bridge.
+  # ---------------------------------------------------------------------------
+  mqconnector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # BuildKit named context — exposes the sibling SimpleAuth SDK to the
+      # Dockerfile under the name `simpleauth-sdk`. Override the path via
+      # SIMPLEAUTH_SDK_PATH in .env if your layout differs.
+      additional_contexts:
+        simpleauth-sdk: ${SIMPLEAUTH_SDK_PATH:-../SimpleAuth/sdk/go}
+      args:
+        VERSION: ${MQC_VERSION:-1.0.0}
+    container_name: mqc-app
+    restart: unless-stopped
+    networks: [mqc]
+    depends_on:
+      certs-init:
+        condition: service_completed_successfully
+      simpleauth:
+        condition: service_healthy
+    environment:
+      # Server
+      SERVER_LISTEN: "0.0.0.0:8443"
+      SERVER_MODE: ${MQC_MODE:-dev}
+      SERVER_TLS_ENABLED: "true"
+      SERVER_TLS_CERT_FILE: /etc/mqconnector/tls/server.crt
+      SERVER_TLS_KEY_FILE:  /etc/mqconnector/tls/server.key
+      # Storage
+      STORAGE_DSN: "file:/var/lib/mqconnector/mqconnector.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)"
+      # Auth — points at the simpleauth container by service DNS.
+      AUTH_SIMPLEAUTH_URL: "https://simpleauth:8080"
+      AUTH_INSECURE_SKIP_VERIFY: "true"   # self-signed in dev; tighten in prod
+      AUTH_SESSION_TTL: "12h"
+      AUTH_COOKIE_NAME: mqc_session
+      # Logging
+      LOGGING_LEVEL: ${MQC_LOG_LEVEL:-info}
+      LOGGING_FORMAT: ${MQC_LOG_FORMAT:-json}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - mqc-data:/var/lib/mqconnector
+      - mqc-certs:/etc/mqconnector/tls:ro
+    ports:
+      - "${MQC_HOST_PORT:-8443}:8443"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate --spider -q https://localhost:8443/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # RabbitMQ — useful for local pipeline experiments.
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: mqc-rabbitmq
+    restart: unless-stopped
+    networks: [mqc]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-mqc}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-mqc-dev}
+    ports:
+      - "${RABBITMQ_AMQP_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Kafka — single broker in KRaft mode (no Zookeeper).
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: mqc-kafka
+    restart: unless-stopped
+    networks: [mqc]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:${KAFKA_HOST_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-mqc-local-cluster}
+    ports:
+      - "${KAFKA_HOST_PORT:-9092}:9094"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s

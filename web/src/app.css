@@ -1,0 +1,186 @@
+@import './lib/brand-tokens.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Reduced-motion override — always honour user preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001s !important;
+    transition-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+body {
+  font-family:
+    'Inter Variable', 'Inter', 'Noto Kufi Arabic', system-ui, -apple-system,
+    BlinkMacSystemFont, sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  font-variant-ligatures: contextual;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Focus ring — visible, brand-aligned, never `outline: none` */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Brand-compliant component primitives, used by .btn-* and .input etc. */
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2
+           min-h-touch min-w-touch
+           px-4 py-2
+           rounded-interactive
+           font-medium
+           transition-colors;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: var(--accent-on);
+  }
+  .btn-primary:hover {
+    background: var(--accent-hover);
+  }
+  .btn-secondary {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover {
+    border-color: var(--secondary);
+  }
+  .btn-outline {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  .btn-outline:hover {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text);
+  }
+  .btn-ghost:hover {
+    background: var(--surface-2);
+  }
+  .btn-danger {
+    background: var(--danger);
+    color: var(--danger-on);
+  }
+  .btn-danger:hover {
+    filter: brightness(0.92);
+  }
+
+  .card {
+    @apply rounded-container shadow-card;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+  .card-strip::before {
+    content: '';
+    display: block;
+    height: 3px;
+    background: var(--brand-gradient);
+    border-top-left-radius: var(--container-radius, 16px);
+    border-top-right-radius: var(--container-radius, 16px);
+  }
+
+  .input {
+    @apply rounded-interactive min-h-touch w-full px-3 py-2 transition-colors;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .input:focus {
+    border-color: var(--secondary);
+  }
+
+  .label {
+    @apply text-sm mb-1 block;
+    color: var(--text-muted);
+  }
+
+  .badge {
+    @apply inline-flex items-center justify-center text-xs font-semibold
+           px-2 py-0.5 rounded-interactive min-h-[20px];
+  }
+  /* Count badge — the ONE place a fully-pill shape is allowed */
+  .badge-count {
+    @apply inline-flex items-center justify-center text-xs font-semibold
+           rounded-full min-w-[20px] h-5 px-1.5;
+    background: var(--accent);
+    color: var(--accent-on);
+  }
+  .badge-success {
+    background: color-mix(in srgb, var(--success) 18%, transparent);
+    color: var(--success);
+  }
+  .badge-warning {
+    background: color-mix(in srgb, var(--warning) 18%, transparent);
+    color: var(--warning);
+  }
+  .badge-danger {
+    background: color-mix(in srgb, var(--danger) 18%, transparent);
+    color: var(--danger);
+  }
+  .badge-neutral {
+    background: var(--surface-2);
+    color: var(--text-muted);
+  }
+
+  .section-heading {
+    color: var(--secondary);
+    @apply text-xs font-semibold uppercase tracking-wider;
+  }
+
+  .divider {
+    border-top: 1px solid var(--border);
+  }
+}
+
+/* Table primitives */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.table th,
+.table td {
+  text-align: start;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.table th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: var(--surface);
+}
+
+/* Scrollbar — subtle, theme-aware */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--surface-2);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--border);
+}

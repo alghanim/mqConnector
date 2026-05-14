@@ -1,0 +1,48 @@
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# Build artefacts
+dist/
+out/
+build/
+bin/
+mqconnector
+mqconnector-*
+
+# Frontend artefacts
+web/node_modules/
+web/.svelte-kit/
+web/build/
+
+# Local data + secrets
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+certs/
+*.pem
+*.key
+*.crt
+.env
+.env.*
+!.env.example
+config.yaml
+config.local.yaml
+
+# IBM MQ vendor blob — not needed for the default build (CGO off).
+# Override with -f Dockerfile.ibmmq to include it.
+ibmmq_dist/
+
+# Docs are bundled separately
+*.md
+!README.md
+
+# Test outputs
+*.test
+*.out
+coverage.txt
+coverage.html

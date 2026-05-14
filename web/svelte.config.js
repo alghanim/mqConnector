@@ -1,0 +1,23 @@
+import adapter from '@sveltejs/adapter-static';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+
+/** @type {import('@sveltejs/kit').Config} */
+const config = {
+  preprocess: vitePreprocess(),
+  kit: {
+    adapter: adapter({
+      // SvelteKit's static adapter outputs directly into the path the Go
+      // binary embeds via go:embed (../internal/web/dist).
+      pages: '../internal/web/dist',
+      assets: '../internal/web/dist',
+      fallback: 'index.html',
+      precompress: false,
+      strict: true
+    }),
+    alias: {
+      $lib: 'src/lib'
+    }
+  }
+};
+
+export default config;

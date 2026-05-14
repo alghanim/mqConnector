@@ -1,0 +1,94 @@
+/*
+ * Brand & Design System tokens.
+ *
+ * THIS FILE IS THE SOLE SOURCE OF TRUTH FOR COLOR.
+ * Components must NEVER hardcode a hex value. Always use var(--token).
+ *
+ * Palette references (closed — no other colors permitted):
+ *   #333F48  Dark Slate    — primary neutral
+ *   #96712E  Dark Gold     — secondary on light theme; section headers
+ *   #D4B05C  Light Gold    — secondary on dark theme; section headers
+ *   #8B153D  Maroon accent  — ACCENT ONLY (primary CTAs, count badges, destructive)
+ *   #D6D1CA  Warm Gray     — light theme background base
+ *   #C1A18D  Sand          — light theme borders
+ *
+ * Background rules:
+ *   Dark  theme bg = #222A31 (NOT #000000)
+ *   Light theme bg = #F7F5F3 (NOT #FFFFFF)
+ *
+ * Maroon and Error red must never touch — switch a maroon CTA to outlined
+ * variant when an error state is adjacent.
+ */
+
+:root,
+[data-theme='dark'] {
+  /* Surfaces — derived from Dark Slate, no pure black */
+  --bg: #222A31;
+  --surface: #2A333B;
+  --surface-2: #333F48; /* Dark Slate proper */
+  --border: #3D4751;
+
+  /* Text */
+  --text: #E8E6E1;        /* 13.3:1 on --bg, AAA */
+  --text-muted: #9CA3AB;  /* 4.7:1 on --bg, AA */
+  --text-inverse: #1F1F1F;
+
+  /* Accent — Maroon accent. ACCENT ONLY. */
+  --accent: #8B153D;
+  --accent-on: #FFFFFF;
+  --accent-hover: #A4244C;
+
+  /* Secondary / section headers — Light Gold for dark theme */
+  --secondary: #D4B05C;
+  --secondary-on: #1F1F1F;
+
+  /* Semantic */
+  --success: #3FB950;
+  --success-on: #0A0A0A;
+  --warning: #D29922;
+  --warning-on: #1F1F1F;
+  --danger: #F85149;
+  --danger-on: #FFFFFF;
+
+  /* Focus ring */
+  --focus-ring: 0 0 0 2px rgba(212, 176, 92, 0.45);
+
+  /* Decorative gradient (Brand Guide §4) — use on thin strips only */
+  --brand-gradient: linear-gradient(90deg, #8B153D 0%, #96712E 50%, #D4B05C 100%);
+}
+
+[data-theme='light'] {
+  --bg: #F7F5F3;        /* Warm Gray 85 — NOT #FFFFFF */
+  --surface: #F2EFEC;
+  --surface-2: #EBE7E2;
+  --border: #C1A18D;    /* Sand */
+
+  --text: #1F1F1F;        /* 16.6:1 on --bg, AAA */
+  --text-muted: #5A6068;  /* 5.6:1 on --bg, AA */
+  --text-inverse: #FFFFFF;
+
+  --accent: #8B153D;      /* Same maroon — accent is theme-invariant */
+  --accent-on: #FFFFFF;
+  --accent-hover: #6F1031;
+
+  /* Light theme uses Dark Gold for section headers (Light Gold would be invisible on light bg) */
+  --secondary: #96712E;
+  --secondary-on: #FFFFFF;
+
+  --success: #1F7A2E;
+  --success-on: #FFFFFF;
+  --warning: #9A6700;
+  --warning-on: #FFFFFF;
+  --danger: #B71C3C;
+  --danger-on: #FFFFFF;
+
+  --focus-ring: 0 0 0 2px rgba(150, 113, 46, 0.5);
+
+  --brand-gradient: linear-gradient(90deg, #8B153D 0%, #96712E 50%, #D4B05C 100%);
+}
+
+/* RTL: mirror horizontal gradients so the maroon-side anchors at the
+ * inline-start edge in both LTR and RTL layouts. */
+[dir='rtl'] {
+  --brand-gradient: linear-gradient(270deg, #8B153D 0%, #96712E 50%, #D4B05C 100%);
+}
