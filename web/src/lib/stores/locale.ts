@@ -117,6 +117,25 @@ const strings: Record<Locale, Record<string, string>> = {
       'Click Preview to run the current stages against the sample.',
     'preview.extract': 'Extract paths',
     'preview.run': 'Preview',
+    'stageConfig.advanced': 'Advanced (raw JSON)',
+    'stageConfig.filter.help':
+      'Dot-paths to strip from each message. Add one per chip; comma or Enter to commit.',
+    'stageConfig.filter.placeholder': 'e.g. customer.secret',
+    'stageConfig.filter.add': 'Add',
+    'stageConfig.translate.target': 'Target format',
+    'stageConfig.translate.help':
+      'Pick the wire format messages should leave this stage in.',
+    'stageConfig.script.body': 'Script (per-message)',
+    'stageConfig.script.help':
+      'Runs once per message. The message is bound as `msg`; the last expression is the output. Available: delete msg.x, msg.a = msg.b, msg.a + msg.b, Date.now().',
+    'stageConfig.validate.schema': 'Schema',
+    'stageConfig.validate.help':
+      'Reject messages that fail the chosen JSON Schema or XSD. Pick — None — to skip.',
+    'stageConfig.schemaNone': '— None —',
+    'stageConfig.route.help':
+      'Routing rules are configured in the Routing section below. This stage marks where rules apply in the chain.',
+    'stageConfig.transform.help':
+      'Transform rules are configured in the Transforms section below. This stage marks where they apply in the chain.',
     'flow.title': 'Flow builder',
     'flow.help':
       'Drag node types from the palette onto the canvas. Connect Source → stages → Destination, then Save & Deploy.',
@@ -271,6 +290,23 @@ const strings: Record<Locale, Record<string, string>> = {
     'preview.outputPlaceholder': 'اضغط معاينة لتشغيل المراحل الحالية على العينة.',
     'preview.extract': 'استخراج المسارات',
     'preview.run': 'معاينة',
+    'stageConfig.advanced': 'متقدم (JSON خام)',
+    'stageConfig.filter.help':
+      'مسارات نقطية لاستبعادها من كل رسالة. أضف واحدة لكل شريحة؛ فاصلة أو Enter للتأكيد.',
+    'stageConfig.filter.placeholder': 'مثال: customer.secret',
+    'stageConfig.filter.add': 'إضافة',
+    'stageConfig.translate.target': 'التنسيق المستهدف',
+    'stageConfig.translate.help': 'اختر التنسيق الذي تخرج به الرسائل من هذه المرحلة.',
+    'stageConfig.script.body': 'سكربت (لكل رسالة)',
+    'stageConfig.script.help':
+      'يُنفَّذ لكل رسالة. الرسالة متاحة كـ `msg`؛ آخر تعبير هو المخرَج. المتاح: delete msg.x, msg.a = msg.b, msg.a + msg.b, Date.now().',
+    'stageConfig.validate.schema': 'المخطط',
+    'stageConfig.validate.help': 'رفض الرسائل التي تفشل في المخطط المختار. اختر — لا شيء — للتخطي.',
+    'stageConfig.schemaNone': '— لا شيء —',
+    'stageConfig.route.help':
+      'تُعدَّل قواعد التوجيه من قسم التوجيه أدناه. هذه المرحلة تحدد موضع التطبيق في السلسلة.',
+    'stageConfig.transform.help':
+      'تُعدَّل قواعد التحويل من قسم التحويلات أدناه. هذه المرحلة تحدد موضع التطبيق في السلسلة.',
     'flow.title': 'محرر التدفق',
     'flow.help':
       'اسحب أنواع العقد من اللوحة إلى المساحة. اربط المصدر ← المراحل ← الوجهة، ثم احفظ وانشر.',

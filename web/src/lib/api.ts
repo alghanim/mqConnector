@@ -119,6 +119,15 @@ export interface Pipeline {
 
 export type StageType = 'filter' | 'transform' | 'translate' | 'route' | 'script' | 'validate';
 
+export interface Schema {
+  id?: string;
+  name: string;
+  schema_type: 'json_schema' | 'xsd';
+  content: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Stage {
   id?: string;
   pipeline_id?: string;

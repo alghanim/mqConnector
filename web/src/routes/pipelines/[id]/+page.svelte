@@ -10,7 +10,8 @@
     type Transform,
     type TransformType,
     type RoutingRule,
-    type RoutingOperator
+    type RoutingOperator,
+    type Schema
   } from '$lib/api';
   import { locale, t } from '$lib/stores/locale';
   import Card from '$lib/components/Card.svelte';
@@ -18,6 +19,7 @@
   import Input from '$lib/components/Input.svelte';
   import Select from '$lib/components/Select.svelte';
   import Badge from '$lib/components/Badge.svelte';
+  import StageConfigForm from '$lib/components/StageConfigForm.svelte';
 
   $: id = $page.params.id;
 
@@ -26,6 +28,7 @@
   let stages: Stage[] = [];
   let transforms: Transform[] = [];
   let rules: RoutingRule[] = [];
+  let schemas: Schema[] = [];
   let error = '';
   let saved = '';
   let saving = false;
@@ -47,18 +50,20 @@
   async function load() {
     if (!id) return;
     try {
-      const [p, conns, st, tr, rr] = await Promise.all([
+      const [p, conns, st, tr, rr, sc] = await Promise.all([
         api.get<Pipeline>(`/v1/pipelines/${id}`),
         api.get<Connection[]>('/v1/connections').then((v) => v ?? []),
         api.get<Stage[]>(`/v1/pipelines/${id}/stages`).then((v) => v ?? []),
         api.get<Transform[]>(`/v1/pipelines/${id}/transforms`).then((v) => v ?? []),
-        api.get<RoutingRule[]>(`/v1/pipelines/${id}/routing-rules`).then((v) => v ?? [])
+        api.get<RoutingRule[]>(`/v1/pipelines/${id}/routing-rules`).then((v) => v ?? []),
+        api.get<Schema[]>('/v1/schemas').then((v) => v ?? [])
       ]);
       pipeline = p;
       connections = conns;
       stages = st.sort((a, b) => a.stage_order - b.stage_order);
       transforms = tr.sort((a, b) => a.order - b.order);
       rules = rr.sort((a, b) => a.priority - b.priority);
+      schemas = sc;
       error = '';
     } catch (e: unknown) {
       error = (e as { message?: string }).message || 'failed to load';
@@ -312,8 +317,9 @@
                   >{t($locale, 'common.delete')}</Button>
               </div>
             </div>
-            <label class="config-label" for="cfg-{i}">{t($locale, 'pipelines.stages.config')}</label>
-            <textarea id="cfg-{i}" class="config-input" bind:value={s.stage_config} rows="3"></textarea>
+            <div class="mt-2">
+              <StageConfigForm type={s.stage_type} bind:config={s.stage_config} {schemas} />
+            </div>
           </div>
         {/each}
       </div>

@@ -19,13 +19,14 @@
 -->
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { api, type Connection } from '$lib/api';
+  import { api, type Connection, type Schema, type StageType } from '$lib/api';
   import { locale, t } from '$lib/stores/locale';
   import Card from '$lib/components/Card.svelte';
   import Button from '$lib/components/Button.svelte';
   import Input from '$lib/components/Input.svelte';
   import Select from '$lib/components/Select.svelte';
   import Badge from '$lib/components/Badge.svelte';
+  import StageConfigForm from '$lib/components/StageConfigForm.svelte';
 
   // ─── Types ────────────────────────────────────────────────────────
   type NodeKind =
@@ -115,15 +116,23 @@
     }
   }
 
-  // ─── Load saved connections so source/destination nodes can pick one ──
-  async function loadConnections() {
+  // ─── Load saved connections + schemas (schemas feed the validate-stage
+  //     picker inside StageConfigForm).
+  let schemas: Schema[] = [];
+  async function loadBackground() {
     try {
-      connections = (await api.get<Connection[]>('/v1/connections')) ?? [];
+      const [conns, sc] = await Promise.all([
+        api.get<Connection[]>('/v1/connections').then((v) => v ?? []),
+        api.get<Schema[]>('/v1/schemas').then((v) => v ?? [])
+      ]);
+      connections = conns;
+      schemas = sc;
     } catch {
       connections = [];
+      schemas = [];
     }
   }
-  onMount(loadConnections);
+  onMount(loadBackground);
 
   // ─── Palette drag → drop ─────────────────────────────────────────
   function onPaletteDragStart(e: DragEvent, kind: NodeKind) {
@@ -542,8 +551,7 @@
           label={t($locale, 'flow.props.connection')}
         />
       {:else}
-        <label class="config-label" for="props-config">{t($locale, 'flow.props.config')}</label>
-        <textarea id="props-config" class="config-input" rows="9" bind:value={selected.config}></textarea>
+        <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />
       {/if}
       <div class="flex mt-3 justify-end">
         <Button variant="outline" on:click={() => deleteNode(selected.id)}>
@@ -698,24 +706,6 @@
   .port-in  { left:  -7px; }
 
   .props-empty { color: var(--text-muted); font-size: 13px; }
-  .config-label {
-    display: block;
-    margin-top: 12px;
-    margin-bottom: 4px;
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-  .config-input {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    color: var(--text);
-    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
-    font-size: 12px;
-    padding: 8px 10px;
-    resize: vertical;
-  }
   .section-heading {
     font-size: 12px; font-weight: 600;
     color: var(--text);
