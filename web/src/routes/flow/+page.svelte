@@ -105,7 +105,10 @@
     return 'n' + nextNodeIdCounter;
   }
   function toneFor(kind: NodeKind): string {
-    return palette.find((p) => p.kind === kind)?.tone ?? '#888';
+    // Every NodeKind has an entry in `palette`, so the fallback is
+    // defensive only. Use the muted-text token so even an unknown kind
+    // still respects the brand palette.
+    return palette.find((p) => p.kind === kind)?.tone ?? 'var(--text-muted)';
   }
   function defaultConfig(kind: NodeKind): string {
     switch (kind) {
@@ -909,7 +912,7 @@
   }
   .delete-btn {
     margin-inline-start: auto;
-    background: var(--danger); color: #fff;
+    background: var(--danger); color: var(--danger-on);
     border: none; cursor: pointer;
     width: 18px; height: 18px;
     border-radius: 50%;

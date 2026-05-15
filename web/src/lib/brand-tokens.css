@@ -50,6 +50,7 @@
   --qb-slate-110: #3D4A54; /* surfaceContainerHighest dark */
   --qb-slate-120: #475560; /* surfaceBright / elevated dark */
   --qb-slate-130: #52616C; /* highest elevation dark */
+  --qb-slate-dim: #1A2128; /* surfaceDim dark — §2.1 */
 
   /* Warm Gray scale */
   --qb-warm-95: #E8E4DF; /* light surfaceContainerHigh */
@@ -91,8 +92,10 @@
 
   --qb-error-dark:           #CF4455;
   --qb-error-light:          #B71C3C;
-  --qb-error-surface-dark:   #1A0A10;
+  --qb-error-surface-dark:   #1A0A10; /* §1.3 error surface dark / §5.10 alert bg */
   --qb-error-surface-light:  #F8E8ED;
+  --qb-error-container-dark: #3D1420; /* §2.3 M3 errorContainer dark */
+  --qb-on-error-container-light: #5A0A1A; /* §3.3 onErrorContainer light */
 
   --qb-warning-dark:         #E6A817;
   --qb-warning-light:        #C4900A;
@@ -125,6 +128,7 @@
   --surface-high:       var(--qb-dark-slate);  /* #333F48  — search bar / elevated */
   --surface-highest:    var(--qb-slate-110);   /* #3D4A54  — dialogs */
   --surface-bright:     var(--qb-slate-120);   /* #475560  — selected */
+  --surface-dim:        var(--qb-slate-dim);   /* #1A2128  — dimmed overlay bg §2.1 */
 
   /* Borders / dividers */
   --border:             var(--qb-outline-variant-dark); /* #475560 */
@@ -203,6 +207,7 @@
   --surface-high:       var(--qb-warm-95);    /* #E8E4DF  — search bar */
   --surface-highest:    var(--qb-warm-gray);  /* #D6D1CA  — dialogs */
   --surface-bright:     var(--qb-white);
+  --surface-dim:        var(--qb-warm-gray);  /* #D6D1CA  — dimmed overlay §3.1 */
 
   --border:             var(--qb-sand);              /* #C1A18D §5.9 */
   --border-strong:      var(--qb-outline-light);     /* #8A8A82 */
