@@ -58,7 +58,7 @@
             href={item.href}
             class="block rounded-interactive px-3 py-2 text-sm min-h-touch flex items-center"
             style:background={active ? 'var(--surface-2)' : 'transparent'}
-            style:color={active ? 'var(--secondary)' : 'var(--text)'}
+            style:color={active ? 'var(--section-header)' : 'var(--text)'}
             style:font-weight={active ? '600' : '500'}
           >
             {item.label}

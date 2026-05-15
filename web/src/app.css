@@ -3,7 +3,22 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Reduced-motion override — always honour user preference */
+/*
+ * Component primitives, all wired against brand-tokens.css.
+ * Specs reference Brand & Design System v1.0 (March 2026).
+ *
+ * Buttons (§5.4):
+ *   primary    — main CTA: bg --accent (maroon), text --accent-on
+ *   secondary  — gold solid: bg --primary (dark gold), text white
+ *   outline    — transparent + --primary border + --primary text
+ *   ghost      — transparent text-only
+ *   danger     — alias of primary (destructive sits on maroon per §5.4)
+ *
+ * Maroon (--accent) and error red (--danger) MUST NOT touch (Rule 26).
+ * Any destructive action sits on the maroon CTA; the visual cue is the
+ * confirmation dialog, not a red button.
+ */
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -31,14 +46,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Focus ring — visible, brand-aligned, never `outline: none` */
+/* Focus ring — visible Dark Gold 2dp per §9.5; never `outline: none` */
 :focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
 
-/* Brand-compliant component primitives, used by .btn-* and .input etc. */
 @layer components {
+  /* §5.4 button base — 48dp touch target, 12dp corner radius */
   .btn {
     @apply inline-flex items-center justify-center gap-2
            min-h-touch min-w-touch
@@ -48,49 +63,70 @@ body {
            transition-colors;
     -webkit-tap-highlight-color: transparent;
   }
+
+  /* §5.4 Primary — main CTA: maroon */
   .btn-primary {
     background: var(--accent);
     color: var(--accent-on);
   }
-  .btn-primary:hover {
-    background: var(--accent-hover);
-  }
-  .btn-secondary {
-    background: var(--surface-2);
-    color: var(--text);
-    border: 1px solid var(--border);
-  }
-  .btn-secondary:hover {
-    border-color: var(--secondary);
-  }
-  .btn-outline {
-    background: transparent;
-    color: var(--accent);
-    border: 1px solid var(--accent);
-  }
-  .btn-outline:hover {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-  }
-  .btn-ghost {
-    background: transparent;
-    color: var(--text);
-  }
-  .btn-ghost:hover {
-    background: var(--surface-2);
-  }
-  .btn-danger {
-    background: var(--danger);
-    color: var(--danger-on);
-  }
-  .btn-danger:hover {
-    filter: brightness(0.92);
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:disabled {
+    background: var(--surface-bright);
+    color: var(--text-tertiary);
+    cursor: not-allowed;
   }
 
+  /* §5.4 Secondary — gold solid */
+  .btn-secondary {
+    background: var(--primary);
+    color: var(--primary-on);
+  }
+  .btn-secondary:hover { background: var(--secondary); }
+  .btn-secondary:disabled {
+    background: var(--surface-bright);
+    color: var(--text-tertiary);
+    cursor: not-allowed;
+  }
+
+  /* §5.4 Outlined / Ghost — transparent + gold border + gold text */
+  .btn-outline {
+    background: transparent;
+    color: var(--primary);
+    border: 1px solid var(--primary);
+  }
+  .btn-outline:hover {
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+  }
+
+  /* §5.4 Text — transparent, copper text on dark / gold text on light */
+  .btn-ghost {
+    background: transparent;
+    color: var(--secondary);
+  }
+  .btn-ghost:hover {
+    background: color-mix(in srgb, var(--secondary) 12%, transparent);
+  }
+
+  /*
+   * btn-danger is a deliberate alias of btn-primary: destructive actions
+   * sit on maroon per §5.4. Kept as a separate class so callers can
+   * signal intent at the markup site even though it renders identically.
+   * Rule 26: maroon and error red MUST NOT touch. If you find yourself
+   * placing a btn-danger near a danger banner, switch to btn-outline.
+   */
+  .btn-danger {
+    background: var(--accent);
+    color: var(--accent-on);
+  }
+  .btn-danger:hover { background: var(--accent-hover); }
+
+  /* §5.2 Cards — 16dp radius, theme-correct bg + border */
   .card {
     @apply rounded-container shadow-card;
-    background: var(--surface);
-    border: 1px solid var(--border);
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
   }
+  /* Decorative brand-gradient strip on top of a card (§4.2 use case) */
   .card-strip::before {
     content: '';
     display: block;
@@ -100,26 +136,27 @@ body {
     border-top-right-radius: var(--container-radius, 16px);
   }
 
+  /* §5.11 Inputs — bg + border per theme, gold focus border */
   .input {
     @apply rounded-interactive min-h-touch w-full px-3 py-2 transition-colors;
-    background: var(--bg);
-    color: var(--text);
-    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--input-text);
+    border: 1px solid var(--input-border);
   }
-  .input:focus {
-    border-color: var(--secondary);
-  }
+  .input::placeholder { color: var(--input-placeholder); }
+  .input:focus { border-color: var(--input-border-focus); }
 
   .label {
     @apply text-sm mb-1 block;
     color: var(--text-muted);
   }
 
+  /* §5.5 Badges — 12dp radius for labeled chips, 999px ONLY for count */
   .badge {
     @apply inline-flex items-center justify-center text-xs font-semibold
            px-2 py-0.5 rounded-interactive min-h-[20px];
   }
-  /* Count badge — the ONE place a fully-pill shape is allowed */
+  /* §5.5 Count badge — the one allowed pill */
   .badge-count {
     @apply inline-flex items-center justify-center text-xs font-semibold
            rounded-full min-w-[20px] h-5 px-1.5;
@@ -127,33 +164,38 @@ body {
     color: var(--accent-on);
   }
   .badge-success {
-    background: color-mix(in srgb, var(--success) 18%, transparent);
+    background: var(--success-bg);
     color: var(--success);
+    border: 1px solid color-mix(in srgb, var(--success-solid) 30%, transparent);
   }
   .badge-warning {
-    background: color-mix(in srgb, var(--warning) 18%, transparent);
+    background: var(--warning-bg);
     color: var(--warning);
+    border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
   }
   .badge-danger {
-    background: color-mix(in srgb, var(--danger) 18%, transparent);
+    background: var(--danger-bg);
     color: var(--danger);
+    border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
   }
   .badge-neutral {
-    background: var(--surface-2);
-    color: var(--text-muted);
+    background: var(--chip-info-bg);
+    color: var(--chip-info-text);
+    border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
   }
 
+  /* §5.8 Section header — Light Gold on dark, Dark Gold on light */
   .section-heading {
-    color: var(--secondary);
+    color: var(--section-header);
     @apply text-xs font-semibold uppercase tracking-wider;
   }
 
   .divider {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--divider);
   }
 }
 
-/* Table primitives */
+/* §5.9 Dividers around table rows */
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -162,7 +204,7 @@ body {
 .table td {
   text-align: start;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--divider);
 }
 .table th {
   font-size: 0.75rem;
@@ -173,14 +215,11 @@ body {
 }
 
 /* Scrollbar — subtle, theme-aware */
-*::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-thumb {
-  background: var(--surface-2);
+  background: var(--surface-bright);
   border-radius: 999px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: var(--border);
+  background: var(--border-strong);
 }

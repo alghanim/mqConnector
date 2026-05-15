@@ -638,7 +638,7 @@
   }
   .path-chip {
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: 12px; /* labeled chip — Brand Guide §5 / Rule 9 (pill is count-badge only) */
     padding: 4px 12px;
     font-size: 12px;
     color: var(--text);
@@ -673,7 +673,7 @@
   }
   .try-btn {
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: 12px; /* labeled chip — Brand Guide §5 / Rule 9 (pill is count-badge only) */
     padding: 2px 10px;
     font-size: 11px;
     background: var(--surface);

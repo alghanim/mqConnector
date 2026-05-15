@@ -77,15 +77,21 @@
   let connecting: { fromId: string; cursorX: number; cursorY: number } | null = null;
   let nextNodeIdCounter = 0;
 
+  // Per Brand Guide §5: the palette is closed. Stage tones come from
+  // CSS custom properties (set in brand-tokens.css) so both themes stay
+  // on-brand. Source/Destination carry the only "warm" emphasis (gold +
+  // copper); the six stage types use the slate + muted-neutral scale so
+  // they read as a single visual class distinguished by glyph instead
+  // of by colour saturation.
   const palette: { kind: NodeKind; label: string; tone: string }[] = [
-    { kind: 'source', label: 'S · source', tone: '#3FB950' },
-    { kind: 'destination', label: 'D · destination', tone: '#F85149' },
-    { kind: 'filter', label: 'F · filter', tone: '#9D6BFF' },
-    { kind: 'transform', label: 'T · transform', tone: '#D29922' },
-    { kind: 'translate', label: 'X · translate', tone: '#58A6FF' },
-    { kind: 'route', label: 'R · route', tone: '#F18A4B' },
-    { kind: 'script', label: 'JS · script', tone: '#39C5CF' },
-    { kind: 'validate', label: 'V · validate', tone: '#D462C2' }
+    { kind: 'source',      label: 'S · source',      tone: 'var(--primary)'       },
+    { kind: 'destination', label: 'D · destination', tone: 'var(--secondary)'     },
+    { kind: 'filter',      label: 'F · filter',      tone: 'var(--qb-slate-130)'  },
+    { kind: 'transform',   label: 'T · transform',   tone: 'var(--qb-olive-gold)' },
+    { kind: 'translate',   label: 'X · translate',   tone: 'var(--qb-sand)'       },
+    { kind: 'route',       label: 'R · route',       tone: 'var(--qb-slate-120)'  },
+    { kind: 'script',      label: 'JS · script',     tone: 'var(--qb-slate-110)'  },
+    { kind: 'validate',    label: 'V · validate',    tone: 'var(--qb-warm-gray)'  }
   ];
 
   $: selected = nodes.find((n) => n.id === selectedId) ?? null;
@@ -804,7 +810,7 @@
   }
   .path-chip {
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: 12px; /* labeled chip — Brand Guide §5 / Rule 9 (pill is count-badge only) */
     padding: 3px 10px;
     font-size: 11px;
     color: var(--text);
@@ -841,7 +847,7 @@
   .try-label { font-size: 11px; color: var(--text-muted); }
   .try-btn {
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: 12px; /* labeled chip — Brand Guide §5 / Rule 9 (pill is count-badge only) */
     padding: 2px 8px;
     font-size: 10px;
     background: var(--surface);
@@ -920,6 +926,16 @@
     cursor: crosshair;
     z-index: 2;
   }
+  /*
+   * The ports live on the OUT (right) and IN (left) edges of every
+   * stage node. This is the canvas's spatial convention — message flow
+   * is source → destination, drawn left-to-right. We intentionally use
+   * physical left/right here (not inline-start/end) because the canvas
+   * stores absolute coordinates the operator dragged; flipping ports
+   * under [dir="rtl"] would break the visual mapping of every saved
+   * flow. Brand Guide §RTL applies to flowing content, not free-form
+   * spatial editors.
+   */
   .port-out { right: -7px; }
   .port-in  { left:  -7px; }
 

@@ -213,7 +213,7 @@
     display: inline-flex; align-items: center; gap: 6px;
     padding: 2px 4px 2px 10px;
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: 12px; /* labeled chip — Brand Guide §5 / Rule 9 (pill is count-badge only) */
     background: var(--surface);
     color: var(--text);
     font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
