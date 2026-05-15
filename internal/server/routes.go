@@ -41,6 +41,11 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/health", s.handleHealth)
 	// Login is rate-limited per source IP to slow credential stuffing.
 	r.With(s.rateLimitLogin).Post("/api/auth/login", s.handleLogin)
+	// Refresh is public — the access cookie may already have expired by the
+	// time the UI's silent refresh fires, so requiring it would make this
+	// endpoint useless. Same per-IP cap as login to slow refresh-token
+	// brute-forcing.
+	r.With(s.rateLimitLogin).Post("/api/auth/refresh", s.handleRefresh)
 
 	// Authenticated endpoints — admin only. AuditAdminActions records every
 	// mutation after RequireSession populates the user context.

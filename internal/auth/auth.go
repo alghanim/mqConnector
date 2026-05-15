@@ -27,7 +27,13 @@ var (
 type authClient interface {
 	Login(ctx context.Context, username, password string) (*simpleauth.TokenResponse, error)
 	Verify(token string) (*simpleauth.User, error)
+	Refresh(ctx context.Context, refreshToken string) (*simpleauth.TokenResponse, error)
 }
+
+// refreshCookieSuffix is appended to CookieName to derive the refresh-cookie
+// name. So the default pair is "mqc_session" and "mqc_session_refresh". They
+// share Secure + SameSite settings.
+const refreshCookieSuffix = "_refresh"
 
 // Service is the auth backend. Construct with NewService.
 type Service struct {
@@ -97,16 +103,45 @@ func newServiceWith(client authClient, opts Options) *Service {
 	}
 }
 
-// Login exchanges credentials for a JWT via SimpleAuth.
+// Login exchanges credentials for a JWT via SimpleAuth. Returns only the
+// access token — keep using this for tests that don't care about refresh.
 func (s *Service) Login(ctx context.Context, username, password string) (string, error) {
+	access, _, err := s.LoginWithRefresh(ctx, username, password)
+	return access, err
+}
+
+// LoginWithRefresh is the full-fidelity login: returns both access and
+// refresh tokens. The refresh token may be empty when SimpleAuth is
+// configured not to issue them — callers must handle that gracefully.
+func (s *Service) LoginWithRefresh(ctx context.Context, username, password string) (access, refresh string, err error) {
 	tok, err := s.client.Login(ctx, username, password)
 	if err != nil {
-		return "", ErrInvalidCredentials
+		return "", "", ErrInvalidCredentials
 	}
 	if tok == nil || tok.AccessToken == "" {
-		return "", ErrInvalidCredentials
+		return "", "", ErrInvalidCredentials
 	}
-	return tok.AccessToken, nil
+	return tok.AccessToken, tok.RefreshToken, nil
+}
+
+// Refresh exchanges a refresh token for a fresh access/refresh pair.
+// Returns ErrUnauthorized if the refresh token is empty or rejected by
+// SimpleAuth (e.g. expired or revoked).
+func (s *Service) Refresh(ctx context.Context, refreshToken string) (access, refresh string, err error) {
+	if refreshToken == "" {
+		return "", "", ErrUnauthorized
+	}
+	tok, err := s.client.Refresh(ctx, refreshToken)
+	if err != nil || tok == nil || tok.AccessToken == "" {
+		return "", "", ErrUnauthorized
+	}
+	// SimpleAuth may rotate the refresh token; fall back to the old one if
+	// it doesn't.
+	out := tok.RefreshToken
+	if out == "" {
+		out = refreshToken
+	}
+	return tok.AccessToken, out, nil
 }
 
 // Validate verifies a JWT and returns the SimpleAuth User claims.
@@ -152,6 +187,48 @@ func (s *Service) ClearCookie(w http.ResponseWriter) {
 // CookieName exposes the configured cookie name (handlers need it for reads).
 func (s *Service) CookieName() string {
 	return s.cookieName
+}
+
+// SetRefreshCookie stores the refresh token under <cookieName>_refresh.
+// A longer MaxAge gives the UI a window to use Refresh after the session
+// cookie has expired — capped at SimpleAuth's own refresh-token lifetime
+// (we use 7 days here as a reasonable browser default).
+func (s *Service) SetRefreshCookie(w http.ResponseWriter, token string) {
+	if token == "" {
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     s.cookieName + refreshCookieSuffix,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
+	})
+}
+
+// ClearRefreshCookie removes the refresh cookie.
+func (s *Service) ClearRefreshCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     s.cookieName + refreshCookieSuffix,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   s.secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+}
+
+// RefreshCookieValue extracts the refresh token from the request, or ""
+// if no refresh cookie is present.
+func (s *Service) RefreshCookieValue(r *http.Request) string {
+	c, err := r.Cookie(s.cookieName + refreshCookieSuffix)
+	if err != nil {
+		return ""
+	}
+	return c.Value
 }
 
 // userKey is used to attach the verified SimpleAuth User to a request context.

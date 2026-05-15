@@ -13,11 +13,18 @@ import (
 
 // fakeClient implements authClient for tests.
 type fakeClient struct {
-	loginUser  string
-	loginPass  string
-	loginToken string
-	loginErr   error
-	verifyOK   map[string]*simpleauth.User
+	loginUser    string
+	loginPass    string
+	loginToken   string
+	loginRefresh string
+	loginErr     error
+	verifyOK     map[string]*simpleauth.User
+	// refreshOK maps an incoming refresh token to the new pair the fake
+	// should return. An entry missing from the map is treated as "rejected".
+	refreshOK map[string]struct {
+		Access  string
+		Refresh string
+	}
 }
 
 func (f *fakeClient) Login(_ context.Context, u, p string) (*simpleauth.TokenResponse, error) {
@@ -27,7 +34,10 @@ func (f *fakeClient) Login(_ context.Context, u, p string) (*simpleauth.TokenRes
 	if u != f.loginUser || p != f.loginPass {
 		return nil, errors.New("bad creds")
 	}
-	return &simpleauth.TokenResponse{AccessToken: f.loginToken}, nil
+	return &simpleauth.TokenResponse{
+		AccessToken:  f.loginToken,
+		RefreshToken: f.loginRefresh,
+	}, nil
 }
 
 func (f *fakeClient) Verify(token string) (*simpleauth.User, error) {
@@ -35,6 +45,16 @@ func (f *fakeClient) Verify(token string) (*simpleauth.User, error) {
 		return u, nil
 	}
 	return nil, errors.New("invalid")
+}
+
+func (f *fakeClient) Refresh(_ context.Context, rt string) (*simpleauth.TokenResponse, error) {
+	if pair, ok := f.refreshOK[rt]; ok {
+		return &simpleauth.TokenResponse{
+			AccessToken:  pair.Access,
+			RefreshToken: pair.Refresh,
+		}, nil
+	}
+	return nil, errors.New("refresh rejected")
 }
 
 func newTestService(client authClient) *Service {

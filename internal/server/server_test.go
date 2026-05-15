@@ -25,13 +25,17 @@ import (
 // fakeAuthClient lets us drive the auth.Service in tests without a SimpleAuth
 // server. It also exposes a hook to swap in a known token + user pair.
 type fakeAuthClient struct {
-	users map[string]string                // password by username
-	jwts  map[string]*simpleauth.User      // accepted tokens
+	users     map[string]string           // password by username
+	jwts      map[string]*simpleauth.User // accepted access tokens
+	refreshes map[string]string           // refresh token → new access token
 }
 
 func (f *fakeAuthClient) Login(_ context.Context, u, p string) (*simpleauth.TokenResponse, error) {
 	if want, ok := f.users[u]; ok && want == p {
-		return &simpleauth.TokenResponse{AccessToken: "tok-" + u}, nil
+		return &simpleauth.TokenResponse{
+			AccessToken:  "tok-" + u,
+			RefreshToken: "ref-" + u,
+		}, nil
 	}
 	return nil, &authErr{"bad creds"}
 }
@@ -41,6 +45,16 @@ func (f *fakeAuthClient) Verify(token string) (*simpleauth.User, error) {
 		return u, nil
 	}
 	return nil, &authErr{"invalid"}
+}
+
+func (f *fakeAuthClient) Refresh(_ context.Context, rt string) (*simpleauth.TokenResponse, error) {
+	if access, ok := f.refreshes[rt]; ok {
+		return &simpleauth.TokenResponse{
+			AccessToken:  access,
+			RefreshToken: rt, // tests don't rotate
+		}, nil
+	}
+	return nil, &authErr{"refresh rejected"}
 }
 
 type authErr struct{ msg string }
@@ -64,8 +78,10 @@ func newTestServer(t *testing.T) (http.Handler, *Server, *fakeAuthClient) {
 	fake := &fakeAuthClient{
 		users: map[string]string{"alice": "wonderland"},
 		jwts: map[string]*simpleauth.User{
-			"tok-alice": {Sub: "alice", PreferredUsername: "alice", Roles: []string{"admin"}},
+			"tok-alice":   {Sub: "alice", PreferredUsername: "alice", Roles: []string{"admin"}},
+			"tok-alice-2": {Sub: "alice", PreferredUsername: "alice", Roles: []string{"admin"}},
 		},
+		refreshes: map[string]string{"ref-alice": "tok-alice-2"},
 	}
 	authSvc := auth.NewServiceForTest(fake, auth.Options{
 		CookieName: "mqc_session",
