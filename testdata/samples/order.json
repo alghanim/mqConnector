@@ -1,0 +1,40 @@
+{
+  "order_id": "ORD-2026-0042",
+  "placed_at": "2026-05-15T14:23:17Z",
+  "currency": "USD",
+  "customer": {
+    "id": "C-91823",
+    "name": "Alice Johnson",
+    "email": "alice@example.com",
+    "ssn": "123-45-6789",
+    "phone": "+1-555-0142",
+    "shipping_address": {
+      "line1": "742 Evergreen Terrace",
+      "city": "Springfield",
+      "postal_code": "97477",
+      "country": "US"
+    }
+  },
+  "payment": {
+    "method": "card",
+    "card_last4": "4242",
+    "card_token": "tok_live_AbCdEfGhIjKlMnOpQrStUvWx",
+    "billing_cvv": "***"
+  },
+  "items": [
+    {
+      "sku": "BOOK-001",
+      "title": "The Pragmatic Programmer",
+      "qty": 1,
+      "unit_price": 39.99
+    },
+    {
+      "sku": "MUG-007",
+      "title": "Sarcasm fuel",
+      "qty": 2,
+      "unit_price": 12.5
+    }
+  ],
+  "total": 64.99,
+  "internal_notes": "Flagged for fraud review — manual approval required."
+}

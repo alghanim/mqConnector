@@ -20,6 +20,7 @@
   import Select from '$lib/components/Select.svelte';
   import Badge from '$lib/components/Badge.svelte';
   import StageConfigForm from '$lib/components/StageConfigForm.svelte';
+  import { SAMPLE_FIXTURES } from '$lib/sample-fixtures';
 
   $: id = $page.params.id;
 
@@ -137,6 +138,11 @@
   // ---------- sample + preview ----------
   const samplePlaceholder = '{"id":"order-1","secret":"hush","total":42}';
   let sampleText = '';
+
+  async function loadSampleFixture(body: string) {
+    sampleText = body;
+    await extractPaths();
+  }
   let extractedPaths: string[] = [];
 
   /**
@@ -495,6 +501,15 @@
         <input id="sample-file" type="file" accept=".json,.xml,.txt"
           on:change={onSampleFile} class="file-input" />
 
+        <div class="try-row">
+          <span class="try-label">{t($locale, 'preview.try')}</span>
+          {#each SAMPLE_FIXTURES as f}
+            <button type="button" class="try-btn" on:click={() => loadSampleFixture(f.body)}>
+              {f.label}
+            </button>
+          {/each}
+        </div>
+
         <label class="config-label" for="sample-text" style="margin-top: 12px;">
           {t($locale, 'preview.sample')}
         </label>
@@ -644,4 +659,28 @@
     outline-offset: 2px;
   }
   .path-format { margin-inline-end: 4px; }
+
+  .try-row {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .try-label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .try-btn {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 11px;
+    background: var(--surface);
+    color: var(--text);
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    cursor: pointer;
+    transition: border-color 120ms, color 120ms;
+  }
+  .try-btn:hover { border-color: var(--accent); color: var(--accent); }
 </style>

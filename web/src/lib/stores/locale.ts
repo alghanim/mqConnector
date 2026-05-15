@@ -121,6 +121,7 @@ const strings: Record<Locale, Record<string, string>> = {
       'Click a path to add it to the filter stage. Click again on an existing path in the Stages section above to remove.',
     'preview.paths.chipHint': 'Click to add to the filter stage',
     'preview.paths.useAll': 'Use all paths',
+    'preview.try': 'Try a sample:',
     'stageConfig.advanced': 'Advanced (raw JSON)',
     'stageConfig.filter.help':
       'Dot-paths to strip from each message. Add one per chip; comma or Enter to commit.',
@@ -300,6 +301,7 @@ const strings: Record<Locale, Record<string, string>> = {
       'اضغط على مسار لإضافته إلى مرحلة التصفية. اضغط ثانية على مسار موجود في قسم المراحل أعلاه لإزالته.',
     'preview.paths.chipHint': 'اضغط للإضافة إلى مرحلة التصفية',
     'preview.paths.useAll': 'استخدام جميع المسارات',
+    'preview.try': 'جرّب عينة:',
     'stageConfig.advanced': 'متقدم (JSON خام)',
     'stageConfig.filter.help':
       'مسارات نقطية لاستبعادها من كل رسالة. أضف واحدة لكل شريحة؛ فاصلة أو Enter للتأكيد.',

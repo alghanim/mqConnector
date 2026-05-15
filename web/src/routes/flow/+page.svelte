@@ -28,6 +28,7 @@
   import Select from '$lib/components/Select.svelte';
   import Badge from '$lib/components/Badge.svelte';
   import StageConfigForm from '$lib/components/StageConfigForm.svelte';
+  import { SAMPLE_FIXTURES } from '$lib/sample-fixtures';
 
   // ─── Types ────────────────────────────────────────────────────────
   type NodeKind =
@@ -151,6 +152,10 @@
     flowSample = await file.text();
     await extractFlowPaths();
     target.value = '';
+  }
+  async function loadFlowSample(body: string) {
+    flowSample = body;
+    await extractFlowPaths();
   }
   async function extractFlowPaths() {
     flowExtractError = '';
@@ -541,6 +546,14 @@
       on:change={onFlowSampleFile}
       class="palette-file"
     />
+    <div class="try-row">
+      <span class="try-label">{t($locale, 'preview.try')}</span>
+      {#each SAMPLE_FIXTURES as f}
+        <button type="button" class="try-btn" on:click={() => loadFlowSample(f.body)}>
+          {f.label}
+        </button>
+      {/each}
+    </div>
     <textarea
       class="palette-sample"
       rows="4"
@@ -819,6 +832,25 @@
     font-size: 12px;
   }
   .palette-use-all:hover { background: var(--accent); color: var(--bg); }
+
+  .try-row {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+  .try-label { font-size: 11px; color: var(--text-muted); }
+  .try-btn {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 10px;
+    background: var(--surface);
+    color: var(--text);
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    cursor: pointer;
+    transition: border-color 120ms, color 120ms;
+  }
+  .try-btn:hover { border-color: var(--accent); color: var(--accent); }
 
   .canvas-wrap {
     position: relative;
