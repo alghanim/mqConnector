@@ -50,7 +50,11 @@ services:
             -keyout /certs/server.key -out /certs/server.crt \
             -subj "/CN=mqconnector" \
             -addext "subjectAltName=DNS:mqconnector,DNS:localhost,IP:127.0.0.1"
-          chmod 0644 /certs/server.crt && chmod 0640 /certs/server.key
+          # 0644 on the key is loose, but this is a *dev* self-signed cert
+          # read by a non-root container user. Production should mount real
+          # TLS material owned by the mqconnector UID with 0400, not
+          # generate it here.
+          chmod 0644 /certs/server.crt /certs/server.key
           echo "Generated self-signed dev TLS cert."
         else
           echo "TLS cert already present, skipping."

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, type Pipeline, type Connection } from '$lib/api';
+  import { locale, t } from '$lib/stores/locale';
   import Card from '$lib/components/Card.svelte';
   import Button from '$lib/components/Button.svelte';
   import Input from '$lib/components/Input.svelte';
@@ -28,6 +29,11 @@
   onMount(refresh);
 
   $: connOptions = connections.map((c) => ({ value: c.id || '', label: `${c.name} (${c.type})` }));
+  $: outputOptions = [
+    { value: 'same', label: t($locale, 'pipelines.outputFormat.same') },
+    { value: 'json', label: 'JSON' },
+    { value: 'xml', label: 'XML' }
+  ];
 
   function startNew() {
     editing = {
@@ -67,7 +73,7 @@
   }
   async function remove(p: Pipeline) {
     if (!p.id) return;
-    if (!confirm(`Delete pipeline "${p.name}"?`)) return;
+    if (!confirm(`${t($locale, 'common.confirmDelete')} — ${p.name}?`)) return;
     try {
       await api.del(`/v1/pipelines/${p.id}`);
       await refresh();
@@ -96,10 +102,12 @@
 
 <div class="space-y-6 max-w-5xl">
   <div class="flex items-baseline justify-between">
-    <h2 class="text-2xl font-semibold" style="color: var(--text)">Pipelines</h2>
+    <h2 class="text-2xl font-semibold" style="color: var(--text)">
+      {t($locale, 'pipelines.title')}
+    </h2>
     <div class="flex gap-2">
-      <Button variant="ghost" on:click={reload}>Reload all</Button>
-      <Button on:click={startNew}>Add pipeline</Button>
+      <Button variant="ghost" on:click={reload}>{t($locale, 'common.reload')}</Button>
+      <Button on:click={startNew}>{t($locale, 'pipelines.add')}</Button>
     </div>
   </div>
 
@@ -109,55 +117,47 @@
 
   {#if editing}
     <Card strip>
-      <p class="section-heading mb-4">{editing.id ? 'Edit pipeline' : 'New pipeline'}</p>
+      <p class="section-heading mb-4">
+        {editing.id ? t($locale, 'pipelines.edit') : t($locale, 'pipelines.new')}
+      </p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Input bind:value={editing.name} label="Name" required />
-        <Select
-          bind:value={editing.output_format}
-          label="Output format"
-          options={[
-            { value: 'same', label: 'Same as source' },
-            { value: 'json', label: 'JSON' },
-            { value: 'xml', label: 'XML' }
-          ]}
-        />
-        <Select bind:value={editing.source_id} label="Source connection" options={connOptions} />
-        <Select
-          bind:value={editing.destination_id}
-          label="Destination connection"
-          options={connOptions}
-        />
+        <Input bind:value={editing.name} label={t($locale, 'connections.name')} required />
+        <Select bind:value={editing.output_format} label={t($locale, 'pipelines.outputFormat')}
+          options={outputOptions} />
+        <Select bind:value={editing.source_id} label={t($locale, 'pipelines.source')} options={connOptions} />
+        <Select bind:value={editing.destination_id} label={t($locale, 'pipelines.destination')}
+          options={connOptions} />
       </div>
       <div class="mt-4">
-        <Input bind:value={filterPathsRaw} label="Filter paths (comma-separated dot paths)" />
+        <Input bind:value={filterPathsRaw} label={t($locale, 'pipelines.filterPaths')} />
       </div>
       <label class="mt-4 flex items-center gap-2 text-sm" style="color: var(--text)">
         <input type="checkbox" bind:checked={editing.enabled} />
-        Enabled
+        {t($locale, 'common.enabled')}
       </label>
       <div class="flex gap-2 justify-end mt-5">
-        <Button variant="ghost" on:click={cancel}>Cancel</Button>
-        <Button on:click={save}>Save</Button>
+        <Button variant="ghost" on:click={cancel}>{t($locale, 'common.cancel')}</Button>
+        <Button on:click={save}>{t($locale, 'common.save')}</Button>
       </div>
     </Card>
   {/if}
 
   <Card>
     {#if pipelines.length === 0}
-      <p style="color: var(--text-muted)">No pipelines yet.</p>
+      <p style="color: var(--text-muted)">{t($locale, 'common.none')}</p>
     {:else}
       <table class="table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Source → Destination</th>
-            <th>Output</th>
-            <th>Status</th>
+            <th>{t($locale, 'connections.name')}</th>
+            <th>{t($locale, 'pipelines.flow')}</th>
+            <th>{t($locale, 'pipelines.output')}</th>
+            <th>{t($locale, 'common.status')}</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {#each pipelines as p}
+          {#each pipelines as p (p.id || p.name)}
             {@const src = connections.find((c) => c.id === p.source_id)}
             {@const dst = connections.find((c) => c.id === p.destination_id)}
             <tr>
@@ -168,18 +168,18 @@
               <td><Badge variant="neutral">{p.output_format}</Badge></td>
               <td>
                 {#if p.enabled}
-                  <Badge variant="success">enabled</Badge>
+                  <Badge variant="success">{t($locale, 'common.enabled')}</Badge>
                 {:else}
-                  <Badge variant="warning">disabled</Badge>
+                  <Badge variant="warning">{t($locale, 'common.disabled')}</Badge>
                 {/if}
               </td>
               <td>
                 <div class="flex gap-2 justify-end">
                   <Button variant="ghost" on:click={() => toggleEnabled(p)}>
-                    {p.enabled ? 'Disable' : 'Enable'}
+                    {p.enabled ? t($locale, 'common.disable') : t($locale, 'common.enable')}
                   </Button>
-                  <Button variant="ghost" on:click={() => startEdit(p)}>Edit</Button>
-                  <Button variant="outline" on:click={() => remove(p)}>Delete</Button>
+                  <Button variant="ghost" on:click={() => startEdit(p)}>{t($locale, 'common.edit')}</Button>
+                  <Button variant="outline" on:click={() => remove(p)}>{t($locale, 'common.delete')}</Button>
                 </div>
               </td>
             </tr>

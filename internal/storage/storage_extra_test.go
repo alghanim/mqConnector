@@ -5,19 +5,6 @@ import (
 	"testing"
 )
 
-// Helper duplicated to avoid cross-file scope; mirrors the one in
-// storage_test.go.
-func mustStore(t *testing.T) *Store {
-	t.Helper()
-	dsn := "file::memory:?cache=shared&_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)"
-	s, err := Open(dsn, 1, 1)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-	return s
-}
-
 func TestTransforms_ReplaceForPipeline(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

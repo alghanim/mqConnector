@@ -2,14 +2,11 @@ package pipeline
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/clbanning/mxj/v2"
 
 	"mqConnector/internal/storage"
 )
@@ -102,23 +99,3 @@ func evaluateCondition(value any, op, conditionValue string) bool {
 	}
 }
 
-// extractValueDirect is a helper that callers (and tests) can use to pull a
-// path out of a raw JSON/XML message without building a full pipeline.
-func extractValueDirect(message []byte, format Format, path string) (any, error) {
-	var data map[string]any
-	switch format {
-	case FormatJSON:
-		if err := json.Unmarshal(message, &data); err != nil {
-			return nil, err
-		}
-	case FormatXML:
-		mv, err := mxj.NewMapXml(message)
-		if err != nil {
-			return nil, err
-		}
-		data = map[string]any(mv)
-	default:
-		return nil, fmt.Errorf("unsupported format %s", format)
-	}
-	return getNestedValue(data, path)
-}

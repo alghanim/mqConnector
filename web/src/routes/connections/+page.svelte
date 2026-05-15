@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, type Connection, type ConnectionType } from '$lib/api';
+  import { locale, t } from '$lib/stores/locale';
   import Card from '$lib/components/Card.svelte';
   import Button from '$lib/components/Button.svelte';
   import Input from '$lib/components/Input.svelte';
@@ -10,6 +11,8 @@
   let connections: Connection[] = [];
   let editing: Connection | null = null;
   let error = '';
+  let testing: Record<string, 'idle' | 'pending' | 'ok' | 'fail'> = {};
+  let testMsg: Record<string, string> = {};
 
   const typeOptions = [
     { value: 'rabbitmq', label: 'RabbitMQ' },
@@ -53,7 +56,7 @@
   }
   async function remove(c: Connection) {
     if (!c.id) return;
-    if (!confirm(`Delete connection "${c.name}"?`)) return;
+    if (!confirm(`${t($locale, 'common.confirmDelete')} — ${c.name}?`)) return;
     try {
       await api.del(`/v1/connections/${c.id}`);
       await refresh();
@@ -61,12 +64,37 @@
       error = (e as { message?: string }).message || 'delete failed';
     }
   }
+
+  async function testConn(c: Connection) {
+    if (!c.id) return;
+    testing[c.id] = 'pending';
+    testing = testing; // notify svelte
+    try {
+      const res = await api.post<{ ok: boolean; elapsed_ms: number; error?: string }>(
+        `/v1/connections/${c.id}/test`
+      );
+      if (res.ok) {
+        testing[c.id] = 'ok';
+        testMsg[c.id] = `${res.elapsed_ms}ms`;
+      } else {
+        testing[c.id] = 'fail';
+        testMsg[c.id] = res.error || 'failed';
+      }
+    } catch (e: unknown) {
+      testing[c.id] = 'fail';
+      testMsg[c.id] = (e as { message?: string }).message || 'failed';
+    }
+    testing = testing;
+    testMsg = testMsg;
+  }
 </script>
 
 <div class="space-y-6 max-w-5xl">
   <div class="flex items-baseline justify-between">
-    <h2 class="text-2xl font-semibold" style="color: var(--text)">Connections</h2>
-    <Button on:click={startNew}>Add connection</Button>
+    <h2 class="text-2xl font-semibold" style="color: var(--text)">
+      {t($locale, 'connections.title')}
+    </h2>
+    <Button on:click={startNew}>{t($locale, 'connections.add')}</Button>
   </div>
 
   {#if error}
@@ -75,48 +103,51 @@
 
   {#if editing}
     <Card strip>
-      <p class="section-heading mb-4">{editing.id ? 'Edit connection' : 'New connection'}</p>
+      <p class="section-heading mb-4">
+        {editing.id ? t($locale, 'connections.edit') : t($locale, 'connections.new')}
+      </p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Input bind:value={editing.name} label="Name" required />
-        <Select bind:value={editing.type} label="Type" options={typeOptions} />
+        <Input bind:value={editing.name} label={t($locale, 'connections.name')} required />
+        <Select bind:value={editing.type} label={t($locale, 'connections.type')} options={typeOptions} />
 
         {#if editing.type === 'ibm'}
-          <Input bind:value={editing.queue_manager} label="Queue manager" />
-          <Input bind:value={editing.conn_name} label="Connection name (host(port))" />
-          <Input bind:value={editing.channel} label="Channel" />
-          <Input bind:value={editing.queue_name} label="Queue name" />
-          <Input bind:value={editing.username} label="Username" />
-          <Input bind:value={editing.password} type="password" label="Password" />
+          <Input bind:value={editing.queue_manager} label={t($locale, 'connections.queueManager')} />
+          <Input bind:value={editing.conn_name} label={t($locale, 'connections.connName')} />
+          <Input bind:value={editing.channel} label={t($locale, 'connections.channel')} />
+          <Input bind:value={editing.queue_name} label={t($locale, 'connections.queueName')} />
+          <Input bind:value={editing.username} label={t($locale, 'connections.username')} />
+          <Input bind:value={editing.password} type="password" label={t($locale, 'connections.password')} />
         {:else if editing.type === 'rabbitmq'}
-          <Input bind:value={editing.url} label="AMQP URL" placeholder="amqp://user:pw@host/" />
-          <Input bind:value={editing.queue_name} label="Queue name" />
+          <Input bind:value={editing.url} label={t($locale, 'connections.amqpUrl')}
+            placeholder="amqp://user:pw@host/" />
+          <Input bind:value={editing.queue_name} label={t($locale, 'connections.queueName')} />
         {:else if editing.type === 'kafka'}
-          <Input bind:value={editing.brokers} label="Brokers (comma-separated)" />
-          <Input bind:value={editing.topic} label="Topic" />
+          <Input bind:value={editing.brokers} label={t($locale, 'connections.brokers')} />
+          <Input bind:value={editing.topic} label={t($locale, 'connections.topic')} />
         {/if}
       </div>
       <div class="flex gap-2 justify-end mt-5">
-        <Button variant="ghost" on:click={cancel}>Cancel</Button>
-        <Button on:click={save}>Save</Button>
+        <Button variant="ghost" on:click={cancel}>{t($locale, 'common.cancel')}</Button>
+        <Button on:click={save}>{t($locale, 'common.save')}</Button>
       </div>
     </Card>
   {/if}
 
   <Card>
     {#if connections.length === 0}
-      <p style="color: var(--text-muted)">No connections yet.</p>
+      <p style="color: var(--text-muted)">{t($locale, 'common.none')}</p>
     {:else}
       <table class="table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Type</th>
-            <th>Endpoint</th>
+            <th>{t($locale, 'connections.name')}</th>
+            <th>{t($locale, 'connections.type')}</th>
+            <th>{t($locale, 'connections.endpoint')}</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {#each connections as c}
+          {#each connections as c (c.id || c.name)}
             <tr>
               <td style="color: var(--text)">{c.name}</td>
               <td><Badge variant="neutral">{c.type}</Badge></td>
@@ -130,9 +161,16 @@
                 {/if}
               </td>
               <td>
-                <div class="flex gap-2 justify-end">
-                  <Button variant="ghost" on:click={() => startEdit(c)}>Edit</Button>
-                  <Button variant="outline" on:click={() => remove(c)}>Delete</Button>
+                <div class="flex gap-2 justify-end items-center">
+                  {#if c.id && testing[c.id] === 'ok'}
+                    <Badge variant="success">{t($locale, 'connections.test.success')} · {testMsg[c.id]}</Badge>
+                  {:else if c.id && testing[c.id] === 'fail'}
+                    <Badge variant="danger">{t($locale, 'connections.test.failure')}</Badge>
+                  {/if}
+                  <Button variant="ghost" loading={c.id ? testing[c.id] === 'pending' : false}
+                    on:click={() => testConn(c)}>{t($locale, 'connections.test')}</Button>
+                  <Button variant="ghost" on:click={() => startEdit(c)}>{t($locale, 'common.edit')}</Button>
+                  <Button variant="outline" on:click={() => remove(c)}>{t($locale, 'common.delete')}</Button>
                 </div>
               </td>
             </tr>
@@ -144,6 +182,5 @@
 </div>
 
 <style>
-  /* tighten the table action column */
   td:last-child { text-align: end; }
 </style>
