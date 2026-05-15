@@ -15,7 +15,7 @@ func (s *Server) handleListPipelines(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSONList(w, http.StatusOK, list)
 }
 
 func (s *Server) handleGetPipeline(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +91,7 @@ func (s *Server) handleListStages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, stages)
+	writeJSONList(w, http.StatusOK, stages)
 }
 
 func (s *Server) handleReplaceStages(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +116,7 @@ func (s *Server) handleListTransforms(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSONList(w, http.StatusOK, list)
 }
 
 func (s *Server) handleReplaceTransforms(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +141,7 @@ func (s *Server) handleListRoutingRules(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSONList(w, http.StatusOK, list)
 }
 
 func (s *Server) handleReplaceRoutingRules(w http.ResponseWriter, r *http.Request) {

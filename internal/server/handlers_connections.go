@@ -31,7 +31,7 @@ func (s *Server) handleListConnections(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSONList(w, http.StatusOK, list)
 }
 
 func (s *Server) handleGetConnection(w http.ResponseWriter, r *http.Request) {

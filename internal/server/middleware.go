@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"net/http"
 	"time"
 
@@ -101,13 +103,47 @@ func CORS(origins []string) func(http.Handler) http.Handler {
 	}
 }
 
+type cspNonceKey struct{}
+
+// CSPNonceFromContext returns the per-request CSP nonce the SecurityHeaders
+// middleware attached, or "" if there isn't one (e.g. a request that didn't
+// go through the middleware stack — only test paths should hit that).
+func CSPNonceFromContext(ctx context.Context) string {
+	if n, ok := ctx.Value(cspNonceKey{}).(string); ok {
+		return n
+	}
+	return ""
+}
+
+// generateNonce produces 16 random bytes encoded as URL-safe base64. RFC 8888
+// wants at least 128 bits of entropy; we use exactly that.
+func generateNonce() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// Crypto RNG failure is fatal for a security primitive — fall back
+		// to a fixed value would silently weaken CSP. Panic so the request
+		// fails loudly (Recover middleware turns it into a 500).
+		panic("csp nonce: crypto/rand.Read: " + err.Error())
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:])
+}
+
 // SecurityHeaders adds a standard set of response headers. The CSP is
 // deliberately strict: the embedded SvelteKit build produces a self-contained
 // bundle, so no third-party origins are needed. If the deployment ever pulls
 // fonts/scripts from a CDN, loosen this carefully — but the brand standard
 // explicitly forbids CDN-loaded fonts, so the default is locked down.
+//
+// SvelteKit emits two inline <script> blocks in app.html (the FOUC theme
+// reader and the hydration bootstrap). Rather than allow 'unsafe-inline' —
+// which would defeat XSS protection — we mint a fresh nonce per request,
+// put it in the request context for the static-file handler to inject into
+// those <script> tags, and reference it from the CSP header.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nonce := generateNonce()
+		ctx := context.WithValue(r.Context(), cspNonceKey{}, nonce)
+
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
@@ -115,7 +151,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
-				"script-src 'self'; "+
+				"script-src 'self' 'nonce-"+nonce+"'; "+
 				"style-src 'self' 'unsafe-inline'; "+
 				"img-src 'self' data:; "+
 				"font-src 'self' data:; "+
@@ -125,7 +161,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 				"base-uri 'self'; "+
 				"form-action 'self'")
 		h.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

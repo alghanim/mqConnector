@@ -15,7 +15,7 @@ func (s *Server) handleListScripts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSONList(w, http.StatusOK, list)
 }
 
 func (s *Server) handleGetScript(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +87,7 @@ func (s *Server) handleListSchemas(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSONList(w, http.StatusOK, list)
 }
 
 func (s *Server) handleGetSchema(w http.ResponseWriter, r *http.Request) {

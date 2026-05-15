@@ -40,6 +40,9 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if list == nil {
+		list = []*storage.AuditEntry{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"page":     page,
 		"per_page": perPage,

@@ -3,6 +3,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -141,9 +143,20 @@ func (s *Server) Run(ctx context.Context) error {
 
 // staticFS mounts the embedded SvelteKit build at the chi router, serving
 // /assets etc. and falling back to index.html for client-side routes.
+//
+// index.html gets special handling: the SvelteKit shell has two inline
+// <script> blocks (FOUC theme reader + hydration bootstrap) which would
+// otherwise be blocked by the strict CSP. The static handler reads the
+// per-request nonce off the context (set by SecurityHeaders), injects it
+// into every inline <script> tag, and serves the rewritten body. All
+// other files pass through http.FileServer untouched.
 func (s *Server) mountStatic(r chi.Router) {
 	uiFS := web.DistFS()
 	fileServer := http.FileServer(http.FS(uiFS))
+
+	// Cache the index.html body at boot so the per-request hot path is just
+	// a single byte-substitution rather than an FS read.
+	indexHTML, _ := fs.ReadFile(uiFS, "index.html")
 
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/")
@@ -152,13 +165,49 @@ func (s *Server) mountStatic(r chi.Router) {
 		}
 		// Try the exact path; if it doesn't exist, fall back to index.html
 		// so client-side routing handles deep links.
-		if _, err := fs.Stat(uiFS, p); err != nil {
-			r.URL.Path = "/"
-			r2 := r.Clone(r.Context())
-			r2.URL.Path = "/index.html"
-			fileServer.ServeHTTP(w, r2)
+		_, err := fs.Stat(uiFS, p)
+		isIndex := err != nil || p == "index.html"
+
+		if isIndex && len(indexHTML) > 0 {
+			body := injectCSPNonce(indexHTML, CSPNonceFromContext(r.Context()))
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			// SPA shell mutates on deploy (new bundle hashes) so don't allow
+			// long caches. The hashed asset files under /_app/ are
+			// content-addressed and the FileServer below will set its own
+			// far-future caching for those.
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+			_, _ = w.Write(body)
 			return
 		}
+
 		fileServer.ServeHTTP(w, r)
+	})
+}
+
+// inlineScriptOpen matches an opening <script> tag with no src= attribute —
+// SvelteKit's app.html shell uses these for the FOUC theme reader and the
+// hydration bootstrap, both of which need the per-request nonce. We
+// deliberately leave <script src=...> alone: external scripts are vetted
+// by 'self' in the script-src directive and don't need (or want) a nonce.
+var inlineScriptOpen = regexp.MustCompile(`<script(\s+(?:[^>]*[^/])?)?>`)
+
+// injectCSPNonce rewrites every inline <script> opener to carry the given
+// nonce attribute. <script src="..."> tags are skipped because the regex
+// only matches openers without a `src=` attribute would be too coarse —
+// we instead check defensively in the replacer.
+func injectCSPNonce(body []byte, nonce string) []byte {
+	if nonce == "" {
+		return body
+	}
+	attr := []byte(` nonce="` + nonce + `"`)
+	return inlineScriptOpen.ReplaceAllFunc(body, func(m []byte) []byte {
+		// Skip <script src=...> — those load external code and don't need
+		// (or want) a nonce attribute; the strict 'self' directive already
+		// gates which origins they can load from.
+		if bytes.Contains(m, []byte(" src=")) {
+			return m
+		}
+		// Insert the nonce attribute right after `<script`.
+		return append(append([]byte("<script"), attr...), m[len("<script"):]...)
 	})
 }
