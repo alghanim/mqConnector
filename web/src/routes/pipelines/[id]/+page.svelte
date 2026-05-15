@@ -138,6 +138,75 @@
   const samplePlaceholder = '{"id":"order-1","secret":"hush","total":42}';
   let sampleText = '';
   let extractedPaths: string[] = [];
+
+  /**
+   * The whole product is: drop a sample → click which fields to strip →
+   * those become the filter stage's `paths`. ensureFilterStage creates a
+   * filter stage at order 1 (or reuses one already at the head of the
+   * chain) and pushPathsToFilter merges new paths into its config.
+   */
+  function ensureFilterStage(): Stage {
+    let s = stages.find((st) => st.stage_type === 'filter');
+    if (s) return s;
+    s = {
+      stage_order: 1,
+      stage_type: 'filter',
+      stage_config: '{"paths":[]}',
+      enabled: true
+    };
+    // New filter goes to the front; everything else shifts +1.
+    stages = [s, ...stages.map((x) => ({ ...x, stage_order: x.stage_order + 1 }))];
+    return s;
+  }
+
+  function readFilterPaths(s: Stage): string[] {
+    try {
+      const v = JSON.parse(s.stage_config || '{}');
+      return Array.isArray(v.paths) ? v.paths.filter((p: unknown): p is string => typeof p === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function writeFilterPaths(s: Stage, paths: string[]) {
+    let v: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(s.stage_config || '{}');
+      if (parsed && typeof parsed === 'object') v = parsed;
+    } catch {
+      // start fresh
+    }
+    v.paths = paths;
+    s.stage_config = JSON.stringify(v);
+    // Trigger Svelte reactivity on the array.
+    stages = [...stages];
+  }
+
+  function addPathToFilter(path: string) {
+    const s = ensureFilterStage();
+    const current = readFilterPaths(s);
+    if (current.includes(path)) return;
+    writeFilterPaths(s, [...current, path]);
+  }
+  function addAllPathsToFilter() {
+    if (extractedPaths.length === 0) return;
+    const s = ensureFilterStage();
+    const current = readFilterPaths(s);
+    const merged = [...current];
+    for (const p of extractedPaths) {
+      if (!merged.includes(p)) merged.push(p);
+    }
+    writeFilterPaths(s, merged);
+  }
+  function isPathInFilter(path: string): boolean {
+    const s = stages.find((st) => st.stage_type === 'filter');
+    if (!s) return false;
+    return readFilterPaths(s).includes(path);
+  }
+  $: filterPathSet = (() => {
+    const s = stages.find((st) => st.stage_type === 'filter');
+    return s ? new Set(readFilterPaths(s)) : new Set<string>();
+  })();
   let extractedFormat = '';
   let previewOutput = '';
   let previewFormat = '';
@@ -438,20 +507,38 @@
           placeholder={samplePlaceholder}></textarea>
 
         {#if extractedFormat || extractedPaths.length > 0}
-          <div class="mt-3 paths-row">
-            <span class="path-format">
-              <Badge variant="neutral">{extractedFormat || '?'}</Badge>
-            </span>
-            {#each extractedPaths as p}
-              <span class="path-chip">{p}</span>
-            {/each}
+          <div class="mt-3">
+            <div class="paths-row">
+              <span class="path-format">
+                <Badge variant="neutral">{extractedFormat || '?'}</Badge>
+              </span>
+              {#each extractedPaths as p}
+                <button
+                  type="button"
+                  class="path-chip"
+                  class:on={filterPathSet.has(p)}
+                  on:click={() => addPathToFilter(p)}
+                  title={t($locale, 'preview.paths.chipHint')}
+                >
+                  {filterPathSet.has(p) ? '✓ ' : '+ '}{p}
+                </button>
+              {/each}
+            </div>
+            <p class="text-xs mt-2" style="color: var(--text-muted)">
+              {t($locale, 'preview.paths.help')}
+            </p>
           </div>
         {/if}
 
-        <div class="flex gap-2 mt-3">
+        <div class="flex gap-2 mt-3 flex-wrap">
           <Button variant="ghost" on:click={extractPaths} loading={extracting}>
             {t($locale, 'preview.extract')}
           </Button>
+          {#if extractedPaths.length > 0}
+            <Button variant="ghost" on:click={addAllPathsToFilter}>
+              {t($locale, 'preview.paths.useAll')}
+            </Button>
+          {/if}
           <Button on:click={runPreview} loading={previewing}>
             {t($locale, 'preview.run')}
           </Button>
@@ -537,11 +624,24 @@
   .path-chip {
     border: 1px solid var(--border);
     border-radius: 999px;
-    padding: 2px 10px;
+    padding: 4px 12px;
     font-size: 12px;
     color: var(--text);
     background: var(--surface);
     font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    cursor: pointer;
+    transition: border-color 120ms, background-color 120ms, color 120ms;
+  }
+  .path-chip:hover { border-color: var(--accent); }
+  .path-chip.on {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--bg);
+    font-weight: 600;
+  }
+  .path-chip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
   .path-format { margin-inline-end: 4px; }
 </style>
