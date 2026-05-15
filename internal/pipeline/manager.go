@@ -102,11 +102,19 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 		return fmt.Errorf("destination: %w", err)
 	}
 
+	// Pre-load every schema referenced either at the pipeline level or by a
+	// validate stage's config, so the executor doesn't hit storage mid-loop.
+	schemas, err := loadReferencedSchemas(ctx, m.store, p, stageRows)
+	if err != nil {
+		return fmt.Errorf("load schemas: %w", err)
+	}
+
 	stages, err := Build(BuildContext{
 		Pipeline:     p,
 		StageRows:    stageRows,
 		Transforms:   transforms,
 		RoutingRules: routes,
+		Schemas:      schemas,
 	})
 	if err != nil {
 		return fmt.Errorf("build stages: %w", err)

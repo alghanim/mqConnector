@@ -42,15 +42,18 @@ func (s *Server) routes() http.Handler {
 	// Login is rate-limited per source IP to slow credential stuffing.
 	r.With(s.rateLimitLogin).Post("/api/auth/login", s.handleLogin)
 
-	// Authenticated endpoints — admin only
+	// Authenticated endpoints — admin only. AuditAdminActions records every
+	// mutation after RequireSession populates the user context.
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth.RequireSession)
+		r.Use(s.AuditAdminActions)
 
 		r.Post("/api/auth/logout", s.handleLogout)
 		r.Get("/api/auth/me", s.handleMe)
 
 		r.Get("/api/metrics", s.handleMetricsJSON)
 		r.Get("/api/metrics/prometheus", s.handleMetricsPrometheus)
+		r.Get("/api/v1/audit", s.handleListAudit)
 
 		// Resource APIs under /api/v1/
 		r.Route("/api/v1/connections", func(r chi.Router) {
@@ -59,6 +62,7 @@ func (s *Server) routes() http.Handler {
 			r.Get("/{id}", s.handleGetConnection)
 			r.Put("/{id}", s.handleUpdateConnection)
 			r.Delete("/{id}", s.handleDeleteConnection)
+			r.Post("/{id}/test", s.handleTestConnection)
 		})
 		r.Route("/api/v1/pipelines", func(r chi.Router) {
 			r.Get("/", s.handleListPipelines)

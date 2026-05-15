@@ -115,6 +115,23 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_dlq_pipeline ON dlq(pipeline_id);
 	CREATE INDEX IF NOT EXISTS idx_dlq_created ON dlq(created_at DESC);
 	`,
+	// 0002 — audit log
+	`
+	CREATE TABLE IF NOT EXISTS audit_log (
+		id          TEXT PRIMARY KEY,
+		at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		actor       TEXT NOT NULL DEFAULT '',         -- preferred_username from JWT
+		actor_sub   TEXT NOT NULL DEFAULT '',         -- JWT sub
+		action      TEXT NOT NULL,                    -- HTTP verb
+		resource    TEXT NOT NULL DEFAULT '',         -- /api/v1/connections/abc
+		status      INTEGER NOT NULL DEFAULT 0,       -- response status code
+		request_id  TEXT NOT NULL DEFAULT '',         -- X-Request-Id for cross-ref to logs
+		remote_ip   TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX IF NOT EXISTS idx_audit_at      ON audit_log(at DESC);
+	CREATE INDEX IF NOT EXISTS idx_audit_actor   ON audit_log(actor);
+	CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_log(resource);
+	`,
 }
 
 func migrate(db *sql.DB) error {

@@ -69,11 +69,18 @@ type ValidateConfig struct {
 
 // BuildContext bundles every input BuildStages needs to materialise stages
 // from storage rows.
+//
+// Schemas keys are storage schema IDs. The validate stage prefers a
+// schema_id reference (via stage config OR the pipeline-level SchemaID) over
+// the deprecated inline content/schema_type fields — the inline form is kept
+// for backwards compatibility with stage configs that were authored before
+// the schemas collection existed.
 type BuildContext struct {
 	Pipeline     *storage.Pipeline
 	StageRows    []*storage.Stage
 	Transforms   []*storage.Transform
 	RoutingRules []*storage.RoutingRule
+	Schemas      map[string]*storage.Schema
 }
 
 // Build constructs the concrete Stage list for the pipeline.
@@ -116,6 +123,25 @@ func Build(ctx BuildContext) ([]Stage, error) {
 			cfg := ValidateConfig{}
 			if row.StageConfig != "" {
 				_ = json.Unmarshal([]byte(row.StageConfig), &cfg)
+			}
+			// Resolution precedence:
+			//   1. SchemaID on the stage config
+			//   2. Pipeline-level SchemaID
+			//   3. Inline schema_type + content (legacy)
+			schemaID := cfg.SchemaID
+			if schemaID == "" && ctx.Pipeline != nil {
+				schemaID = ctx.Pipeline.SchemaID
+			}
+			if schemaID != "" {
+				schema := ctx.Schemas[schemaID]
+				if schema == nil {
+					return nil, fmt.Errorf("validate stage references schema %q but it is not loaded", schemaID)
+				}
+				stages = append(stages, &ValidateStage{
+					SchemaType: schema.SchemaType,
+					Content:    schema.Content,
+				})
+				continue
 			}
 			stages = append(stages, &ValidateStage{
 				SchemaType: cfg.SchemaType,

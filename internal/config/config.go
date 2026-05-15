@@ -87,9 +87,16 @@ type PipelineConfig struct {
 	DLQ                DLQConfig `yaml:"dlq"`
 }
 
+// DLQConfig holds DLQ retry + retention policy. A configurable retention
+// keeps a long broker outage from filling the disk: entries older than
+// MaxAge OR over MaxRows (whichever fires first) are pruned by the
+// retention sweeper. Setting either limit to 0 disables that pruning rule.
 type DLQConfig struct {
-	MaxRetries   int           `yaml:"max_retries"`
-	RetryBackoff time.Duration `yaml:"retry_backoff"`
+	MaxRetries    int           `yaml:"max_retries"`
+	RetryBackoff  time.Duration `yaml:"retry_backoff"`
+	MaxAge        time.Duration `yaml:"max_age"`
+	MaxRows       int           `yaml:"max_rows"`
+	SweepInterval time.Duration `yaml:"sweep_interval"`
 }
 
 type ScriptConfig struct {
@@ -136,8 +143,11 @@ func Default() Config {
 		Pipeline: PipelineConfig{
 			WorkersPerPipeline: 1,
 			DLQ: DLQConfig{
-				MaxRetries:   3,
-				RetryBackoff: 30 * time.Second,
+				MaxRetries:    3,
+				RetryBackoff:  30 * time.Second,
+				MaxAge:        30 * 24 * time.Hour, // 30 days
+				MaxRows:       100000,
+				SweepInterval: 10 * time.Minute,
 			},
 		},
 		Script: ScriptConfig{

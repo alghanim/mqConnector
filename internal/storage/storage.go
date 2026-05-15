@@ -21,6 +21,7 @@ type Store struct {
 	DLQ          *DLQRepo
 	Scripts      *ScriptRepo
 	Schemas      *SchemaRepo
+	Audit        *AuditRepo
 }
 
 // Open opens (and migrates) the database at dsn. The caller must Close it.
@@ -53,6 +54,7 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 		DLQ:          &DLQRepo{db: db},
 		Scripts:      &ScriptRepo{db: db},
 		Schemas:      &SchemaRepo{db: db},
+		Audit:        &AuditRepo{db: db},
 	}, nil
 }
 

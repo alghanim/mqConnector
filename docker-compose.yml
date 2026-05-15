@@ -37,11 +37,14 @@ services:
   # on first run. Exits immediately if a cert is already present.
   # ---------------------------------------------------------------------------
   certs-init:
-    image: alpine/openssl:latest
+    image: alpine:3.20
+    # alpine/openssl uses `openssl` as its entrypoint, so a shell command
+    # gets eaten as `openssl sh ...`. The plain alpine image with openssl
+    # added at runtime keeps the script-as-CMD pattern working.
+    entrypoint: ["/bin/sh", "-ec"]
     command:
-      - sh
-      - -ec
       - |
+        apk add --no-cache openssl >/dev/null
         if [ ! -f /certs/server.crt ] || [ ! -f /certs/server.key ]; then
           openssl req -x509 -newkey rsa:2048 -days 365 -nodes \
             -keyout /certs/server.key -out /certs/server.crt \
@@ -71,14 +74,21 @@ services:
     environment:
       AUTH_PORT: "8080"
       AUTH_DATA_DIR: /data
+      AUTH_HOSTNAME: simpleauth
+      # Explicit base path — SimpleAuth defaults this to "/sauth" so the
+      # actual health endpoint is /sauth/health. Pinning it makes the URL
+      # stable across SimpleAuth versions.
+      AUTH_BASE_PATH: /sauth
       AUTH_ADMIN_USER: ${SIMPLEAUTH_ADMIN_USER:-admin}
       AUTH_ADMIN_PASSWORD: ${SIMPLEAUTH_ADMIN_PASSWORD:-changeme-please}
     volumes:
       - simpleauth-data:/data
     ports:
       - "${SIMPLEAUTH_HOST_PORT:-9443}:8080"
+    # SimpleAuth terminates TLS itself on port 8080 with a self-signed cert
+    # on first boot. The healthcheck has to disable cert verification.
     healthcheck:
-      test: ["CMD", "wget", "--no-check-certificate", "--spider", "-q", "https://localhost:8080/health"]
+      test: ["CMD", "wget", "--no-check-certificate", "--spider", "-q", "https://localhost:8080/sauth/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -115,9 +125,13 @@ services:
       SERVER_TLS_KEY_FILE:  /etc/mqconnector/tls/server.key
       # Storage
       STORAGE_DSN: "file:/var/lib/mqconnector/mqconnector.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)"
-      # Auth — points at the simpleauth container by service DNS.
-      AUTH_SIMPLEAUTH_URL: "https://simpleauth:8080"
-      AUTH_INSECURE_SKIP_VERIFY: "true"   # self-signed in dev; tighten in prod
+      # Auth — points at the simpleauth container by service DNS. SimpleAuth
+      # terminates TLS with a self-signed cert on first boot, so we skip
+      # verification on the internal network. In a hardened deployment,
+      # replace the self-signed cert with a CA-issued one and flip
+      # INSECURE_SKIP_VERIFY back to false.
+      AUTH_SIMPLEAUTH_URL: "https://simpleauth:8080/sauth"
+      AUTH_INSECURE_SKIP_VERIFY: "true"
       AUTH_SESSION_TTL: "12h"
       AUTH_COOKIE_NAME: mqc_session
       # Logging

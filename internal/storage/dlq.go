@@ -78,6 +78,40 @@ func (r *DLQRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// PruneOlderThan deletes DLQ rows older than cutoff. Returns the count
+// removed. cutoff in the future or zero is a no-op.
+func (r *DLQRepo) PruneOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	if cutoff.IsZero() {
+		return 0, nil
+	}
+	res, err := r.db.ExecContext(ctx, `DELETE FROM dlq WHERE created_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune by age: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// PruneToMaxRows keeps the newest `maxRows` rows and deletes the rest.
+// maxRows <= 0 is a no-op.
+func (r *DLQRepo) PruneToMaxRows(ctx context.Context, maxRows int) (int64, error) {
+	if maxRows <= 0 {
+		return 0, nil
+	}
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM dlq
+		WHERE id IN (
+			SELECT id FROM dlq
+			ORDER BY created_at DESC
+			LIMIT -1 OFFSET ?
+		)`, maxRows)
+	if err != nil {
+		return 0, fmt.Errorf("prune by count: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 func (r *DLQRepo) IncrementRetry(ctx context.Context, id string) error {
 	now := time.Now().UTC()
 	res, err := r.db.ExecContext(ctx,
