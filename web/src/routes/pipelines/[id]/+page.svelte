@@ -129,6 +129,94 @@
     rules = rules.filter((_, idx) => idx !== i);
   }
 
+  // ---------- sample + preview ----------
+  const samplePlaceholder = '{"id":"order-1","secret":"hush","total":42}';
+  let sampleText = '';
+  let extractedPaths: string[] = [];
+  let extractedFormat = '';
+  let previewOutput = '';
+  let previewFormat = '';
+  let previewError = '';
+  let previewing = false;
+  let extracting = false;
+
+  async function onSampleFile(e: Event) {
+    const target = e.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    sampleText = text;
+    await extractPaths();
+    target.value = ''; // allow re-upload of the same file
+  }
+
+  async function extractPaths() {
+    if (!sampleText) {
+      extractedPaths = [];
+      extractedFormat = '';
+      return;
+    }
+    extracting = true;
+    try {
+      // Send the sample as the raw body — the handler auto-detects.
+      const r = await api.postRaw<{ format: string; paths: string[] }>(
+        '/v1/samples/extract',
+        sampleText,
+        'application/octet-stream'
+      );
+      extractedFormat = r.format || '';
+      extractedPaths = r.paths || [];
+    } catch (e: unknown) {
+      extractedPaths = [];
+      extractedFormat = '';
+      previewError = (e as { message?: string }).message || 'extract failed';
+    } finally {
+      extracting = false;
+    }
+  }
+
+  async function runPreview() {
+    if (!pipeline?.id || !sampleText) return;
+    previewing = true;
+    previewError = '';
+    previewOutput = '';
+    previewFormat = '';
+    try {
+      // Validate stage configs before sending so the server doesn't
+      // have to reject for an obvious typo.
+      for (const s of stages) {
+        try {
+          JSON.parse(s.stage_config || '{}');
+        } catch {
+          throw new Error(`stage ${s.stage_order} (${s.stage_type}): config is not valid JSON`);
+        }
+      }
+      const r = await api.post<{
+        ok: boolean;
+        output: string;
+        format: string;
+        error?: string;
+        routes?: string[];
+      }>('/v1/preview', {
+        stages,
+        transforms,
+        routing_rules: rules,
+        output_format: pipeline.output_format,
+        sample: sampleText
+      });
+      if (!r.ok) {
+        previewError = r.error || 'preview failed';
+        return;
+      }
+      previewOutput = r.output;
+      previewFormat = r.format;
+    } catch (e: unknown) {
+      previewError = (e as { message?: string }).message || 'preview failed';
+    } finally {
+      previewing = false;
+    }
+  }
+
   // ---------- save ----------
   async function save() {
     if (!pipeline?.id) return;
@@ -318,6 +406,70 @@
       </div>
     {/if}
   </Card>
+
+  <!-- ─── Sample & preview ─────────────────────────────────────────── -->
+  <Card>
+    <p class="section-heading mb-3">{t($locale, 'preview.title')}</p>
+    <p class="text-sm mb-3" style="color: var(--text-muted)">
+      {t($locale, 'preview.help')}
+    </p>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="config-label" for="sample-file">{t($locale, 'preview.upload')}</label>
+        <input id="sample-file" type="file" accept=".json,.xml,.txt"
+          on:change={onSampleFile} class="file-input" />
+
+        <label class="config-label" for="sample-text" style="margin-top: 12px;">
+          {t($locale, 'preview.sample')}
+        </label>
+        <textarea
+          id="sample-text"
+          class="config-input"
+          rows="10"
+          bind:value={sampleText}
+          on:blur={extractPaths}
+          placeholder={samplePlaceholder}></textarea>
+
+        {#if extractedFormat || extractedPaths.length > 0}
+          <div class="mt-3 paths-row">
+            <span class="path-format">
+              <Badge variant="neutral">{extractedFormat || '?'}</Badge>
+            </span>
+            {#each extractedPaths as p}
+              <span class="path-chip">{p}</span>
+            {/each}
+          </div>
+        {/if}
+
+        <div class="flex gap-2 mt-3">
+          <Button variant="ghost" on:click={extractPaths} loading={extracting}>
+            {t($locale, 'preview.extract')}
+          </Button>
+          <Button on:click={runPreview} loading={previewing}>
+            {t($locale, 'preview.run')}
+          </Button>
+        </div>
+      </div>
+
+      <div>
+        <label class="config-label" for="preview-output">
+          {t($locale, 'preview.output')}
+          {#if previewFormat}<Badge variant="neutral">{previewFormat}</Badge>{/if}
+        </label>
+        <textarea
+          id="preview-output"
+          class="config-input"
+          rows="10"
+          readonly
+          value={previewOutput}
+          placeholder={t($locale, 'preview.outputPlaceholder')}></textarea>
+        {#if previewError}
+          <p class="mt-2 text-sm" style="color: var(--danger)">{previewError}</p>
+        {/if}
+      </div>
+    </div>
+  </Card>
 </div>
 
 <style>
@@ -364,4 +516,26 @@
     resize: vertical;
   }
   .config-input:focus { outline: 2px solid var(--accent); }
+
+  .file-input {
+    display: block;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+  .paths-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+  .path-chip {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 12px;
+    color: var(--text);
+    background: var(--surface);
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+  }
+  .path-format { margin-inline-end: 4px; }
 </style>

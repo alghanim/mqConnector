@@ -47,9 +47,38 @@ async function request<T>(
   return payload as T;
 }
 
+/**
+ * postRaw POSTs an arbitrary body without JSON-encoding it. Use this for
+ * endpoints that accept a raw payload (e.g. /samples/extract treats the
+ * request body as the sample message). Pass the raw string + the
+ * Content-Type the server should see.
+ */
+async function postRaw<T>(path: string, body: string, contentType: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Accept: 'application/json', 'Content-Type': contentType },
+    body
+  });
+  const isJSON = (res.headers.get('content-type') || '').includes('application/json');
+  const payload = isJSON ? await res.json().catch(() => ({})) : await res.text();
+  if (!res.ok) {
+    const message =
+      (isJSON && typeof payload === 'object' && payload !== null && 'error' in payload
+        ? (payload as { error: string }).error
+        : '') ||
+      (typeof payload === 'string' ? payload : '') ||
+      res.statusText;
+    const err: ApiError = { status: res.status, message };
+    throw err;
+  }
+  return payload as T;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
+  postRaw,
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   del: <T>(path: string) => request<T>('DELETE', path)
 };
