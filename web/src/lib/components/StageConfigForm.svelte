@@ -226,7 +226,7 @@
     border-radius: 50%;
     line-height: 1;
   }
-  .chip-x:hover { background: var(--danger); color: #fff; }
+  .chip-x:hover { background: var(--danger); color: var(--danger-on); }
   .path-input-row {
     display: flex; gap: 8px;
   }
@@ -241,7 +241,7 @@
   .add-btn {
     padding: 8px 14px;
     border-radius: 12px;
-    background: var(--accent); color: #fff;
+    background: var(--accent); color: var(--accent-on);
     border: none; cursor: pointer; font-size: 13px;
   }
   details {

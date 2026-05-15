@@ -4,6 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
+    <!--
+      theme-color is read by the browser chrome before any stylesheet
+      loads, so it has to be an inline hex. These two values are the
+      brand guide's bg-dark (Dark Slate 80, §2.1) and bg-light
+      (Warm Gray 85, §3.1) — kept in sync with brand-tokens.css §4/§5
+      `--bg`. After Svelte hydrates, stores/theme.ts rewrites this from
+      the live `--bg` so a runtime theme toggle stays consistent.
+    -->
     <meta name="theme-color" content="#222A31" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#F7F5F3" media="(prefers-color-scheme: light)" />
     <title>mqConnector</title>

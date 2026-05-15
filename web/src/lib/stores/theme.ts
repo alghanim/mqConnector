@@ -12,6 +12,24 @@ function initial(): Theme {
   return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
+/**
+ * Read the resolved `--bg` token from the live stylesheet. Cleaner than
+ * inlining the hex here — keeps brand-tokens.css the single source of
+ * truth even for the `<meta name="theme-color">` value (which controls
+ * the mobile-browser chrome bar and so must match the page bg exactly).
+ */
+function bgColor(): string {
+  if (!browser) return '';
+  return getComputedStyle(document.documentElement)
+    .getPropertyValue('--bg')
+    .trim();
+}
+
+function syncThemeMeta() {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', bgColor());
+}
+
 function createTheme() {
   const { subscribe, set, update } = writable<Theme>(initial());
   return {
@@ -19,11 +37,10 @@ function createTheme() {
     set(value: Theme) {
       if (browser) {
         document.documentElement.setAttribute('data-theme', value);
-        document.querySelector('meta[name="theme-color"]')?.setAttribute(
-          'content',
-          value === 'dark' ? '#222A31' : '#F7F5F3'
-        );
         localStorage.setItem('mqc-theme', value);
+        // setAttribute is sync but custom-property resolution isn't always
+        // — defer a tick so `getComputedStyle` reads the new theme's --bg.
+        queueMicrotask(syncThemeMeta);
       }
       set(value);
     },
@@ -33,6 +50,7 @@ function createTheme() {
         if (browser) {
           document.documentElement.setAttribute('data-theme', next);
           localStorage.setItem('mqc-theme', next);
+          queueMicrotask(syncThemeMeta);
         }
         return next;
       });
