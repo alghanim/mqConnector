@@ -39,6 +39,7 @@ func (s *Server) routes() http.Handler {
 
 	// Public endpoints
 	r.Get("/api/health", s.handleHealth)
+	r.Get("/api/openapi.yaml", s.handleOpenAPI)
 	// Login is rate-limited per source IP to slow credential stuffing.
 	r.With(s.rateLimitLogin).Post("/api/auth/login", s.handleLogin)
 	// Refresh is public — the access cookie may already have expired by the

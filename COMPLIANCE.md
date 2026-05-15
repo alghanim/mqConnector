@@ -90,6 +90,9 @@ This document is the explicit checklist of compliance against the Department Cod
 | Inline package-level comments where non-obvious | ✅ | |
 | Config reference (`config.example.yaml`) | ✅ | |
 | Compliance docs | ✅ | This file + `BRAND-COMPLIANCE.md` |
+| API documentation (OpenAPI 3.0) | ✅ | `internal/server/openapi.yaml`, served at `/api/openapi.yaml`, embedded via `go:embed` |
+| Real-broker integration coverage | ✅ | `internal/pipeline/integration_rabbit_test.go` — `//go:build integration`, drives a live RabbitMQ end-to-end |
+| IBM MQ build variant | ✅ | `Dockerfile.ibmmq` produces a CGO-linked image with `-tags ibmmq` against the bundled IBM client |
 
 ---
 

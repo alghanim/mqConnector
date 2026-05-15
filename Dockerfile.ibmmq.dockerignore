@@ -1,0 +1,49 @@
+# BuildKit reads `<Dockerfile>.dockerignore` in preference to .dockerignore
+# when present. The IBM MQ image NEEDS the ibmmq_dist/ tree (headers + libs)
+# in the build context, so we copy the default rules but drop that
+# exclusion.
+
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# Build artefacts
+dist/
+out/
+build/
+bin/
+mqconnector
+mqconnector-*
+
+# Frontend artefacts
+web/node_modules/
+web/.svelte-kit/
+web/build/
+
+# Local data + secrets
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+certs/
+*.pem
+*.key
+*.crt
+.env
+.env.*
+!.env.example
+config.yaml
+config.local.yaml
+
+# Docs are bundled separately
+*.md
+!README.md
+
+# Test outputs
+*.test
+*.out
+coverage.txt
+coverage.html

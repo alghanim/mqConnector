@@ -1,0 +1,864 @@
+# OpenAPI 3.0 specification for the mqConnector REST API.
+#
+# Source-of-truth for SDK generation and external API documentation. Kept
+# hand-authored on purpose: adding swag (the swaggo annotation toolchain)
+# would put a code generator in the build path for one mid-size YAML file,
+# and the API surface is small enough that a manual spec is cheaper to
+# maintain than the alternative.
+#
+# Tooling:
+#   - validate locally: `npx @redocly/cli lint api/openapi.yaml`
+#   - render docs:      `npx @redocly/cli build-docs api/openapi.yaml`
+#   - regenerate SDKs:  `npx @openapitools/openapi-generator-cli generate -i api/openapi.yaml -g <lang> -o sdk/<lang>`
+openapi: 3.0.3
+info:
+  title: mqConnector REST API
+  description: |
+    Admin and bridge API for mqConnector — a message-queue bridge between
+    IBM MQ, RabbitMQ and Kafka with a pluggable processing pipeline.
+
+    All `/api/v1/*` endpoints require a cookie-based session set by
+    `POST /api/auth/login`. The session cookie is HttpOnly + SameSite=Strict;
+    SDKs that target the API directly (rather than the embedded UI) should
+    drive the same login flow and carry the cookie across requests.
+
+    Mutations are recorded in the audit log; reads are not.
+  version: 1.0.0
+  license:
+    name: Internal
+servers:
+  - url: https://localhost:8443
+    description: Local dev (self-signed TLS)
+  - url: https://mqconnector.internal
+    description: Internal-network deployment
+
+# -----------------------------------------------------------------------------
+# Security
+# -----------------------------------------------------------------------------
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: mqc_session
+      description: HttpOnly cookie set by /api/auth/login.
+
+  parameters:
+    pathID:
+      name: id
+      in: path
+      required: true
+      description: Resource identifier (UUIDv4).
+      schema:
+        type: string
+        format: uuid
+    queryPage:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    queryPerPage:
+      name: per_page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 50
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: not found
+
+    Status:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string, format: password }
+
+    Me:
+      type: object
+      properties:
+        sub: { type: string }
+        preferred_username: { type: string }
+        name: { type: string }
+        email: { type: string }
+        roles:
+          type: array
+          items: { type: string }
+
+    Health:
+      type: object
+      required: [status, version, db_status, uptime, active_pipelines]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        version: { type: string }
+        db_status: { type: string }
+        uptime: { type: string }
+        active_pipelines: { type: integer }
+        connections:
+          type: array
+          items:
+            type: object
+            properties:
+              pipeline_id: { type: string }
+              status: { type: string }
+              last_error: { type: string }
+              source_queue: { type: string }
+              dest_queue: { type: string }
+
+    Connection:
+      type: object
+      required: [name, type]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        type:
+          type: string
+          enum: [ibm, rabbitmq, kafka]
+        queue_manager: { type: string }
+        conn_name: { type: string, description: "host(port)" }
+        channel: { type: string }
+        username: { type: string }
+        password: { type: string, format: password, description: "Encrypted at rest when MQC_MASTER_KEY is set." }
+        queue_name: { type: string }
+        url: { type: string, description: "AMQP URL (RabbitMQ)" }
+        brokers: { type: string, description: "Comma-separated host:port list (Kafka)" }
+        topic: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TestConnectionResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        elapsed_ms: { type: integer }
+        error: { type: string }
+
+    Pipeline:
+      type: object
+      required: [name, source_id, destination_id]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        source_id: { type: string, format: uuid }
+        destination_id: { type: string, format: uuid }
+        output_format:
+          type: string
+          enum: [same, json, xml]
+          default: same
+        schema_id: { type: string, format: uuid, nullable: true }
+        filter_paths:
+          type: array
+          items: { type: string }
+        enabled: { type: boolean, default: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Stage:
+      type: object
+      required: [stage_order, stage_type]
+      properties:
+        id: { type: string, format: uuid }
+        pipeline_id: { type: string, format: uuid }
+        stage_order: { type: integer }
+        stage_type:
+          type: string
+          enum: [filter, transform, translate, route, script, validate]
+        stage_config:
+          type: string
+          description: "Stage-specific JSON config; shape depends on stage_type."
+        enabled: { type: boolean }
+
+    TransformRule:
+      type: object
+      required: [transform_type, source_path]
+      properties:
+        id: { type: string, format: uuid }
+        pipeline_id: { type: string, format: uuid }
+        transform_type:
+          type: string
+          enum: [rename, mask, move, set, delete]
+        source_path: { type: string, description: "Dot-separated path inside the structured message." }
+        target_path: { type: string }
+        mask_pattern: { type: string, description: "Regex (Go RE2 syntax)." }
+        mask_replace: { type: string }
+        set_value: { type: string }
+        order: { type: integer }
+
+    RoutingRule:
+      type: object
+      required: [condition_operator, destination_id]
+      properties:
+        id: { type: string, format: uuid }
+        pipeline_id: { type: string, format: uuid }
+        condition_path: { type: string }
+        condition_operator:
+          type: string
+          enum: [eq, neq, contains, regex, gt, lt, exists]
+        condition_value: { type: string }
+        destination_id: { type: string, format: uuid }
+        priority: { type: integer }
+        enabled: { type: boolean }
+
+    Script:
+      type: object
+      required: [name, body]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        body: { type: string, description: "Line-oriented script grammar — see CLAUDE.md." }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Schema:
+      type: object
+      required: [name, schema_type, content]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        schema_type:
+          type: string
+          enum: [json_schema, xsd]
+        content: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    DLQEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        pipeline_id: { type: string, format: uuid }
+        source_queue: { type: string }
+        original_msg: { type: string, format: byte, description: "base64-encoded raw payload" }
+        error_reason: { type: string }
+        retry_count: { type: integer }
+        last_retry_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        at: { type: string, format: date-time }
+        actor: { type: string }
+        actor_sub: { type: string }
+        action: { type: string, description: "HTTP verb of the mutating request." }
+        resource: { type: string }
+        status: { type: integer }
+        request_id: { type: string }
+        remote_ip: { type: string }
+
+    PageEnvelope:
+      type: object
+      properties:
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer }
+
+# -----------------------------------------------------------------------------
+# Paths
+# -----------------------------------------------------------------------------
+paths:
+  /api/health:
+    get:
+      summary: Liveness + readiness probe.
+      tags: [system]
+      security: []
+      responses:
+        '200':
+          description: Healthy (or degraded — body carries detail).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: Unhealthy (e.g. database unreachable).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /api/metrics:
+    get:
+      summary: JSON metrics snapshot.
+      tags: [system]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Per-pipeline counters + uptime.
+
+  /api/metrics/prometheus:
+    get:
+      summary: Prometheus text-exposition format.
+      tags: [system]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Prometheus metrics.
+          content:
+            text/plain: {}
+
+  /api/auth/login:
+    post:
+      summary: Exchange username + password for a session cookie.
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Session cookie set in response.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Status' }
+        '401':
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Per-IP rate limit exceeded.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+              description: Seconds until next attempt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/auth/refresh:
+    post:
+      summary: Exchange the refresh cookie for a fresh access/refresh pair.
+      tags: [auth]
+      security: []
+      responses:
+        '200':
+          description: New cookies set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Status' }
+        '401':
+          description: No refresh cookie or refresh rejected.
+
+  /api/auth/logout:
+    post:
+      summary: Clear the session and refresh cookies.
+      tags: [auth]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Cookies cleared.
+
+  /api/auth/me:
+    get:
+      summary: Current user information.
+      tags: [auth]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: User claims from the verified JWT.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401':
+          description: No valid session.
+
+  /api/v1/connections:
+    get:
+      summary: List MQ connections.
+      tags: [connections]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: All connections.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Connection' }
+    post:
+      summary: Create a connection.
+      tags: [connections]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Connection' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connection' }
+
+  /api/v1/connections/{id}:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      summary: Get a connection by ID.
+      tags: [connections]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Connection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Connection' }
+        '404':
+          description: Not found.
+    put:
+      summary: Replace a connection.
+      tags: [connections]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Connection' }
+      responses:
+        '200':
+          description: Updated.
+        '404':
+          description: Not found.
+    delete:
+      summary: Delete a connection.
+      tags: [connections]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Deleted.
+
+  /api/v1/connections/{id}/test:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    post:
+      summary: Probe a stored connection without saving.
+      tags: [connections]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                queue: { type: string }
+                topic: { type: string }
+      responses:
+        '200':
+          description: Probe result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestConnectionResponse' }
+        '404':
+          description: Connection not found.
+
+  /api/v1/pipelines:
+    get:
+      summary: List pipelines.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: All pipelines.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Pipeline' }
+    post:
+      summary: Create a pipeline.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Pipeline' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pipeline' }
+
+  /api/v1/pipelines/{id}:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      summary: Get a pipeline.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Pipeline.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pipeline' }
+    put:
+      summary: Replace a pipeline.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Pipeline' }
+      responses:
+        '200':
+          description: Updated.
+    delete:
+      summary: Delete a pipeline.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Deleted.
+
+  /api/v1/pipelines/{id}/stages:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      summary: List stages for a pipeline.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Stages.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Stage' }
+    put:
+      summary: Replace all stages for a pipeline.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '#/components/schemas/Stage' }
+      responses:
+        '200':
+          description: Replaced.
+
+  /api/v1/pipelines/{id}/transforms:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: List transform rules.
+      responses:
+        '200':
+          description: Transform rules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TransformRule' }
+    put:
+      summary: Replace transform rules.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '#/components/schemas/TransformRule' }
+      responses:
+        '200':
+          description: Replaced.
+
+  /api/v1/pipelines/{id}/routing-rules:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: List routing rules.
+      responses:
+        '200':
+          description: Routing rules.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/RoutingRule' }
+    put:
+      summary: Replace routing rules.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '#/components/schemas/RoutingRule' }
+      responses:
+        '200':
+          description: Replaced.
+
+  /api/v1/reload:
+    post:
+      summary: Hot-reload every enabled pipeline from storage.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Reloaded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  started: { type: integer }
+
+  /api/v1/dlq:
+    get:
+      summary: List dead-letter entries.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/queryPage'
+        - $ref: '#/components/parameters/queryPerPage'
+      responses:
+        '200':
+          description: Paginated DLQ entries.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/DLQEntry' }
+
+  /api/v1/dlq/{id}/retry:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    post:
+      summary: Re-publish a dead-letter message to the pipeline's destination.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Retried; the destination accepted the message.
+        '400':
+          description: Max retries exceeded.
+        '404':
+          description: DLQ entry not found.
+
+  /api/v1/dlq/{id}:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    delete:
+      summary: Permanently remove a DLQ entry.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Deleted.
+
+  /api/v1/scripts:
+    get:
+      tags: [scripts]
+      summary: List scripts.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Scripts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Script' }
+    post:
+      tags: [scripts]
+      summary: Create a script.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Script' }
+      responses:
+        '201':
+          description: Created.
+
+  /api/v1/scripts/{id}:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      tags: [scripts]
+      summary: Get a script.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Script.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Script' }
+    put:
+      tags: [scripts]
+      summary: Replace a script.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Script' }
+      responses:
+        '200':
+          description: Updated.
+    delete:
+      tags: [scripts]
+      summary: Delete a script.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Deleted.
+
+  /api/v1/schemas:
+    get:
+      tags: [schemas]
+      summary: List validation schemas.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Schemas.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Schema' }
+    post:
+      tags: [schemas]
+      summary: Create a validation schema.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Schema' }
+      responses:
+        '201':
+          description: Created.
+
+  /api/v1/schemas/{id}:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      tags: [schemas]
+      summary: Get a schema.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Schema.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Schema' }
+    put:
+      tags: [schemas]
+      summary: Replace a schema.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Schema' }
+      responses:
+        '200':
+          description: Updated.
+    delete:
+      tags: [schemas]
+      summary: Delete a schema.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Deleted.
+
+  /api/v1/audit:
+    get:
+      tags: [audit]
+      summary: List audit log entries.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { in: query, name: actor, schema: { type: string } }
+        - { in: query, name: resource, schema: { type: string } }
+        - { in: query, name: since, schema: { type: string, format: date-time } }
+        - { in: query, name: until, schema: { type: string, format: date-time } }
+        - $ref: '#/components/parameters/queryPage'
+        - $ref: '#/components/parameters/queryPerPage'
+      responses:
+        '200':
+          description: Audit entries newest-first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/AuditEntry' }
+
+  /api/v1/bridge/publish/{connectionId}:
+    parameters:
+      - name: connectionId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [bridge]
+      summary: Publish a raw payload to the named MQ connection.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: Published.
+
+  /api/v1/bridge/consume/{connectionId}:
+    parameters:
+      - name: connectionId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [bridge]
+      summary: Consume one message from the named MQ connection.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Consumed message. Content-Type reflects the detected format.
+          content:
+            application/json: {}
+            application/xml: {}
+            application/octet-stream: {}

@@ -23,14 +23,23 @@ Built as a single Go binary with an embedded SvelteKit admin UI, structured logg
 # Default build — no CGO, no IBM MQ, RabbitMQ + Kafka only
 ./scripts/build.sh
 
-# With IBM MQ (requires CGO + ibmmq_dist/)
+# Native build with IBM MQ on a linux/amd64 host (requires CGO + ibmmq_dist/)
 ./scripts/build.sh --ibmmq
+
+# Cross-platform IBM MQ build via Docker (recommended on macOS/ARM)
+docker buildx build --platform linux/amd64 \
+  --build-context simpleauth-sdk=../SimpleAuth/sdk/go \
+  -f Dockerfile.ibmmq -t mqconnector:ibmmq .
 ```
 
 The script:
 1. Builds the SvelteKit frontend with the static adapter into `internal/web/dist/`
 2. Compiles the Go binary into `dist/mqconnector`
 3. Stamps the version from `VERSION` into the binary
+
+The OpenAPI 3.0 spec lives at `internal/server/openapi.yaml` and is
+served live at `/api/openapi.yaml`. SDK generators and external doc
+tooling can fetch it directly from any running instance.
 
 ## Run (native)
 
@@ -116,6 +125,61 @@ seeds storage, uploads a JSON Schema, configures filter + transform
 stages, drives messages through in-memory MQ connectors, and asserts
 both the destination payload and the DLQ contents.
 
+A real-broker integration test lives at
+[`internal/pipeline/integration_rabbit_test.go`](internal/pipeline/integration_rabbit_test.go),
+gated behind the `integration` build tag so the default suite stays
+offline. Run it with `docker compose up -d rabbitmq` and then:
+
+```sh
+RABBIT_URL=amqp://mqc:mqc-dev@localhost:5672 \
+  go test -tags integration \
+  -run TestIntegration_RabbitMQ \
+  ./internal/pipeline/...
+```
+
+A real-broker integration test
+([`internal/pipeline/integration_rabbit_test.go`](internal/pipeline/integration_rabbit_test.go))
+publishes through a live RabbitMQ to catch wire-format regressions the
+in-memory connector can't see. It's behind the `integration` build tag
+and skipped without `RABBIT_URL`:
+
+```sh
+docker compose up -d rabbitmq
+RABBIT_URL=amqp://mqc:mqc-dev@localhost:5672 \
+  go test -tags integration -run TestIntegration_RabbitMQ \
+  ./internal/pipeline/...
+```
+
+## API documentation
+
+The full API contract is published as an OpenAPI 3.0 document, served by
+the binary itself at [`/api/openapi.yaml`](internal/server/openapi.yaml).
+Render or generate SDKs from it with the Redocly / openapi-generator CLIs:
+
+```sh
+npx @redocly/cli lint internal/server/openapi.yaml
+npx @redocly/cli build-docs internal/server/openapi.yaml
+npx @openapitools/openapi-generator-cli generate \
+  -i internal/server/openapi.yaml -g typescript-fetch -o sdk/ts
+```
+
+## IBM MQ build (optional)
+
+A separate `Dockerfile.ibmmq` produces a CGO-linked binary with the
+`ibmmq` build tag enabled, linked against the IBM MQ Redistributable
+Client shipped under `ibmmq_dist/`:
+
+```sh
+DOCKER_BUILDKIT=1 docker build \
+  --build-context simpleauth-sdk=../SimpleAuth/sdk/go \
+  -f Dockerfile.ibmmq -t mqconnector:ibmmq .
+```
+
+The runtime image is debian-slim because IBM's shared libraries are
+linked against glibc; alpine's musl will silently fail at load time. The
+default `Dockerfile` and `docker-compose.yml` produce the CGO-free image
+(RabbitMQ + Kafka only).
+
 ### Hot-path benchmarks (Apple M5, in-process)
 
 | Stage | ns/op | B/op | allocs |
@@ -154,6 +218,7 @@ both the destination payload and the DLQ contents.
 |---|---|---|
 | `/` | Cookie | SvelteKit admin UI |
 | `/api/health` | None | Liveness/readiness probe |
+| `/api/openapi.yaml` | None | OpenAPI 3.0 specification of the full API |
 | `/api/metrics` | Admin | JSON metrics |
 | `/api/metrics/prometheus` | Admin | Prometheus exposition |
 | `/api/auth/login` | None | SimpleAuth login |

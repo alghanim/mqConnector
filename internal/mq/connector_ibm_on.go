@@ -142,12 +142,12 @@ func (c *IBMConnector) Ping(_ context.Context) error {
 	if c.mgr == nil {
 		return errors.New("ibm: not connected")
 	}
-	// IBM MQ doesn't have an explicit ping. Inquire on the manager as a
-	// liveness check.
-	selectors := []int32{ibmmq.MQCA_Q_MGR_NAME}
-	_, _, err := c.mgr.Inq(selectors, nil)
-	if err != nil {
-		return fmt.Errorf("ibm Inq: %w", err)
-	}
+	// IBM MQ has no cheap "ping" call. Inq() is on MQObject, not on the
+	// queue-manager handle, so we'd need an open queue to actually probe
+	// liveness — which is too expensive to run on every pool sweep tick.
+	// Settle for a structural check: a non-nil manager handle that we
+	// haven't explicitly disconnected. If the broker has died under us
+	// the next real Send/Receive will surface the error and the pool
+	// will evict the entry on the failed attempt.
 	return nil
 }

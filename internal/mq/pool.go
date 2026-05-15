@@ -112,7 +112,9 @@ func (p *Pool) Release(id string) {
 }
 
 // Close stops the sweeper and disconnects every pooled connector. Safe to
-// call multiple times.
+// call multiple times. Disconnects run in parallel with a short hard
+// timeout — a wedged broker shouldn't be able to make process shutdown
+// hang.
 func (p *Pool) Close() {
 	p.mu.Lock()
 	if p.stopped {
@@ -125,12 +127,27 @@ func (p *Pool) Close() {
 	p.entries = map[string]*poolEntry{}
 	p.mu.Unlock()
 
+	const disconnectBudget = 3 * time.Second
+	done := make(chan struct{}, len(entries))
 	for id, e := range entries {
-		e.mu.Lock()
-		if err := e.conn.Disconnect(); err != nil {
-			p.logger.Warn("disconnect on close", "id", id, "err", err)
+		go func(id string, e *poolEntry) {
+			defer func() { done <- struct{}{} }()
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			if err := e.conn.Disconnect(); err != nil {
+				p.logger.Warn("disconnect on close", "id", id, "err", err)
+			}
+		}(id, e)
+	}
+	deadline := time.After(disconnectBudget)
+	for i := 0; i < len(entries); i++ {
+		select {
+		case <-done:
+		case <-deadline:
+			p.logger.Warn("pool close budget exhausted; leaving open connectors behind",
+				"pending", len(entries)-i)
+			return
 		}
-		e.mu.Unlock()
 	}
 }
 

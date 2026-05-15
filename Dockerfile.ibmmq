@@ -1,0 +1,111 @@
+# =============================================================================
+# mqConnector — IBM MQ build variant
+# =============================================================================
+# Build:
+#   docker build --build-context simpleauth-sdk=../SimpleAuth/sdk/go \
+#                -f Dockerfile.ibmmq -t mqconnector:ibmmq .
+#
+# Produces a CGO-linked binary with the `ibmmq` build tag enabled, against
+# the IBM MQ Redistributable Client shipped in ./ibmmq_dist/. The runtime
+# image is debian-slim (not alpine) because the IBM client's shared
+# libraries are linked against glibc; alpine's musl will silently fail at
+# load time.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage 1: SvelteKit frontend (unchanged from the default Dockerfile)
+# -----------------------------------------------------------------------------
+FROM node:20-bookworm-slim AS web
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
+    else npm install --no-audit --no-fund; fi
+COPY web/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 2: CGO Go build, linking against the IBM MQ Redistributable Client
+# -----------------------------------------------------------------------------
+FROM golang:1.23-bookworm AS build
+
+# IBM MQ client + the C toolchain it links against. The build-essential
+# package brings gcc/ld; the rpath we bake in points at /opt/mqm/lib64
+# which is where we'll copy the redistributable into the runtime image.
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends \
+        build-essential ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# SimpleAuth SDK via BuildKit named context (see compose).
+COPY --from=simpleauth-sdk . /sa-sdk
+
+COPY go.mod go.sum ./
+COPY . .
+
+RUN if [ -d /sa-sdk ] && [ -f /sa-sdk/go.mod ]; then \
+      sed -i 's|=> ../SimpleAuth/sdk/go|=> /sa-sdk|' go.mod; \
+    else \
+      echo "WARNING: SimpleAuth SDK not in build context; relying on module proxy"; \
+      sed -i '/^replace.*simpleauth-go/d' go.mod || true; \
+    fi && \
+    go mod download
+
+COPY --from=web /src/internal/web/dist /src/internal/web/dist
+
+ARG VERSION=docker
+
+ENV CGO_CFLAGS="-I/src/ibmmq_dist/inc"
+ENV CGO_LDFLAGS="-L/src/ibmmq_dist/lib64 -Wl,-rpath,/opt/mqm/lib64"
+
+RUN CGO_ENABLED=1 go build \
+      -trimpath \
+      -tags ibmmq \
+      -ldflags "-s -w -X main.version=${VERSION}" \
+      -o /out/mqconnector \
+      ./cmd/mqconnector
+
+# -----------------------------------------------------------------------------
+# Stage 3: runtime — debian-slim with the IBM client copied in
+# -----------------------------------------------------------------------------
+FROM debian:bookworm-slim
+
+LABEL org.opencontainers.image.title="mqConnector (IBM MQ variant)" \
+      org.opencontainers.image.description="mqConnector built with -tags ibmmq against the IBM MQ Redistributable Client"
+
+RUN apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends \
+        ca-certificates tzdata wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root user matches the default Dockerfile's contract.
+RUN groupadd --system mqconnector \
+    && useradd --system --gid mqconnector \
+        --home-dir /var/lib/mqconnector \
+        --shell /usr/sbin/nologin mqconnector
+
+# IBM MQ client at the rpath we baked in. Keeping the exact filename layout
+# the client expects (lib64/, lib/iconv/, lib/ccdt_schema.json, etc.).
+COPY --from=build /src/ibmmq_dist/lib64 /opt/mqm/lib64
+COPY --from=build /src/ibmmq_dist/lib   /opt/mqm/lib
+ENV LD_LIBRARY_PATH=/opt/mqm/lib64
+
+RUN mkdir -p /var/lib/mqconnector /etc/mqconnector \
+    && chown -R mqconnector:mqconnector /var/lib/mqconnector
+
+COPY --from=build /out/mqconnector /usr/local/bin/mqconnector
+COPY --chown=mqconnector:mqconnector config.example.yaml /etc/mqconnector/config.example.yaml
+
+EXPOSE 8443
+USER mqconnector
+VOLUME /var/lib/mqconnector
+WORKDIR /var/lib/mqconnector
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --no-check-certificate --spider -q https://localhost:8443/api/health \
+   || wget --spider -q http://localhost:8443/api/health \
+   || exit 1
+
+ENTRYPOINT ["mqconnector"]
+CMD ["-config", "/etc/mqconnector/config.yaml"]
