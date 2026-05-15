@@ -125,18 +125,6 @@ seeds storage, uploads a JSON Schema, configures filter + transform
 stages, drives messages through in-memory MQ connectors, and asserts
 both the destination payload and the DLQ contents.
 
-A real-broker integration test lives at
-[`internal/pipeline/integration_rabbit_test.go`](internal/pipeline/integration_rabbit_test.go),
-gated behind the `integration` build tag so the default suite stays
-offline. Run it with `docker compose up -d rabbitmq` and then:
-
-```sh
-RABBIT_URL=amqp://mqc:mqc-dev@localhost:5672 \
-  go test -tags integration \
-  -run TestIntegration_RabbitMQ \
-  ./internal/pipeline/...
-```
-
 A real-broker integration test
 ([`internal/pipeline/integration_rabbit_test.go`](internal/pipeline/integration_rabbit_test.go))
 publishes through a live RabbitMQ to catch wire-format regressions the
@@ -167,10 +155,12 @@ npx @openapitools/openapi-generator-cli generate \
 
 A separate `Dockerfile.ibmmq` produces a CGO-linked binary with the
 `ibmmq` build tag enabled, linked against the IBM MQ Redistributable
-Client shipped under `ibmmq_dist/`:
+Client shipped under `ibmmq_dist/`. **The bundled IBM client is
+`linux/amd64` only**, so the build must target that platform (it runs
+under QEMU emulation on Apple Silicon hosts and takes longer):
 
 ```sh
-DOCKER_BUILDKIT=1 docker build \
+docker buildx build --platform linux/amd64 \
   --build-context simpleauth-sdk=../SimpleAuth/sdk/go \
   -f Dockerfile.ibmmq -t mqconnector:ibmmq .
 ```
@@ -229,10 +219,11 @@ default `Dockerfile` and `docker-compose.yml` produce the CGO-free image
 | `/api/bridge/publish/:id` | Admin | REST → MQ publish bridge |
 | `/api/bridge/consume/:id` | Admin | MQ → REST consume bridge |
 
-## Compliance
+## Compliance + ops
 
 - `COMPLIANCE.md` — Department Coding Standard checklist
 - `BRAND-COMPLIANCE.md` — Branding Guide deviations (or "fully compliant")
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — on-call runbook: backups, restore, secret rotation, incident response, capacity, multi-replica posture. Backup/restore tooling lives in [`scripts/backup-db.sh`](scripts/backup-db.sh) and [`scripts/restore-db.sh`](scripts/restore-db.sh).
 - `CLAUDE.md` — AI-agent context for the repo
 
 ## License
