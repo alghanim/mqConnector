@@ -91,8 +91,16 @@ This document is the explicit checklist of compliance against the Department Cod
 | Config reference (`config.example.yaml`) | ✅ | |
 | Compliance docs | ✅ | This file + `BRAND-COMPLIANCE.md` |
 | API documentation (OpenAPI 3.0) | ✅ | `internal/server/openapi.yaml`, served at `/api/openapi.yaml`, embedded via `go:embed` |
-| Real-broker integration coverage | ✅ | `internal/pipeline/integration_rabbit_test.go` — `//go:build integration`, drives a live RabbitMQ end-to-end |
+| Real-broker integration coverage | ✅ | `internal/pipeline/integration_rabbit_test.go` — `//go:build integration`, drives a live RabbitMQ end-to-end. IBM MQ counterpart: `integration_ibmmq_test.go` (`//go:build integration && ibmmq`). |
 | IBM MQ build variant | ✅ | `Dockerfile.ibmmq` produces a CGO-linked image with `-tags ibmmq` against the bundled IBM client |
+
+## Multi-replica safety
+
+| Item | Status | Notes |
+|---|---|---|
+| Single active-replica enforcement | ✅ | `internal/leadership` provides a SQLite-backed lease: with `leadership.enabled: true`, only the lease holder runs pipeline workers; standbys serve the admin UI but stay idle. Takeover on a crashed leader is bounded by `leadership.ttl` (default 30 s). |
+| Lease primitive tested | ✅ | `leadership_test.go` covers solo acquire, race-of-N exactly-one-wins, renewal-within-TTL holds, takeover-after-expiry, context-cancel release, and role-flip notification. |
+| Observability | ✅ | `GET /api/v1/leadership` reports self/holder/is_leader/expires_at; logs emit on every role flip. |
 
 ---
 

@@ -18,13 +18,23 @@ import (
 // Config is the full application configuration. Every field has a sane default
 // applied by Load.
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Storage  StorageConfig  `yaml:"storage"`
-	Auth     AuthConfig     `yaml:"auth"`
-	Logging  LoggingConfig  `yaml:"logging"`
-	MQ       MQConfig       `yaml:"mq"`
-	Pipeline PipelineConfig `yaml:"pipeline"`
-	Script   ScriptConfig   `yaml:"script"`
+	Server     ServerConfig     `yaml:"server"`
+	Storage    StorageConfig    `yaml:"storage"`
+	Auth       AuthConfig       `yaml:"auth"`
+	Logging    LoggingConfig    `yaml:"logging"`
+	MQ         MQConfig         `yaml:"mq"`
+	Pipeline   PipelineConfig   `yaml:"pipeline"`
+	Script     ScriptConfig     `yaml:"script"`
+	Leadership LeadershipConfig `yaml:"leadership"`
+}
+
+// LeadershipConfig controls the multi-replica safety lease. When Enabled
+// is true, only the replica holding the lease starts pipeline workers;
+// other replicas serve the admin UI but stay idle as standbys.
+type LeadershipConfig struct {
+	Enabled bool          `yaml:"enabled"`
+	ID      string        `yaml:"id"` // empty → hostname
+	TTL     time.Duration `yaml:"ttl"`
 }
 
 type ServerConfig struct {
@@ -152,6 +162,11 @@ func Default() Config {
 		},
 		Script: ScriptConfig{
 			Timeout: time.Second,
+		},
+		Leadership: LeadershipConfig{
+			Enabled: false,
+			ID:      "",
+			TTL:     30 * time.Second,
 		},
 	}
 }

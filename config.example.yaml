@@ -81,3 +81,18 @@ pipeline:
 script:
   # Per-message script execution timeout. Hard cap to prevent stuck pipelines.
   timeout: "1s"
+
+# Optional: active/standby coordination across replicas. When enabled,
+# every replica points at the same SQLite database and races for a lease;
+# only the lease holder runs pipeline workers (so source queues aren't
+# double-consumed). The admin UI stays available on every replica
+# regardless. See docs/OPERATIONS.md §7 for the full posture.
+leadership:
+  enabled: false
+  # Stable identifier for this replica. Empty → hostname. Set explicitly
+  # when running in k8s so each Pod identifies itself across restarts.
+  id: ""
+  # Lease lifetime. Half this is the renewal interval. Tune larger than
+  # your worst pause budget (GC, fsync stalls) but small enough that
+  # takeover after a crashed leader is bounded.
+  ttl: "30s"

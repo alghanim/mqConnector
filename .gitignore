@@ -1,10 +1,13 @@
-# Build artifacts
+# Build artifacts. The `mqconnector` binary (and OS-suffixed variants) is
+# produced into /dist/ by scripts/build.sh, but a quick `go build` puts it
+# at the repo root. The leading slashes anchor these rules to the root so
+# they don't accidentally exclude the cmd/mqconnector/ package directory.
 /dist/
 /build/
 /out/
 /bin/
-mqconnector
-mqconnector-*
+/mqconnector
+/mqconnector-*
 
 # Test artifacts
 *.test

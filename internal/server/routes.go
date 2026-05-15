@@ -60,6 +60,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/api/metrics", s.handleMetricsJSON)
 		r.Get("/api/metrics/prometheus", s.handleMetricsPrometheus)
 		r.Get("/api/v1/audit", s.handleListAudit)
+		r.Get("/api/v1/leadership", s.handleLeadership)
 
 		// Resource APIs under /api/v1/
 		r.Route("/api/v1/connections", func(r chi.Router) {

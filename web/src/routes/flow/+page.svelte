@@ -20,6 +20,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { api, type Connection, type Schema, type StageType } from '$lib/api';
+  import { topoFromSource as topoFromSourceCore } from '$lib/flow-graph';
   import { locale, t } from '$lib/stores/locale';
   import Card from '$lib/components/Card.svelte';
   import Button from '$lib/components/Button.svelte';
@@ -133,6 +134,117 @@
     }
   }
   onMount(loadBackground);
+
+  // ─── Sample → filter (the core app workflow) ────────────────────
+  // Upload or paste a representative MQ message, see the paths inside
+  // it, click which ones to strip. A clicked path lands in the first
+  // filter node's config — created next to the source if there isn't
+  // one yet, wired in between source and the first non-source neighbour.
+  let flowSample = '';
+  let flowExtractedPaths: string[] = [];
+  let flowExtractError = '';
+
+  async function onFlowSampleFile(e: Event) {
+    const target = e.target as HTMLInputElement;
+    const file = target.files?.[0];
+    if (!file) return;
+    flowSample = await file.text();
+    await extractFlowPaths();
+    target.value = '';
+  }
+  async function extractFlowPaths() {
+    flowExtractError = '';
+    if (!flowSample.trim()) {
+      flowExtractedPaths = [];
+      return;
+    }
+    try {
+      const r = await api.postRaw<{ format: string; paths: string[] }>(
+        '/v1/samples/extract',
+        flowSample,
+        'application/octet-stream'
+      );
+      flowExtractedPaths = r.paths || [];
+    } catch (e: unknown) {
+      flowExtractedPaths = [];
+      flowExtractError = (e as { message?: string }).message || 'extract failed';
+    }
+  }
+
+  function findOrCreateFilterNode(): FlowNode {
+    const existing = nodes.find((n) => n.kind === 'filter');
+    if (existing) return existing;
+    // Position next to the source if there's exactly one.
+    const source = nodes.find((n) => n.kind === 'source');
+    const node: FlowNode = {
+      id: newNodeId(),
+      kind: 'filter',
+      x: source ? source.x + 220 : 200,
+      y: source ? source.y : 120,
+      label: 'filter',
+      connection_id: '',
+      config: '{"paths":[]}'
+    };
+    nodes = [...nodes, node];
+    if (source) {
+      // If the source has an outgoing edge already, splice the new filter
+      // in between (source → filter → previous_target).
+      const out = edges.find((e) => e.from === source.id);
+      if (out) {
+        edges = [
+          ...edges.filter((e) => !(e.from === source.id && e.to === out.to)),
+          { from: source.id, to: node.id },
+          { from: node.id, to: out.to }
+        ];
+      } else {
+        edges = [...edges, { from: source.id, to: node.id }];
+      }
+    }
+    return node;
+  }
+
+  function readNodePaths(n: FlowNode): string[] {
+    try {
+      const v = JSON.parse(n.config || '{}');
+      return Array.isArray(v.paths)
+        ? v.paths.filter((p: unknown): p is string => typeof p === 'string')
+        : [];
+    } catch {
+      return [];
+    }
+  }
+  function writeNodePaths(n: FlowNode, paths: string[]) {
+    let v: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(n.config || '{}');
+      if (parsed && typeof parsed === 'object') v = parsed;
+    } catch {
+      // start fresh
+    }
+    v.paths = paths;
+    n.config = JSON.stringify(v);
+    nodes = [...nodes];
+  }
+  function addPathToFlowFilter(p: string) {
+    const n = findOrCreateFilterNode();
+    const cur = readNodePaths(n);
+    if (cur.includes(p)) return;
+    writeNodePaths(n, [...cur, p]);
+    selectedId = n.id;
+  }
+  function addAllPathsToFlowFilter() {
+    if (flowExtractedPaths.length === 0) return;
+    const n = findOrCreateFilterNode();
+    const cur = readNodePaths(n);
+    const merged = [...cur];
+    for (const p of flowExtractedPaths) if (!merged.includes(p)) merged.push(p);
+    writeNodePaths(n, merged);
+    selectedId = n.id;
+  }
+  $: flowFilterPathSet = (() => {
+    const n = nodes.find((x) => x.kind === 'filter');
+    return n ? new Set(readNodePaths(n)) : new Set<string>();
+  })();
 
   // ─── Palette drag → drop ─────────────────────────────────────────
   function onPaletteDragStart(e: DragEvent, kind: NodeKind) {
@@ -383,36 +495,20 @@
     }
   }
 
-  // Kahn's algorithm — also our cycle detector.
+  // Delegate to the shared module so the live behaviour is pinned by
+  // the unit tests in flow-graph.test.ts.
   function topoFromSource(sourceId: string): string[] {
-    const inDeg = new Map<string, number>();
-    nodes.forEach((n) => inDeg.set(n.id, 0));
-    edges.forEach((e) => inDeg.set(e.to, (inDeg.get(e.to) || 0) + 1));
-
-    const adj = new Map<string, string[]>();
-    nodes.forEach((n) => adj.set(n.id, []));
-    edges.forEach((e) => adj.get(e.from)!.push(e.to));
-
-    const order: string[] = [];
-    const queue: string[] = [sourceId];
-    const visited = new Set<string>();
-    while (queue.length) {
-      const id = queue.shift()!;
-      if (visited.has(id)) continue;
-      visited.add(id);
-      order.push(id);
-      for (const next of adj.get(id) || []) {
-        inDeg.set(next, (inDeg.get(next) || 0) - 1);
-        if ((inDeg.get(next) || 0) <= 0) queue.push(next);
-      }
+    try {
+      return topoFromSourceCore(
+        nodes.map((n) => ({ id: n.id, kind: n.kind })),
+        edges,
+        sourceId
+      );
+    } catch (e) {
+      // Surface the module's English error wrapped in the locale string
+      // the editor already uses so RTL/Arabic users see translated copy.
+      throw new Error(t($locale, 'flow.error.cycleDetected'));
     }
-    if (order.length < nodes.filter((n) => visited.has(n.id) || n.kind === 'source').length) {
-      // Some node still has inbound edges — cycle.
-      if (edges.length > order.length - 1) {
-        throw new Error(t($locale, 'flow.error.cycleDetected'));
-      }
-    }
-    return order;
   }
 </script>
 
@@ -435,6 +531,44 @@
         {p.label}
       </div>
     {/each}
+
+    <!-- ─── Sample → filter (the core workflow) ──────────────────────── -->
+    <p class="palette-heading mt-4">{t($locale, 'preview.sample')}</p>
+    <p class="palette-help">{t($locale, 'flow.sample.help')}</p>
+    <input
+      type="file"
+      accept=".json,.xml,.txt"
+      on:change={onFlowSampleFile}
+      class="palette-file"
+    />
+    <textarea
+      class="palette-sample"
+      rows="4"
+      bind:value={flowSample}
+      on:blur={extractFlowPaths}
+      placeholder={'{"id":"order-1","secret":"hush"}'}
+    ></textarea>
+    {#if flowExtractError}
+      <p class="palette-help" style="color: var(--danger)">{flowExtractError}</p>
+    {/if}
+    {#if flowExtractedPaths.length > 0}
+      <div class="palette-paths">
+        {#each flowExtractedPaths as p}
+          <button
+            type="button"
+            class="path-chip"
+            class:on={flowFilterPathSet.has(p)}
+            on:click={() => addPathToFlowFilter(p)}
+            title={t($locale, 'preview.paths.chipHint')}
+          >
+            {flowFilterPathSet.has(p) ? '✓ ' : '+ '}{p}
+          </button>
+        {/each}
+      </div>
+      <button type="button" class="palette-use-all" on:click={addAllPathsToFlowFilter}>
+        {t($locale, 'preview.paths.useAll')}
+      </button>
+    {/if}
 
     <p class="palette-heading mt-4">{t($locale, 'flow.palette.connections')}</p>
     {#if connections.length === 0}
@@ -633,6 +767,58 @@
   .palette-conn { cursor: pointer; }
   .palette-help { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
   .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  .palette-file {
+    display: block;
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-bottom: 6px;
+  }
+  .palette-sample {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text);
+    padding: 6px 8px;
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 11px;
+    resize: vertical;
+  }
+  .palette-paths {
+    margin-top: 8px;
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .path-chip {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 11px;
+    color: var(--text);
+    background: var(--surface);
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    cursor: pointer;
+    transition: border-color 120ms, background-color 120ms, color 120ms;
+  }
+  .path-chip:hover { border-color: var(--accent); }
+  .path-chip.on {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--bg);
+    font-weight: 600;
+  }
+  .palette-use-all {
+    margin-top: 8px;
+    width: 100%;
+    padding: 6px 8px;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: 12px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .palette-use-all:hover { background: var(--accent); color: var(--bg); }
 
   .canvas-wrap {
     position: relative;

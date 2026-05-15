@@ -143,6 +143,8 @@ const strings: Record<Locale, Record<string, string>> = {
     'flow.title': 'Flow builder',
     'flow.help':
       'Drag node types from the palette onto the canvas. Connect Source → stages → Destination, then Save & Deploy.',
+    'flow.sample.help':
+      'Drop or paste a representative MQ message. Click each path you want stripped — it lands in a filter node next to the Source.',
     'flow.palette': 'Palette',
     'flow.palette.connections': 'Connections',
     'flow.palette.stages': 'Stages',
@@ -318,6 +320,8 @@ const strings: Record<Locale, Record<string, string>> = {
     'flow.title': 'محرر التدفق',
     'flow.help':
       'اسحب أنواع العقد من اللوحة إلى المساحة. اربط المصدر ← المراحل ← الوجهة، ثم احفظ وانشر.',
+    'flow.sample.help':
+      'ضع أو ألصق رسالة MQ نموذجية. اضغط كل مسار تريد استبعاده — يُضاف إلى عقدة تصفية بجوار المصدر.',
     'flow.palette': 'اللوحة',
     'flow.palette.connections': 'الاتصالات',
     'flow.palette.stages': 'المراحل',

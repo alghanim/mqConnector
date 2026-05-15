@@ -197,21 +197,58 @@ change required.
 
 ## 7. Multi-replica deployment
 
-The current binary assumes **a single active replica per logical
-pipeline**. Running two replicas pointed at the same source queue will
-double-consume.
+Pipeline workers are inherently single-active per source queue: running
+two replicas without coordination would double-consume from the broker.
+Two supported postures, pick by `leadership.enabled` in `config.yaml`:
 
-Operationally the safe pattern is:
-- One mqConnector instance per (broker, source queue) pair.
-- For HA, run a passive replica behind a leader election layer (k8s
-  Lease, Consul, file lock on shared storage) — *outside* mqConnector
-  itself. A simple `flock` over a shared NFS path is enough for many
-  deployments.
-- The UI/admin API can be served by an N-way replica behind a load
-  balancer, but only one replica should hold the worker goroutines.
+### Single-process (default)
 
-A future release may add native leader election. Until it does, **do
-not horizontally scale a single pipeline**.
+`leadership.enabled: false`. One mqConnector binary; pipelines start on
+boot. Simple, no failover. Choose this for development and for
+deployments where the supervising layer (systemd, docker, k8s
+Deployment with `replicas: 1`) already guarantees one instance.
+
+### Active/standby with built-in leader election
+
+`leadership.enabled: true`. Every replica points at the same SQLite
+file (typically on a shared volume) and races for a lease row. The
+holder runs the pipeline workers; standbys serve the admin UI but
+their pipeline workers stay idle. On a crashed or partitioned leader
+the lease expires after `leadership.ttl` (default 30 s) and a standby
+takes over.
+
+Config:
+
+```yaml
+leadership:
+  enabled: true
+  id: ""                 # blank → hostname; set explicitly for k8s pods
+  ttl: 30s               # tune to your worst pause budget (GC, fsync, …)
+```
+
+Observability:
+
+- `GET /api/v1/leadership` — current self / holder / expires_at /
+  is_leader. Each replica reports its own view.
+- Every role flip is logged at INFO (`acquired leadership`,
+  `lost leadership`).
+
+Constraints:
+
+- The shared SQLite file must support multi-reader/writer (WAL mode is
+  on by default in `Storage.DSN`). Across-host shared filesystems must
+  honour `fcntl` locking — NFSv4 + nolock is **not** supported.
+- The TTL is the upper bound on failover latency. Don't set it smaller
+  than your worst observed pause; a paused-then-resumed old leader that
+  still thinks it's leader will fail its next renewal harmlessly (the
+  conditional UPDATE rejects it), but a too-short TTL just causes
+  flapping.
+- The lease only gates the pipeline workers. Other endpoints (health,
+  audit, metrics, etc.) are served by every replica.
+
+For deployments that already have a leader-election layer (k8s Lease,
+Consul, etcd, file-lock), prefer that and keep `leadership.enabled:
+false` — duplicating the responsibility creates two sources of truth.
 
 ---
 

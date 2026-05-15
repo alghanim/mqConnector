@@ -170,11 +170,28 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 	return nil
 }
 
-// Stop cancels all running pipelines and refuses future Reloads.
+// Stop cancels all running pipelines and refuses future Reloads. Final
+// teardown; use StopAll instead if the process should remain reload-able
+// (e.g. a passive replica that lost the leadership lease but may regain
+// it).
 func (m *Manager) Stop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stopped = true
+	for id, cancel := range m.active {
+		cancel()
+		delete(m.active, id)
+	}
+}
+
+// StopAll cancels every active pipeline without flipping the stopped
+// flag, so a subsequent Reload can bring them back. Used by the
+// leadership consumer when the lease is lost: workers must stop so the
+// new leader can safely start its own, but a future re-acquire should
+// be allowed to re-arm without bouncing the process.
+func (m *Manager) StopAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for id, cancel := range m.active {
 		cancel()
 		delete(m.active, id)

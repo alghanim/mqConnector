@@ -22,6 +22,7 @@ import (
 	"mqConnector/internal/config"
 	"mqConnector/internal/dlq"
 	"mqConnector/internal/health"
+	"mqConnector/internal/leadership"
 	"mqConnector/internal/metrics"
 	"mqConnector/internal/mq"
 	"mqConnector/internal/pipeline"
@@ -41,6 +42,7 @@ type Server struct {
 	dlq          *dlq.Service
 	pipeline     *pipeline.Manager
 	health       *health.Checker
+	leadership   *leadership.Lease // nil when not enabled
 	loginLimiter *loginLimiter
 	stopGC       chan struct{}
 	stopGCOnce   sync.Once
@@ -59,14 +61,15 @@ func (s *Server) shutdownGC() {
 
 // Deps bundles the dependencies New requires.
 type Deps struct {
-	Auth     *auth.Service
-	Store    *storage.Store
-	Pool     *mq.Pool
-	Metrics  *metrics.Store
-	DLQ      *dlq.Service
-	Pipeline *pipeline.Manager
-	Health   *health.Checker
-	Logger   *slog.Logger
+	Auth       *auth.Service
+	Store      *storage.Store
+	Pool       *mq.Pool
+	Metrics    *metrics.Store
+	DLQ        *dlq.Service
+	Pipeline   *pipeline.Manager
+	Health     *health.Checker
+	Leadership *leadership.Lease // optional — nil when leadership is disabled
+	Logger     *slog.Logger
 }
 
 // New constructs a Server. Run blocks until Shutdown is called.
@@ -84,6 +87,7 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		dlq:          deps.DLQ,
 		pipeline:     deps.Pipeline,
 		health:       deps.Health,
+		leadership:   deps.Leadership,
 		loginLimiter: newLoginLimiter(10, time.Minute),
 		stopGC:       make(chan struct{}),
 	}
