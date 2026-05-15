@@ -22,17 +22,27 @@ describe('Button', () => {
     expect(btn.getAttribute('aria-busy')).toBe('true');
   });
 
-  it('invokes the onClick prop when clicked', async () => {
+  // The whole UI is held up by parents writing `<Button on:click={…}>`.
+  // Forwarding is what makes that work in Svelte 4 — without `on:click`
+  // on the inner <button>, every Save/Delete/Edit/Configure click dies
+  // inside the component. Phase 16 broke this for two releases; pinning
+  // it so it never happens again.
+  it('forwards DOM click events to parent listeners', async () => {
     let clicked = false;
-    const { getByRole } = render(Button, {
-      props: {
-        onClick: () => {
-          clicked = true;
-        }
-      }
+    const { getByRole, component } = render(Button);
+    component.$on('click', () => {
+      clicked = true;
     });
     await fireEvent.click(getByRole('button'));
     expect(clicked).toBe(true);
+  });
+
+  // JSDOM's fireEvent.click ignores the disabled attribute (real browsers
+  // don't fire click on a disabled button). Test the contract we control:
+  // the disabled attribute must be set, the browser will honour it.
+  it('carries disabled=true when disabled', () => {
+    const { getByRole } = render(Button, { props: { disabled: true } });
+    expect(getByRole('button')).toBeDisabled();
   });
 
   it('honours the type prop', () => {
