@@ -25,6 +25,7 @@
     { href: '/', label: t($locale, 'nav.overview') },
     { href: '/connections', label: t($locale, 'nav.connections') },
     { href: '/pipelines', label: t($locale, 'nav.pipelines') },
+    { href: '/flow', label: t($locale, 'nav.flow') },
     { href: '/dlq', label: t($locale, 'nav.dlq') },
     { href: '/metrics', label: t($locale, 'nav.metrics') }
   ];
