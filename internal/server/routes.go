@@ -111,6 +111,16 @@ func (s *Server) routes() http.Handler {
 			r.Post("/publish/{connectionId}", s.handleBridgePublish)
 			r.Post("/consume/{connectionId}", s.handleBridgeConsume)
 		})
+
+		// Sample upload + path extraction. Lets the pipeline editor's
+		// path-picker show what's actually in the operator's data without
+		// hand-typing every field name.
+		r.Post("/api/v1/samples/extract", s.handleExtractSample)
+
+		// Pipeline preview — drive a sample message through a saved
+		// pipeline or an inline draft, return what would be sent
+		// downstream. No brokers are touched.
+		r.Post("/api/v1/preview", s.handlePreview)
 	})
 
 	// Static UI catch-all — must be last.

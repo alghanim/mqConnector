@@ -119,37 +119,25 @@ func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
 		e.Metrics.SetStatus(e.Pipeline.ID, "connected", "")
 	}
 
-	format := Detect(message)
-	current := message
-	currentFormat := format
-	var routeResult *Result
-
-	for _, stage := range e.Stages {
-		out, newFormat, result, sErr := stage.Execute(ctx, current, currentFormat)
-		if sErr != nil {
-			logger.Warn("stage failed, sending to DLQ",
-				"stage", stage.Name(), "err", sErr)
-			if e.DLQ != nil {
-				_ = e.DLQ.Push(ctx, storage.DLQEntry{
-					PipelineID:  e.Pipeline.ID,
-					SourceQueue: e.SourceQueue,
-					OriginalMsg: message,
-					ErrorReason: fmt.Sprintf("%s: %v", stage.Name(), sErr),
-				})
-			}
-			if e.Metrics != nil {
-				e.Metrics.RecordFailure(e.Pipeline.ID)
-			}
-			return nil
+	outcome, runErr := RunStages(ctx, e.Stages, message)
+	if runErr != nil {
+		logger.Warn("stage failed, sending to DLQ", "err", runErr)
+		if e.DLQ != nil {
+			_ = e.DLQ.Push(ctx, storage.DLQEntry{
+				PipelineID:  e.Pipeline.ID,
+				SourceQueue: e.SourceQueue,
+				OriginalMsg: message,
+				ErrorReason: runErr.Error(),
+			})
 		}
-		current = out
-		if newFormat != "" {
-			currentFormat = newFormat
+		if e.Metrics != nil {
+			e.Metrics.RecordFailure(e.Pipeline.ID)
 		}
-		if result != nil && len(result.Destinations) > 0 {
-			routeResult = result
-		}
+		return nil
 	}
+	current := outcome.Body
+	routeResult := outcome.Route
+	_ = outcome.Format // currentFormat is consumed inside RunStages
 
 	// Forward
 	var sendErr error
