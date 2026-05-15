@@ -78,6 +78,10 @@ jobs:
         working-directory: web
         run: npm run check
 
+      - name: vitest
+        working-directory: web
+        run: npm test
+
       - name: build
         working-directory: web
         run: npm run build

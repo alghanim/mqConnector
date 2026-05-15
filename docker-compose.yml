@@ -83,8 +83,11 @@ services:
       # actual health endpoint is /sauth/health. Pinning it makes the URL
       # stable across SimpleAuth versions.
       AUTH_BASE_PATH: /sauth
-      AUTH_ADMIN_USER: ${SIMPLEAUTH_ADMIN_USER:-admin}
-      AUTH_ADMIN_PASSWORD: ${SIMPLEAUTH_ADMIN_PASSWORD:-changeme-please}
+      # Fixed admin key so the bootstrap container has something stable
+      # to authenticate with. Override via .env in any non-dev deployment.
+      AUTH_ADMIN_KEY: ${SIMPLEAUTH_ADMIN_KEY:-dev-admin-key-changeme}
+      # Allow mqconnector to redirect-target itself.
+      AUTH_REDIRECT_URIS: "https://localhost:8443/*,https://mqconnector:8443/*"
     volumes:
       - simpleauth-data:/data
     ports:
@@ -97,6 +100,43 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # simpleauth-bootstrap — one-shot job that runs once SimpleAuth is healthy
+  # and creates the initial admin user via its admin API. Idempotent: a 409
+  # "username taken" response is treated as success so re-running the stack
+  # doesn't fail.
+  # ---------------------------------------------------------------------------
+  simpleauth-bootstrap:
+    image: alpine:3.20
+    depends_on:
+      simpleauth:
+        condition: service_healthy
+    networks: [mqc]
+    environment:
+      ADMIN_KEY: ${SIMPLEAUTH_ADMIN_KEY:-dev-admin-key-changeme}
+      USERNAME: ${SIMPLEAUTH_ADMIN_USER:-admin}
+      PASSWORD: ${SIMPLEAUTH_ADMIN_PASSWORD:-Changeme1!}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        apk add --no-cache curl >/dev/null
+        echo "→ Creating SimpleAuth user '$$USERNAME'…"
+        HTTP_CODE=$$(curl -ksS -o /tmp/resp -w "%{http_code}" \
+          -X POST https://simpleauth:8080/sauth/api/admin/users \
+          -H "Authorization: Bearer $$ADMIN_KEY" \
+          -H "Content-Type: application/json" \
+          -d "{\"username\":\"$$USERNAME\",\"password\":\"$$PASSWORD\",\"display_name\":\"mqConnector Admin\"}")
+        case $$HTTP_CODE in
+          201) echo "✓ user created" ;;
+          409) echo "✓ user already exists, nothing to do" ;;
+          *)
+            echo "✗ unexpected status $$HTTP_CODE"
+            cat /tmp/resp
+            exit 1
+            ;;
+        esac
+    restart: "no"
 
   # ---------------------------------------------------------------------------
   # mqConnector — the bridge.
@@ -120,6 +160,8 @@ services:
         condition: service_completed_successfully
       simpleauth:
         condition: service_healthy
+      simpleauth-bootstrap:
+        condition: service_completed_successfully
     environment:
       # Server
       SERVER_LISTEN: "0.0.0.0:8443"
