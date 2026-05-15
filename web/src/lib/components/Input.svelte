@@ -1,7 +1,7 @@
 <script lang="ts">
   // Single-line text input. Label and error are optional. Touch target is
   // guaranteed by the .input class (min-h-touch = 48px).
-  export let value = '';
+  export let value: string | number = '';
   export let type: 'text' | 'password' | 'email' | 'url' | 'number' = 'text';
   export let label = '';
   export let placeholder = '';

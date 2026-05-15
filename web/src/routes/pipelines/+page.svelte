@@ -175,6 +175,9 @@
               </td>
               <td>
                 <div class="flex gap-2 justify-end">
+                  {#if p.id}
+                    <a href="/pipelines/{p.id}" class="btn-link">{t($locale, 'pipelines.configure')}</a>
+                  {/if}
                   <Button variant="ghost" on:click={() => toggleEnabled(p)}>
                     {p.enabled ? t($locale, 'common.disable') : t($locale, 'common.enable')}
                   </Button>
@@ -192,4 +195,16 @@
 
 <style>
   td:last-child { text-align: end; }
+  .btn-link {
+    display: inline-flex; align-items: center;
+    padding: 6px 12px;
+    border-radius: 12px;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    font-size: 13px;
+    line-height: 1.2;
+    text-decoration: none;
+    transition: background-color 0.15s, color 0.15s;
+  }
+  .btn-link:hover { background: var(--accent); color: var(--bg); }
 </style>

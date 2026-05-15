@@ -88,12 +88,41 @@ export interface Pipeline {
   updated_at?: string;
 }
 
+export type StageType = 'filter' | 'transform' | 'translate' | 'route' | 'script' | 'validate';
+
 export interface Stage {
   id?: string;
   pipeline_id?: string;
   stage_order: number;
-  stage_type: 'filter' | 'transform' | 'translate' | 'route' | 'script' | 'validate';
+  stage_type: StageType;
   stage_config: string;
+  enabled: boolean;
+}
+
+export type TransformType = 'rename' | 'mask' | 'move' | 'set' | 'delete';
+
+export interface Transform {
+  id?: string;
+  pipeline_id?: string;
+  transform_type: TransformType;
+  source_path: string;
+  target_path: string;
+  mask_pattern: string;
+  mask_replace: string;
+  set_value: string;
+  order: number;
+}
+
+export type RoutingOperator = 'eq' | 'neq' | 'contains' | 'regex' | 'gt' | 'lt' | 'exists';
+
+export interface RoutingRule {
+  id?: string;
+  pipeline_id?: string;
+  condition_path: string;
+  condition_operator: RoutingOperator;
+  condition_value: string;
+  destination_id: string;
+  priority: number;
   enabled: boolean;
 }
 
