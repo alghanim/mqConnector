@@ -7,10 +7,16 @@
   import Input from '$lib/components/Input.svelte';
   import Select from '$lib/components/Select.svelte';
   import Badge from '$lib/components/Badge.svelte';
+  import Alert from '$lib/components/Alert.svelte';
+  import Dialog from '$lib/components/Dialog.svelte';
 
   let connections: Connection[] = [];
   let editing: Connection | null = null;
   let error = '';
+  // Confirmation dialog state — Dialog replaces window.confirm() so the
+  // destructive prompt sits inside the app's brand surface.
+  let pendingDelete: Connection | null = null;
+  let deleting = false;
   let testing: Record<string, 'idle' | 'pending' | 'ok' | 'fail'> = {};
   let testMsg: Record<string, string> = {};
 
@@ -54,14 +60,21 @@
       error = (e as { message?: string }).message || 'save failed';
     }
   }
-  async function remove(c: Connection) {
+  function askRemove(c: Connection) {
     if (!c.id) return;
-    if (!confirm(`${t($locale, 'common.confirmDelete')} — ${c.name}?`)) return;
+    pendingDelete = c;
+  }
+  async function confirmRemove() {
+    if (!pendingDelete?.id) return;
+    deleting = true;
     try {
-      await api.del(`/v1/connections/${c.id}`);
+      await api.del(`/v1/connections/${pendingDelete.id}`);
+      pendingDelete = null;
       await refresh();
     } catch (e: unknown) {
       error = (e as { message?: string }).message || 'delete failed';
+    } finally {
+      deleting = false;
     }
   }
 
@@ -98,7 +111,7 @@
   </div>
 
   {#if error}
-    <p style="color: var(--danger)">{error}</p>
+    <Alert variant="error" dismissible on:dismiss={() => (error = '')}>{error}</Alert>
   {/if}
 
   {#if editing}
@@ -170,7 +183,7 @@
                   <Button variant="ghost" loading={c.id ? testing[c.id] === 'pending' : false}
                     on:click={() => testConn(c)}>{t($locale, 'connections.test')}</Button>
                   <Button variant="ghost" on:click={() => startEdit(c)}>{t($locale, 'common.edit')}</Button>
-                  <Button variant="outline" on:click={() => remove(c)}>{t($locale, 'common.delete')}</Button>
+                  <Button variant="outline" on:click={() => askRemove(c)}>{t($locale, 'common.delete')}</Button>
                 </div>
               </td>
             </tr>
@@ -180,6 +193,23 @@
     {/if}
   </Card>
 </div>
+
+<Dialog
+  open={pendingDelete !== null}
+  title={t($locale, 'common.confirmDelete')}
+  confirmLabel={t($locale, 'common.delete')}
+  cancelLabel={t($locale, 'common.cancel')}
+  busy={deleting}
+  on:cancel={() => (pendingDelete = null)}
+  on:confirm={confirmRemove}
+>
+  {#if pendingDelete}
+    <p>
+      {t($locale, 'connections.delete.confirm')}
+      <strong>{pendingDelete.name}</strong>?
+    </p>
+  {/if}
+</Dialog>
 
 <style>
   td:last-child { text-align: end; }

@@ -125,17 +125,41 @@ disabled when the user opts out.
 
 | Spec section | Implementation |
 |---|---|
-| §5.1 Search bar | (n/a — no search bar in the admin UI yet) |
-| §5.2 Cards | `.card` — `var(--card-bg)` + `var(--card-border)`, 16 px radius |
+| §5.1 Search bar | n/a — no search bar in the admin UI yet |
+| §5.2 Cards | `.card` — bg/border/shadow per spec, 16 px radius, 16 px padding, `.card-interactive:hover` switches to `--card-hover-bg` |
 | §5.3 Nav | Sidebar — `var(--surface)` bg, active item `var(--section-header)` text |
-| §5.4 Buttons | `.btn-primary/secondary/outline/ghost/danger` per the spec colour table |
-| §5.5 Badges & chips | `.badge-success/warning/danger/neutral` + `.badge-count` (pill) |
-| §5.7 Data labels/values | `.label` (muted) + `.text` pairs across all CRUD tables |
-| §5.8 Section headers | `.section-heading` uses `var(--section-header)` (light gold dark / dark gold light) |
-| §5.9 Dividers | `var(--divider)` on every table row and section split |
-| §5.10 Alerts | Pending — error / success messages use `--danger` / `--success` text-on-bg directly, no full alert component yet |
-| §5.11 Inputs | `.input` + `Input.svelte` use `--input-bg/border/text/placeholder` and gold focus border |
-| §5.16 Switches | Pending — only native checkboxes used so far |
+| §5.4 Buttons | `.btn-primary/secondary/outline/ghost/danger`, all four states (rest / hover / active / disabled), maroon press = brightness 92 %, gold-family press = darker tone per spec table |
+| §5.5 Badges & chips | `.badge-success/warning/danger/info/neutral` + `.badge-count` (pill). Status chips render the dot indicator via `::before` |
+| §5.6 Profile header | n/a — admin UI has a sidebar+header layout, no per-user profile yet |
+| §5.7 Data labels/values | `.label` + body classes follow the §6.1 typography table (12 sp label, 14 sp value) |
+| §5.8 Section headers | `.section-heading` is 14 sp Medium per §5.8; `.text-h2` is the 18 sp SemiBold per §6.1 H2 (page-level section titles) |
+| §5.9 Dividers | `.divider` (1 px subtle) + `.section-divider-thick` (2 px, `--divider-section`) |
+| §5.10 Alerts | `Alert.svelte` — info / success / warning / error, leading SVG icon, dismissible variant, role + aria-live picked per variant. Wired into Connections / Pipelines / Pipeline editor / DLQ |
+| §5.11 Inputs | `Input.svelte` carries label + helper + error text with `aria-describedby`; `.input-invalid` triggers the spec's error border + 2 px focus halo |
+| §5.12 FAB | n/a — admin UI is desktop-first; no floating action button yet |
+| §5.13 Top app bar | Partial — sidebar layout serves the same role; `--appbar-*` tokens present for future use |
+| §5.14 Dialogs | `Dialog.svelte` — replaces `window.confirm()` on Connections / Pipelines / DLQ. Scrim 60 % / 40 % per theme, focus trap, Escape-to-cancel, focus restore on close |
+| §5.15 Tabs | Tokens present (`--tab-*`); component to be built when the first multi-tab page lands |
+| §5.16 Switches | `Switch.svelte` — `role="switch"`, gold track + light-gold / white thumb, replaces the native checkbox on the Pipeline editor + Pipelines page enabled toggle |
+| §5.17 Progress | `ProgressBar.svelte` — determinate + indeterminate variants; copper-fill on dark, dark-gold-fill on light |
+| §5.18 Skeleton | `Skeleton.svelte` — 1.5 s shimmer using `--shimmer-base/highlight`, RTL-aware animation direction |
+
+## Typography coverage (§6)
+
+All §6.1 hierarchy classes exist in `app.css` and use the spec's exact
+size / weight / colour table:
+
+| Class | Size | Weight | Colour token | Spec row |
+|---|---:|---:|---|---|
+| `.text-h1` | 24 px | 700 | `--text` | H1 — screen title |
+| `.text-h2` | 18 px | 600 | `--section-header` | H2 — section title |
+| `.text-h3` | 16 px | 600 | `--text` | H3 — subsection |
+| `.text-body-1` | 14 px | 400 | `--text` | Body 1 |
+| `.text-body-2` | 14 px | 400 | `--text-muted` | Body 2 |
+| `.text-caption` | 12 px | 400 | `--text-tertiary` | Caption |
+| `.text-label` | 12 px | 500 | `--text-muted` | Label |
+| `.text-overline` | 11 px | 500 | `--text-tertiary` | Overline (uppercase) |
+| `a.link` / `.prose a` | inherit | inherit | `--secondary` (Copper dark / Dark Gold light) | Link (§6.2) |
 
 ## Deviations
 

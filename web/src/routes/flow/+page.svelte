@@ -27,6 +27,7 @@
   import Input from '$lib/components/Input.svelte';
   import Select from '$lib/components/Select.svelte';
   import Badge from '$lib/components/Badge.svelte';
+  import Alert from '$lib/components/Alert.svelte';
   import StageConfigForm from '$lib/components/StageConfigForm.svelte';
   import { SAMPLE_FIXTURES } from '$lib/sample-fixtures';
 
@@ -734,10 +735,10 @@
 </div>
 
 {#if error}
-  <p class="mt-2" style="color: var(--danger)">{error}</p>
+  <div class="mt-2"><Alert variant="error">{error}</Alert></div>
 {/if}
 {#if savedMsg}
-  <p class="mt-2" style="color: var(--success)">{savedMsg}</p>
+  <div class="mt-2"><Alert variant="success">{savedMsg}</Alert></div>
 {/if}
 
 <style>

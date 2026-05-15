@@ -20,6 +20,7 @@
   import Select from '$lib/components/Select.svelte';
   import Badge from '$lib/components/Badge.svelte';
   import StageConfigForm from '$lib/components/StageConfigForm.svelte';
+  import Alert from '$lib/components/Alert.svelte';
   import { SAMPLE_FIXTURES } from '$lib/sample-fixtures';
 
   $: id = $page.params.id;
@@ -354,10 +355,10 @@
   {/if}
 
   {#if error}
-    <p style="color: var(--danger)">{error}</p>
+    <Alert variant="error" dismissible on:dismiss={() => (error = '')}>{error}</Alert>
   {/if}
   {#if saved}
-    <p style="color: var(--success)">{saved}</p>
+    <Alert variant="success" dismissible on:dismiss={() => (saved = '')}>{saved}</Alert>
   {/if}
 
   <!-- ─── Stages ────────────────────────────────────────────────────── -->
@@ -573,7 +574,11 @@
           value={previewOutput}
           placeholder={t($locale, 'preview.outputPlaceholder')}></textarea>
         {#if previewError}
-          <p class="mt-2 text-sm" style="color: var(--danger)">{previewError}</p>
+          <div class="mt-2">
+            <Alert variant="error" dismissible on:dismiss={() => (previewError = '')}>
+              {previewError}
+            </Alert>
+          </div>
         {/if}
       </div>
     </div>

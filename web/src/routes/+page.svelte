@@ -3,6 +3,7 @@
   import { api, type Health } from '$lib/api';
   import Card from '$lib/components/Card.svelte';
   import Badge from '$lib/components/Badge.svelte';
+  import Alert from '$lib/components/Alert.svelte';
 
   let health: Health | null = null;
   let error = '';
@@ -40,9 +41,7 @@
   </div>
 
   {#if error}
-    <Card>
-      <p style="color: var(--danger)">{error}</p>
-    </Card>
+    <Alert variant="error">{error}</Alert>
   {:else if !health}
     <Card>
       <p style="color: var(--text-muted)">Loading…</p>

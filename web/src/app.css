@@ -53,58 +53,152 @@ body {
 }
 
 @layer components {
-  /* §5.4 button base — 48dp touch target, 12dp corner radius */
+  /* ──────────────────────────────────────────────────────────────
+   * §6.1 Typography hierarchy — sizes + weights + per-theme colour
+   * sp from the brand guide → px on web at 1 sp = 1 px (Inter is
+   * tuned for that mapping).
+   * ────────────────────────────────────────────────────────────── */
+  .text-h1 {
+    color: var(--text);                /* dark: #F2EFEC, light: #1A1F24 */
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+  }
+  .text-h2 {
+    color: var(--section-header);      /* dark: #F8E08E, light: #8F6A2A — §6.1 */
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+  .text-h3 {
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .text-body-1 {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.55;
+  }
+  .text-body-2 {
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.55;
+  }
+  .text-caption {
+    color: var(--text-tertiary);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.4;
+  }
+  .text-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+  .text-overline {
+    color: var(--text-tertiary);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* §6.2 Links — copper on dark, dark gold on light. Visited darkens. */
+  a.link,
+  .prose a {
+    color: var(--secondary);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+    transition: color 200ms;
+  }
+  a.link:hover,
+  .prose a:hover { color: var(--primary); }
+  a.link:visited { color: var(--text-muted); }
+
+  /* ──────────────────────────────────────────────────────────────
+   * §5.4 Buttons — 48dp touch target, 12dp radius. Each variant gets
+   * rest / hover / active / disabled, all token-driven.
+   * ────────────────────────────────────────────────────────────── */
   .btn {
     @apply inline-flex items-center justify-center gap-2
            min-h-touch min-w-touch
            px-4 py-2
            rounded-interactive
            font-medium
-           transition-colors;
+           cursor-pointer
+           transition-colors duration-200;
     -webkit-tap-highlight-color: transparent;
   }
+  .btn:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 
   /* §5.4 Primary — main CTA: maroon */
   .btn-primary {
     background: var(--accent);
     color: var(--accent-on);
   }
-  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:hover  { background: var(--accent-hover); }
+  .btn-primary:active { background: var(--accent-hover); filter: brightness(0.92); }
   .btn-primary:disabled {
-    background: var(--surface-bright);
-    color: var(--text-tertiary);
+    background: var(--btn-disabled-bg);
+    color: var(--btn-disabled-text);
     cursor: not-allowed;
   }
 
-  /* §5.4 Secondary — gold solid */
+  /* §5.4 Secondary — gold solid. Hover→copper, active→muted-gold press */
   .btn-secondary {
     background: var(--primary);
     color: var(--primary-on);
   }
-  .btn-secondary:hover { background: var(--secondary); }
+  .btn-secondary:hover  { background: var(--qb-copper); }
+  .btn-secondary:active { background: var(--qb-gold-muted); }
   .btn-secondary:disabled {
-    background: var(--surface-bright);
-    color: var(--text-tertiary);
+    background: var(--btn-disabled-bg);
+    color: var(--btn-disabled-text);
     cursor: not-allowed;
   }
 
-  /* §5.4 Outlined / Ghost — transparent + gold border + gold text */
+  /* §5.4 Outlined — transparent + gold border + gold text */
   .btn-outline {
     background: transparent;
     color: var(--primary);
     border: 1px solid var(--primary);
   }
-  .btn-outline:hover {
-    background: color-mix(in srgb, var(--primary) 12%, transparent);
+  .btn-outline:hover  { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+  .btn-outline:active { background: color-mix(in srgb, var(--primary) 20%, transparent); }
+  .btn-outline:disabled {
+    border-color: var(--border);
+    color: var(--text-tertiary);
+    cursor: not-allowed;
   }
 
-  /* §5.4 Text — transparent, copper text on dark / gold text on light */
+  /* §5.4 Text / Ghost — transparent. Dark theme: Copper (#B87132) per spec
+     (--secondary). Light theme: Dark Gold (#8F6A2A) per spec — note that
+     --secondary on light is Gold Muted (#6B5422), one shade off, so we
+     hard-bind the light branch to --primary instead. */
   .btn-ghost {
     background: transparent;
     color: var(--secondary);
   }
-  .btn-ghost:hover {
-    background: color-mix(in srgb, var(--secondary) 12%, transparent);
+  [data-theme='light'] .btn-ghost { color: var(--primary); }
+  .btn-ghost:hover  { background: color-mix(in srgb, var(--secondary) 12%, transparent); }
+  [data-theme='light'] .btn-ghost:hover {
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+  }
+  .btn-ghost:active { background: color-mix(in srgb, var(--secondary) 20%, transparent); }
+  [data-theme='light'] .btn-ghost:active {
+    background: color-mix(in srgb, var(--primary) 20%, transparent);
+  }
+  .btn-ghost:disabled {
+    color: var(--text-tertiary);
+    cursor: not-allowed;
   }
 
   /*
@@ -118,13 +212,23 @@ body {
     background: var(--accent);
     color: var(--accent-on);
   }
-  .btn-danger:hover { background: var(--accent-hover); }
+  .btn-danger:hover  { background: var(--accent-hover); }
+  .btn-danger:active { background: var(--accent-hover); filter: brightness(0.92); }
 
-  /* §5.2 Cards — 16dp radius, theme-correct bg + border */
+  /* ──────────────────────────────────────────────────────────────
+   * §5.2 Cards — 16dp radius, theme-correct bg + border + hover.
+   * ────────────────────────────────────────────────────────────── */
   .card {
     @apply rounded-container shadow-card;
     background: var(--card-bg);
     border: 1px solid var(--card-border);
+    padding: 16px;
+    transition: background-color 200ms, border-color 200ms;
+  }
+  .card-interactive { cursor: pointer; }
+  .card-interactive:hover {
+    background: var(--card-hover-bg);
+    border-color: var(--primary);
   }
   /* Decorative brand-gradient strip on top of a card (§4.2 use case) */
   .card-strip::before {
@@ -132,28 +236,52 @@ body {
     display: block;
     height: 3px;
     background: var(--brand-gradient);
+    margin: -16px -16px 16px -16px;   /* punch through the .card padding */
     border-top-left-radius: var(--container-radius, 16px);
     border-top-right-radius: var(--container-radius, 16px);
   }
 
-  /* §5.11 Inputs — bg + border per theme, gold focus border */
+  /* ──────────────────────────────────────────────────────────────
+   * §5.11 Inputs — bg + border per theme, gold focus border,
+   * error border + helper/error text below the field.
+   * ────────────────────────────────────────────────────────────── */
   .input {
-    @apply rounded-interactive min-h-touch w-full px-3 py-2 transition-colors;
+    @apply rounded-interactive min-h-touch w-full px-3 py-2 transition-colors duration-200;
     background: var(--input-bg);
     color: var(--input-text);
     border: 1px solid var(--input-border);
   }
   .input::placeholder { color: var(--input-placeholder); }
-  .input:focus { border-color: var(--input-border-focus); }
+  .input:hover:not(:focus):not(:disabled) { border-color: var(--border-strong); }
+  .input:focus { border-color: var(--input-border-focus); outline: none; }
+  .input:disabled {
+    background: var(--surface);
+    color: var(--text-tertiary);
+    cursor: not-allowed;
+  }
+  .input-invalid,
+  .input[aria-invalid='true'] { border-color: var(--danger); }
+  .input-invalid:focus,
+  .input[aria-invalid='true']:focus {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 30%, transparent);
+  }
+
+  /* Helper / error text under an input. Token-coloured + 12 sp. */
+  .input-helper { color: var(--text-tertiary); font-size: 12px; margin-top: 4px; }
+  .input-error  { color: var(--danger);        font-size: 12px; margin-top: 4px; }
 
   .label {
     @apply text-sm mb-1 block;
     color: var(--text-muted);
   }
 
-  /* §5.5 Badges — 12dp radius for labeled chips, 999px ONLY for count */
+  /* ──────────────────────────────────────────────────────────────
+   * §5.5 Badges & chips — 12dp radius for labeled chips, 999px ONLY
+   * for the count badge. Status badges get a dot indicator.
+   * ────────────────────────────────────────────────────────────── */
   .badge {
-    @apply inline-flex items-center justify-center text-xs font-semibold
+    @apply inline-flex items-center gap-1.5 text-xs font-semibold
            px-2 py-0.5 rounded-interactive min-h-[20px];
   }
   /* §5.5 Count badge — the one allowed pill */
@@ -163,35 +291,225 @@ body {
     background: var(--accent);
     color: var(--accent-on);
   }
+
+  /* Dot indicator on status chips per §5.5. ::before keeps semantics
+     clean (no extra DOM) and reverses correctly under RTL because the
+     gap utility uses logical layout. */
+  .badge-success::before,
+  .badge-warning::before,
+  .badge-danger::before,
+  .badge-info::before {
+    content: '';
+    display: inline-block;
+    inline-size: 6px;
+    block-size: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
   .badge-success {
     background: var(--success-bg);
     color: var(--success);
     border: 1px solid color-mix(in srgb, var(--success-solid) 30%, transparent);
   }
+  .badge-success::before { background: var(--success-solid); }
+
   .badge-warning {
     background: var(--warning-bg);
     color: var(--warning);
     border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
   }
+  .badge-warning::before { background: var(--warning); }
+
   .badge-danger {
     background: var(--danger-bg);
     color: var(--danger);
     border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
   }
+  .badge-danger::before { background: var(--danger); }
+
+  .badge-info {
+    background: var(--info-bg);
+    color: var(--info);
+    border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
+  }
+  .badge-info::before { background: var(--info); }
+
+  /* Nationality / category chip — gold container, no dot (informational) */
   .badge-neutral {
     background: var(--chip-info-bg);
     color: var(--chip-info-text);
     border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
   }
 
-  /* §5.8 Section header — Light Gold on dark, Dark Gold on light */
+  /* ──────────────────────────────────────────────────────────────
+   * §5.8 Eyebrow / overline tag — the small 11sp uppercase label used
+   * as a section eyebrow ("STAGES", "TRANSFORMS"). The brand guide
+   * keeps section-header colour for headings, not eyebrows; eyebrows
+   * use tertiary text to avoid stealing the gold for an overline.
+   * ────────────────────────────────────────────────────────────── */
   .section-heading {
     color: var(--section-header);
-    @apply text-xs font-semibold uppercase tracking-wider;
+    font-size: 14px;
+    font-weight: 500;     /* §5.8 — 14sp MEDIUM */
+    line-height: 1.4;
   }
 
+  /* §5.9 Dividers — primary 1px, section-divider thick 2px */
   .divider {
     border-top: 1px solid var(--divider);
+  }
+  .divider-subtle {
+    border-top: 1px solid var(--divider-subtle);
+  }
+  .section-divider-thick {
+    block-size: 2px;
+    background: var(--divider-section);   /* #222A31 dark / #E8E4DF light */
+    border: none;
+    margin: 24px 0;
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+   * §5.10 Alerts — bg, text, border (30% tint), 12dp radius, 16dp
+   * padding, icon left (RTL: right via logical layout). Used by the
+   * editor pages for inline error/success/info messages. The full
+   * primitive ships as Alert.svelte; this block lets a page render
+   * <div class="alert alert-info"> without the wrapper too.
+   * ────────────────────────────────────────────────────────────── */
+  .alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;                /* §5.10 — 16dp */
+    border-radius: 12px;          /* §5.10 — 12dp */
+    border: 1px solid transparent;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .alert-icon {
+    flex-shrink: 0;
+    inline-size: 20px;
+    block-size: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+    border-radius: 50%;
+  }
+  .alert-info {
+    background: var(--info-bg);
+    color: var(--info);
+    border-color: color-mix(in srgb, var(--info) 30%, transparent);
+  }
+  .alert-info .alert-icon { background: color-mix(in srgb, var(--info) 18%, transparent); }
+  .alert-success {
+    background: var(--success-bg);
+    color: var(--success);
+    border-color: color-mix(in srgb, var(--success-solid) 30%, transparent);
+  }
+  .alert-success .alert-icon { background: color-mix(in srgb, var(--success-solid) 18%, transparent); }
+  .alert-warning {
+    background: var(--warning-bg);
+    color: var(--warning);
+    border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+  }
+  .alert-warning .alert-icon { background: color-mix(in srgb, var(--warning) 18%, transparent); }
+  .alert-danger {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  }
+  .alert-danger .alert-icon { background: color-mix(in srgb, var(--danger) 18%, transparent); }
+
+  /* ──────────────────────────────────────────────────────────────
+   * §5.16 Switches — track 36×20, thumb 16×16, gold-family on,
+   * outline-variant off. Logical inset so RTL flips automatically.
+   * The Svelte wrapper (Switch.svelte) adds a label slot; raw
+   * <label class="switch"><input …/></label> works directly too.
+   * ────────────────────────────────────────────────────────────── */
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .switch input {
+    appearance: none;
+    inline-size: 36px;
+    block-size: 20px;
+    border-radius: 999px;
+    background: var(--switch-track-off);
+    position: relative;
+    cursor: pointer;
+    transition: background-color 160ms;
+    margin: 0;
+  }
+  .switch input::after {
+    content: '';
+    position: absolute;
+    inset-block-start: 2px;
+    inset-inline-start: 2px;
+    inline-size: 16px;
+    block-size: 16px;
+    border-radius: 50%;
+    background: var(--switch-thumb-off);
+    transition: inset-inline-start 160ms, background-color 160ms;
+  }
+  .switch input:checked { background: var(--switch-track-on); }
+  .switch input:checked::after {
+    inset-inline-start: 18px;
+    background: var(--switch-thumb-on);
+  }
+  .switch input:disabled { opacity: 0.5; cursor: not-allowed; }
+  .switch input:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+
+  /* ──────────────────────────────────────────────────────────────
+   * §5.17 Progress indicators — 4dp track, copper-on-dark / gold-on-
+   * light fill. Indeterminate is a sliding pill, 1.2 s ease loop.
+   * ────────────────────────────────────────────────────────────── */
+  .progress {
+    inline-size: 100%;
+    block-size: 4px;
+    border-radius: 999px;
+    background: var(--progress-track);
+    overflow: hidden;
+  }
+  .progress-fill {
+    block-size: 100%;
+    background: var(--progress-fill);
+    transition: inline-size 200ms ease;
+  }
+  .progress--indeterminate .progress-fill {
+    inline-size: 30%;
+    animation: progress-slide 1.2s ease-in-out infinite;
+  }
+  @keyframes progress-slide {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+
+  /* ──────────────────────────────────────────────────────────────
+   * §5.18 Skeleton / shimmer loading — three-stop linear gradient
+   * sliding across the surface every 1.5 s. Use as a sized box;
+   * the brand-token shimmer-base / shimmer-highlight handle theming.
+   * ────────────────────────────────────────────────────────────── */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--shimmer-base) 0%,
+      var(--shimmer-highlight) 50%,
+      var(--shimmer-base) 100%
+    );
+    background-size: 200% 100%;
+    border-radius: 12px;
+    animation: skeleton-shimmer 1.5s ease-in-out infinite;
+    color: transparent;          /* hide any text inside the placeholder */
+  }
+  @keyframes skeleton-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
   }
 }
 

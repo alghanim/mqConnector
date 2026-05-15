@@ -5,6 +5,7 @@
   import Card from '$lib/components/Card.svelte';
   import Input from '$lib/components/Input.svelte';
   import Button from '$lib/components/Button.svelte';
+  import Alert from '$lib/components/Alert.svelte';
 
   let username = '';
   let password = '';
@@ -53,7 +54,7 @@
           required
         />
         {#if error}
-          <p class="text-sm" style="color: var(--danger)">{error}</p>
+          <Alert variant="error">{error}</Alert>
         {/if}
         <Button type="submit" fullWidth {loading}>{t($locale, 'login.submit')}</Button>
       </form>

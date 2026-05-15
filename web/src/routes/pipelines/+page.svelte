@@ -7,12 +7,17 @@
   import Input from '$lib/components/Input.svelte';
   import Select from '$lib/components/Select.svelte';
   import Badge from '$lib/components/Badge.svelte';
+  import Alert from '$lib/components/Alert.svelte';
+  import Dialog from '$lib/components/Dialog.svelte';
+  import Switch from '$lib/components/Switch.svelte';
 
   let pipelines: Pipeline[] = [];
   let connections: Connection[] = [];
   let editing: Pipeline | null = null;
   let filterPathsRaw = '';
   let error = '';
+  let pendingDelete: Pipeline | null = null;
+  let deleting = false;
 
   async function refresh() {
     try {
@@ -71,14 +76,21 @@
       error = (e as { message?: string }).message || 'save failed';
     }
   }
-  async function remove(p: Pipeline) {
+  function askRemove(p: Pipeline) {
     if (!p.id) return;
-    if (!confirm(`${t($locale, 'common.confirmDelete')} — ${p.name}?`)) return;
+    pendingDelete = p;
+  }
+  async function confirmRemove() {
+    if (!pendingDelete?.id) return;
+    deleting = true;
     try {
-      await api.del(`/v1/pipelines/${p.id}`);
+      await api.del(`/v1/pipelines/${pendingDelete.id}`);
+      pendingDelete = null;
       await refresh();
     } catch (e: unknown) {
       error = (e as { message?: string }).message || 'delete failed';
+    } finally {
+      deleting = false;
     }
   }
   async function toggleEnabled(p: Pipeline) {
@@ -112,7 +124,7 @@
   </div>
 
   {#if error}
-    <p style="color: var(--danger)">{error}</p>
+    <Alert variant="error" dismissible on:dismiss={() => (error = '')}>{error}</Alert>
   {/if}
 
   {#if editing}
@@ -131,10 +143,9 @@
       <div class="mt-4">
         <Input bind:value={filterPathsRaw} label={t($locale, 'pipelines.filterPaths')} />
       </div>
-      <label class="mt-4 flex items-center gap-2 text-sm" style="color: var(--text)">
-        <input type="checkbox" bind:checked={editing.enabled} />
-        {t($locale, 'common.enabled')}
-      </label>
+      <div class="mt-4">
+        <Switch bind:checked={editing.enabled} label={t($locale, 'common.enabled')} />
+      </div>
       <div class="flex gap-2 justify-end mt-5">
         <Button variant="ghost" on:click={cancel}>{t($locale, 'common.cancel')}</Button>
         <Button on:click={save}>{t($locale, 'common.save')}</Button>
@@ -182,7 +193,7 @@
                     {p.enabled ? t($locale, 'common.disable') : t($locale, 'common.enable')}
                   </Button>
                   <Button variant="ghost" on:click={() => startEdit(p)}>{t($locale, 'common.edit')}</Button>
-                  <Button variant="outline" on:click={() => remove(p)}>{t($locale, 'common.delete')}</Button>
+                  <Button variant="outline" on:click={() => askRemove(p)}>{t($locale, 'common.delete')}</Button>
                 </div>
               </td>
             </tr>
@@ -193,18 +204,43 @@
   </Card>
 </div>
 
+<Dialog
+  open={pendingDelete !== null}
+  title={t($locale, 'common.confirmDelete')}
+  confirmLabel={t($locale, 'common.delete')}
+  cancelLabel={t($locale, 'common.cancel')}
+  busy={deleting}
+  on:cancel={() => (pendingDelete = null)}
+  on:confirm={confirmRemove}
+>
+  {#if pendingDelete}
+    <p>{t($locale, 'pipelines.delete.confirm')} <strong>{pendingDelete.name}</strong>?</p>
+  {/if}
+</Dialog>
+
 <style>
   td:last-child { text-align: end; }
+  /*
+   * .btn-link is the in-row "Configure" affordance. Rule 16 forbids
+   * maroon outside the primary-CTA / count-badge surface set, so this
+   * uses the gold-family (--primary) as an outlined chip — matches
+   * the §5.4 Outlined button colour for consistency.
+   */
   .btn-link {
     display: inline-flex; align-items: center;
     padding: 6px 12px;
     border-radius: 12px;
-    color: var(--accent);
-    border: 1px solid var(--accent);
+    color: var(--primary);
+    border: 1px solid var(--primary);
     font-size: 13px;
     line-height: 1.2;
     text-decoration: none;
-    transition: background-color 0.15s, color 0.15s;
+    transition: background-color 200ms, color 200ms;
   }
-  .btn-link:hover { background: var(--accent); color: var(--bg); }
+  .btn-link:hover {
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+  }
+  .btn-link:active {
+    background: color-mix(in srgb, var(--primary) 20%, transparent);
+  }
 </style>

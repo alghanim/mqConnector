@@ -5,6 +5,8 @@
   import Card from '$lib/components/Card.svelte';
   import Button from '$lib/components/Button.svelte';
   import Badge from '$lib/components/Badge.svelte';
+  import Alert from '$lib/components/Alert.svelte';
+  import Dialog from '$lib/components/Dialog.svelte';
 
   let entries: DLQEntry[] = [];
   let total = 0;
@@ -12,6 +14,8 @@
   const perPage = 20;
   let error = '';
   let busy = false;
+  let pendingDeleteId: string | null = null;
+  let deleting = false;
 
   async function refresh() {
     busy = true;
@@ -38,13 +42,20 @@
     }
   }
 
-  async function remove(id: string) {
-    if (!confirm(t($locale, 'common.confirmDelete'))) return;
+  function askRemove(id: string) {
+    pendingDeleteId = id;
+  }
+  async function confirmRemove() {
+    if (!pendingDeleteId) return;
+    deleting = true;
     try {
-      await api.del(`/v1/dlq/${id}`);
+      await api.del(`/v1/dlq/${pendingDeleteId}`);
+      pendingDeleteId = null;
       await refresh();
     } catch (e: unknown) {
       error = (e as { message?: string }).message || 'delete failed';
+    } finally {
+      deleting = false;
     }
   }
 
@@ -68,7 +79,7 @@
   </div>
 
   {#if error}
-    <p style="color: var(--danger)">{error}</p>
+    <Alert variant="error" dismissible on:dismiss={() => (error = '')}>{error}</Alert>
   {/if}
 
   <Card>
@@ -101,7 +112,7 @@
               <td>
                 <div class="flex gap-2 justify-end">
                   <Button variant="ghost" on:click={() => retry(e.id)}>{t($locale, 'common.retry')}</Button>
-                  <Button variant="outline" on:click={() => remove(e.id)}>{t($locale, 'common.delete')}</Button>
+                  <Button variant="outline" on:click={() => askRemove(e.id)}>{t($locale, 'common.delete')}</Button>
                 </div>
               </td>
             </tr>
@@ -127,6 +138,18 @@
     {/if}
   </Card>
 </div>
+
+<Dialog
+  open={pendingDeleteId !== null}
+  title={t($locale, 'common.confirmDelete')}
+  confirmLabel={t($locale, 'common.delete')}
+  cancelLabel={t($locale, 'common.cancel')}
+  busy={deleting}
+  on:cancel={() => (pendingDeleteId = null)}
+  on:confirm={confirmRemove}
+>
+  <p>{t($locale, 'dlq.delete.confirm')}</p>
+</Dialog>
 
 <style>
   td:last-child { text-align: end; }

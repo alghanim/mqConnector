@@ -4,6 +4,7 @@
   import { locale, t } from '$lib/stores/locale';
   import Card from '$lib/components/Card.svelte';
   import Badge from '$lib/components/Badge.svelte';
+  import Alert from '$lib/components/Alert.svelte';
 
   let uptime = '';
   let pipelines: PipelineMetric[] = [];
@@ -54,7 +55,7 @@
   </div>
 
   {#if error}
-    <p style="color: var(--danger)">{error}</p>
+    <Alert variant="error">{error}</Alert>
   {/if}
 
   {#if pipelines.length === 0}

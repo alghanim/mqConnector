@@ -182,18 +182,67 @@
   --input-bg:           var(--qb-slate-90);             /* §5.11 */
   --input-border:       var(--qb-outline-variant-dark);
   --input-border-focus: var(--qb-dark-gold);
+  --input-border-error: var(--qb-error-dark);
   --input-text:         var(--qb-text-dark-primary);
   --input-placeholder:  var(--qb-outline-dark);
   --input-label:        var(--qb-text-dark-secondary);
+  --input-label-focused:var(--qb-dark-gold);
+  --input-helper:       var(--qb-text-dark-tertiary);
+  --input-error-text:   var(--qb-error-dark);
+  --input-icon:         var(--qb-text-dark-secondary);
 
-  --card-bg:            var(--qb-slate-93);             /* §5.2 */
-  --card-border:        var(--qb-outline-variant-dark);
+  /* §5.2 Cards — bg + border + theme-aware shadow + hover/press */
+  --card-bg:            var(--qb-slate-93);
+  --card-border:        rgba(71, 85, 96, 0.5);          /* #475560 at 50% per spec */
+  --card-shadow:        0 4px 12px rgba(0, 0, 0, 0.20); /* dark: 4dp at 20% */
+  --card-hover-bg:      var(--qb-slate-110);            /* #3D4A54 */
 
-  --chip-info-bg:       var(--qb-gold-container-dark);  /* nationality/category §5.5 */
+  /* §5.9 Divider variants */
+  --divider-subtle:     var(--qb-slate-110);            /* #3D4A54 dark */
+  --divider-section:    var(--qb-slate-80);             /* #222A31 thick 2dp */
+
+  /* §5.4 Button disabled state */
+  --btn-disabled-bg:    var(--qb-outline-variant-dark); /* #475560 dark */
+  --btn-disabled-text:  var(--qb-outline-dark);         /* #6B7780 dark */
+
+  /* §5.5 Status badge dot indicators (solid form, not text form) */
+  --badge-success-dot:  var(--qb-success-dark);         /* #2E7D4F */
+  --badge-danger-dot:   var(--qb-error-dark);           /* #CF4455 */
+
+  --chip-info-bg:       var(--qb-gold-container-dark);  /* §5.5 nationality */
   --chip-info-text:     var(--qb-light-gold);
+  --chip-info-border:   var(--qb-dark-gold);
 
   --shimmer-base:       var(--qb-slate-93);
   --shimmer-highlight:  var(--qb-slate-110);
+
+  /* §5.13 Top app bar (scrolled = elevation overlay) */
+  --appbar-bg:          var(--qb-slate-80);
+  --appbar-bg-scrolled: var(--qb-slate-90);
+
+  /* §5.6 Profile / hero header */
+  --hero-bg:            var(--qb-slate-90);
+  --hero-photo-border:  var(--qb-dark-gold);
+
+  /* §5.15 Tabs */
+  --tab-bg:             var(--qb-slate-90);
+  --tab-active-text:    var(--qb-light-gold);
+  --tab-active-bar:     var(--qb-dark-gold);
+  --tab-inactive-text:  var(--qb-outline-dark);
+
+  /* §5.16 Switch / checkbox */
+  --switch-track-on:    var(--qb-dark-gold);
+  --switch-thumb-on:    var(--qb-light-gold);
+  --switch-track-off:   var(--qb-outline-variant-dark);
+  --switch-thumb-off:   var(--qb-outline-dark);
+
+  /* §5.17 Progress */
+  --progress-track:     var(--qb-outline-variant-dark);
+  --progress-fill:      var(--qb-copper);
+
+  /* §5.14 Dialog */
+  --dialog-bg:          var(--qb-slate-93);
+  --dialog-scrim:       rgba(0, 0, 0, 0.6);             /* 60% on dark per §5.14 */
 
   /* Focus ring — Dark Gold 2dp per §9.5 */
   --focus-ring:         0 0 0 2px var(--qb-dark-gold);
@@ -255,18 +304,57 @@
   --input-bg:           var(--qb-white);
   --input-border:       var(--qb-sand);
   --input-border-focus: var(--qb-dark-gold);
+  --input-border-error: var(--qb-error-light);
   --input-text:         var(--qb-text-light-primary);
   --input-placeholder:  var(--qb-olive-gold);
   --input-label:        var(--qb-text-light-secondary);
+  --input-label-focused:var(--qb-dark-gold);
+  --input-helper:       var(--qb-text-light-tertiary);
+  --input-error-text:   var(--qb-error-light);
+  --input-icon:         var(--qb-text-light-secondary);
 
   --card-bg:            var(--qb-white);
   --card-border:        var(--qb-warm-gray);
+  --card-shadow:        0 2px 6px rgba(51, 63, 72, 0.08); /* #333F48 at 8%, 2dp */
+  --card-hover-bg:      var(--qb-warm-90);              /* #F2EFEC */
+
+  --divider-subtle:     var(--qb-warm-95);              /* #E8E4DF */
+  --divider-section:    var(--qb-warm-95);              /* §5.9 light: same */
+
+  --btn-disabled-bg:    var(--qb-warm-gray);            /* #D6D1CA */
+  --btn-disabled-text:  var(--qb-olive-gold);           /* #A59F8A */
+
+  --badge-success-dot:  var(--qb-success-light);
+  --badge-danger-dot:   var(--qb-error-light);
 
   --chip-info-bg:       var(--qb-gold-container-light);
   --chip-info-text:     var(--qb-gold-muted);
+  --chip-info-border:   var(--qb-dark-gold);
 
   --shimmer-base:       var(--qb-warm-95);
   --shimmer-highlight:  var(--qb-warm-90);
+
+  --appbar-bg:          var(--qb-warm-85);
+  --appbar-bg-scrolled: var(--qb-warm-90);
+
+  --hero-bg:            var(--qb-warm-95);
+  --hero-photo-border:  var(--qb-dark-gold);
+
+  --tab-bg:             var(--qb-warm-90);
+  --tab-active-text:    var(--qb-dark-gold);
+  --tab-active-bar:     var(--qb-dark-gold);
+  --tab-inactive-text:  var(--qb-olive-gold);
+
+  --switch-track-on:    var(--qb-dark-gold);
+  --switch-thumb-on:    var(--qb-white);
+  --switch-track-off:   var(--qb-warm-gray);
+  --switch-thumb-off:   var(--qb-warm-85);
+
+  --progress-track:     var(--qb-warm-gray);
+  --progress-fill:      var(--qb-dark-gold);
+
+  --dialog-bg:          var(--qb-white);
+  --dialog-scrim:       rgba(0, 0, 0, 0.4);             /* 40% on light per §5.14 */
 
   --focus-ring:         0 0 0 2px var(--qb-dark-gold);
 }
