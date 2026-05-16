@@ -23,6 +23,13 @@ type Connection struct {
 	URL          string    `json:"url,omitempty"`
 	Brokers      string    `json:"brokers,omitempty"`
 	Topic        string    `json:"topic,omitempty"`
+	// Broker TLS — see migration 0006. Paths point at PEM files on
+	// the connector host; the dialers read them at connect-time so a
+	// rotated cert takes effect on the next reconnect.
+	TLSCAFile             string `json:"tls_ca_file,omitempty"`
+	TLSCertFile           string `json:"tls_cert_file,omitempty"`
+	TLSKeyFile            string `json:"tls_key_file,omitempty"`
+	TLSInsecureSkipVerify bool   `json:"tls_insecure_skip_verify,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

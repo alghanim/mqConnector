@@ -132,3 +132,98 @@ func TestFromEnv_GoodKey(t *testing.T) {
 		t.Errorf("expected enabled service")
 	}
 }
+
+// TestRotate_NewCiphertextUnderNewKey confirms that after a rotation
+// Encrypt produces output tagged with the new version, while old
+// ciphertext still decrypts cleanly under the prior version's key.
+func TestRotate_NewCiphertextUnderNewKey(t *testing.T) {
+	s, err := New(newKey(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCT, _ := s.Encrypt("v1-secret")
+	if !strings.HasPrefix(oldCT, "enc:v1:") {
+		t.Fatalf("expected enc:v1: prefix, got %q", oldCT)
+	}
+
+	newVersion, _, err := s.Rotate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newVersion != 2 {
+		t.Fatalf("expected new version 2, got %d", newVersion)
+	}
+
+	newCT, _ := s.Encrypt("v2-secret")
+	if !strings.HasPrefix(newCT, "enc:v2:") {
+		t.Fatalf("expected enc:v2: prefix, got %q", newCT)
+	}
+
+	// Both decrypt under the same Service instance.
+	if pt, _ := s.Decrypt(oldCT); pt != "v1-secret" {
+		t.Errorf("old ciphertext decrypt: %q", pt)
+	}
+	if pt, _ := s.Decrypt(newCT); pt != "v2-secret" {
+		t.Errorf("new ciphertext decrypt: %q", pt)
+	}
+}
+
+// TestRewrap_MigratesOldToCurrent re-encrypts a v1 ciphertext under v2
+// and confirms the new form decrypts to the same plaintext.
+func TestRewrap_MigratesOldToCurrent(t *testing.T) {
+	s, err := New(newKey(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCT, _ := s.Encrypt("secret")
+	if _, _, err := s.Rotate(); err != nil {
+		t.Fatal(err)
+	}
+
+	rewrapped, err := s.Rewrap(oldCT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(rewrapped, "enc:v2:") {
+		t.Fatalf("expected enc:v2: after rewrap, got %q", rewrapped)
+	}
+	if pt, _ := s.Decrypt(rewrapped); pt != "secret" {
+		t.Errorf("rewrap round-trip lost plaintext: %q", pt)
+	}
+	// Rewrap of an already-current ciphertext is a no-op.
+	rewrapped2, _ := s.Rewrap(rewrapped)
+	if rewrapped2 != rewrapped {
+		t.Errorf("rewrap of current should be no-op")
+	}
+}
+
+// TestDecrypt_UnknownVersionErrors ensures a ciphertext from a key the
+// operator has dropped surfaces as an explicit error, not silent
+// corruption.
+func TestDecrypt_UnknownVersionErrors(t *testing.T) {
+	s, _ := New(newKey(t))
+	fake := "enc:v99:" + strings.Repeat("A", 30)
+	if _, err := s.Decrypt(fake); err == nil {
+		t.Fatal("expected error decrypting unknown version, got nil")
+	}
+}
+
+// TestFromEnv_Multi parses MQC_MASTER_KEYS into a multi-version service
+// with the highest version as current.
+func TestFromEnv_Multi(t *testing.T) {
+	k1 := newKey(t)
+	k2 := newKey(t)
+	t.Setenv("MQC_MASTER_KEY", "")
+	t.Setenv("MQC_MASTER_KEYS", "v1="+k1+", v3="+k2)
+	s, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Current() != 3 {
+		t.Fatalf("expected current=3, got %d", s.Current())
+	}
+	versions := s.Versions()
+	if len(versions) != 2 || versions[0] != 1 || versions[1] != 3 {
+		t.Fatalf("versions: %v", versions)
+	}
+}

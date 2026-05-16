@@ -27,6 +27,12 @@ func From(c *storage.Connection) mq.Config {
 		QueueName:    c.QueueName,
 		URL:          c.URL,
 		Topic:        c.Topic,
+		TLS: mq.TLSConfig{
+			CAFile:             c.TLSCAFile,
+			CertFile:           c.TLSCertFile,
+			KeyFile:            c.TLSKeyFile,
+			InsecureSkipVerify: c.TLSInsecureSkipVerify,
+		},
 	}
 	if c.Brokers != "" {
 		parts := strings.Split(c.Brokers, ",")

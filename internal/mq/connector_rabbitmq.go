@@ -58,7 +58,23 @@ func (c *RabbitMQConnector) Connect(_ context.Context) error {
 		c.deliveries = nil
 		c.consumerTag = ""
 	}
-	conn, err := amqp.Dial(c.cfg.URL)
+	// When the operator has configured TLS material, dial through
+	// DialConfig so we can attach a custom *tls.Config (CA roots +
+	// optional client cert for mTLS). amqp091 honours TLSClientConfig
+	// for amqps:// URLs and ignores it for amqp:// — so this is safe
+	// even on plaintext connections; the operator just won't see it
+	// in effect unless they switch the scheme.
+	var conn *amqp.Connection
+	var err error
+	if c.cfg.TLS.Enabled() {
+		tlsCfg, err2 := BuildTLSConfig(c.cfg.TLS)
+		if err2 != nil {
+			return fmt.Errorf("rabbitmq TLS: %w", err2)
+		}
+		conn, err = amqp.DialConfig(c.cfg.URL, amqp.Config{TLSClientConfig: tlsCfg})
+	} else {
+		conn, err = amqp.Dial(c.cfg.URL)
+	}
 	if err != nil {
 		return fmt.Errorf("rabbitmq Dial: %w", err)
 	}

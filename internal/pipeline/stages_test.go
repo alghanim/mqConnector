@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -142,6 +143,57 @@ func TestScriptStage_Delete(t *testing.T) {
 	}
 	if m["keep"] != float64(1) {
 		t.Errorf("keep: %v", m["keep"])
+	}
+}
+
+// TestScriptStage_OpCountCap rejects scripts that execute more lines
+// than the configured cap. Counting executable lines (not bytes / not
+// comments) keeps the cap meaningful — a verbose formatter doesn't
+// burn budget.
+func TestScriptStage_OpCountCap(t *testing.T) {
+	// Build a script that runs 10 op lines.
+	lines := ""
+	for i := 0; i < 10; i++ {
+		lines += "msg.a = 1\n"
+	}
+	s := &ScriptStage{Script: lines, MaxOps: 5}
+	_, _, _, err := s.Execute(context.Background(), []byte(`{}`), FormatJSON)
+	if err == nil {
+		t.Fatal("expected resource-limit error, got nil")
+	}
+	if !errors.Is(err, ErrScriptResourceLimit) {
+		t.Fatalf("expected ErrScriptResourceLimit, got %v", err)
+	}
+}
+
+// TestScriptStage_ScriptByteCap refuses oversized scripts upfront.
+func TestScriptStage_ScriptByteCap(t *testing.T) {
+	huge := make([]byte, 100)
+	for i := range huge {
+		huge[i] = 'x'
+	}
+	s := &ScriptStage{Script: string(huge), MaxScriptBytes: 50}
+	_, _, _, err := s.Execute(context.Background(), []byte(`{}`), FormatJSON)
+	if err == nil {
+		t.Fatal("expected resource-limit error, got nil")
+	}
+	if !errors.Is(err, ErrScriptResourceLimit) {
+		t.Fatalf("expected ErrScriptResourceLimit, got %v", err)
+	}
+}
+
+// TestScriptStage_OutputByteCap rejects scripts whose post-encode
+// output is too large. We don't actually have a way to balloon the
+// output in the line-eval language, so the test sets an absurdly low
+// cap and confirms it fires on a trivially-larger output.
+func TestScriptStage_OutputByteCap(t *testing.T) {
+	s := &ScriptStage{Script: `msg.tag = "x"`, MaxOutputBytes: 5}
+	_, _, _, err := s.Execute(context.Background(), []byte(`{"a":1}`), FormatJSON)
+	if err == nil {
+		t.Fatal("expected resource-limit error, got nil")
+	}
+	if !errors.Is(err, ErrScriptResourceLimit) {
+		t.Fatalf("expected ErrScriptResourceLimit, got %v", err)
 	}
 }
 

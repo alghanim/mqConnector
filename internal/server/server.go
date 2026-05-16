@@ -26,6 +26,7 @@ import (
 	"mqConnector/internal/metrics"
 	"mqConnector/internal/mq"
 	"mqConnector/internal/pipeline"
+	"mqConnector/internal/secrets"
 	"mqConnector/internal/storage"
 	"mqConnector/internal/web"
 )
@@ -43,6 +44,7 @@ type Server struct {
 	pipeline     *pipeline.Manager
 	health       *health.Checker
 	leadership   *leadership.Lease // nil when not enabled
+	sealer       *secrets.Service  // nil when MQC_MASTER_KEY is unset
 	loginLimiter *loginLimiter
 	stopGC       chan struct{}
 	stopGCOnce   sync.Once
@@ -69,6 +71,7 @@ type Deps struct {
 	Pipeline   *pipeline.Manager
 	Health     *health.Checker
 	Leadership *leadership.Lease // optional — nil when leadership is disabled
+	Sealer     *secrets.Service  // optional — nil disables /secrets/rotate
 	Logger     *slog.Logger
 }
 
@@ -88,6 +91,7 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		pipeline:     deps.Pipeline,
 		health:       deps.Health,
 		leadership:   deps.Leadership,
+		sealer:       deps.Sealer,
 		loginLimiter: newLoginLimiter(10, time.Minute),
 		stopGC:       make(chan struct{}),
 	}

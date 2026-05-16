@@ -60,6 +60,18 @@ func (s *Server) routes() http.Handler {
 		r.Get("/api/metrics", s.handleMetricsJSON)
 		r.Get("/api/metrics/prometheus", s.handleMetricsPrometheus)
 		r.Get("/api/v1/audit", s.handleListAudit)
+		// Tamper-evident chain verifier. Returns one ChainStatus per
+		// tenant the caller can see; `?scope=all` widens to every
+		// tenant for default-tenant owners only.
+		r.Get("/api/v1/audit/verify", s.handleVerifyAudit)
+		// Before/after JSON for one audit row (PUT mutations only).
+		r.Get("/api/v1/audit/{id}/diff", s.handleGetAuditDiff)
+
+		// Envelope-encryption key rotation. Status is read-only; rotate
+		// is system-admin only and additionally rewraps every stored
+		// connection password under the new key.
+		r.Get("/api/v1/secrets/status", s.handleSecretsStatus)
+		r.Post("/api/v1/secrets/rotate", s.handleRotateSecrets)
 
 		// Server-Sent Events — long-lived stream. The RequestContextTimeout
 		// middleware detects "Accept: text/event-stream" and skips the

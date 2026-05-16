@@ -63,6 +63,27 @@ type Config struct {
 	// Kafka
 	Brokers []string
 	Topic   string
+
+	// TLS / mTLS to the broker. TLS is enabled if any of the
+	// CA/Cert/Key paths are set, or if InsecureSkipVerify is true (the
+	// latter is dev-only — production deploys leave it false). Loaded
+	// at dial time so a rotated cert takes effect on the next reconnect.
+	TLS TLSConfig
+}
+
+// TLSConfig wraps the per-connection TLS material. Loaded into a
+// *tls.Config by BuildTLSConfig at dial time.
+type TLSConfig struct {
+	CAFile             string
+	CertFile           string
+	KeyFile            string
+	InsecureSkipVerify bool
+}
+
+// Enabled reports whether the operator configured any TLS knob. The
+// dialers check this before constructing a tls.Config.
+func (t TLSConfig) Enabled() bool {
+	return t.CAFile != "" || t.CertFile != "" || t.KeyFile != "" || t.InsecureSkipVerify
 }
 
 // Connector is the unified interface every concrete MQ implementation must

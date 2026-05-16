@@ -1,9 +1,13 @@
 package server
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"mqConnector/internal/auth"
 	"mqConnector/internal/storage"
@@ -54,4 +58,60 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 		"total":    total,
 		"items":    list,
 	})
+}
+
+// handleVerifyAudit walks the tamper-evident hash chain and reports any
+// row where the recomputed hash diverges from the stored one. Tenant-
+// scoped: a regular member verifies only their tenant's chain. A
+// system-admin (owner of the default tenant) can pass ?scope=all to
+// verify every tenant.
+func (s *Server) handleVerifyAudit(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
+	scope := r.URL.Query().Get("scope")
+	if scope == "all" {
+		// Coarse system-admin check: only the owner of the default
+		// tenant gets cross-tenant visibility. Aligns with the policy
+		// used in handleListAudit's future expansion.
+		if tenant == storage.DefaultTenantID {
+			tenant = "*"
+		}
+	}
+
+	statuses, err := s.store.Audit.Verify(r.Context(), tenant)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	overall := "ok"
+	for _, st := range statuses {
+		if st.Status != "ok" {
+			overall = "broken"
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  overall,
+		"tenants": statuses,
+	})
+}
+
+// handleGetAuditDiff returns the before/after JSON snapshot recorded
+// for one audit row. PUT mutations get a diff; other actions don't.
+// Returns 404 if no diff was recorded.
+func (s *Server) handleGetAuditDiff(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing id")
+		return
+	}
+	diff, err := s.store.Audit.GetDiff(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "no diff for this row")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, diff)
 }

@@ -24,9 +24,64 @@ import (
 //   - msg.field = Date.now()            → set Unix millis
 //
 // Anything else is silently ignored.
+//
+// Sandboxing
+//
+// Per Phase 17, the runner enforces three resource caps so a malicious
+// or buggy script cannot starve the pipeline workers:
+//
+//	MaxOps         hard upper bound on executed lines (default 1000)
+//	MaxScriptBytes hard upper bound on the source size (default 32 KiB)
+//	MaxOutputBytes max size of the re-encoded message after the script
+//	               runs; messages exceeding this are rejected with an
+//	               error so a runaway append loop can't blow up memory
+//	               (default 4 MiB)
+//
+// All three are tunable per-stage via SetSandboxLimits; the defaults are
+// safe for the connector's typical < 1 MiB JSON payloads. Hitting any
+// cap returns a typed error so the pipeline can route the offending
+// message to DLQ rather than crash-looping.
 type ScriptStage struct {
 	Script  string
 	Timeout time.Duration // optional hard cap; 0 ⇒ inherit ctx
+
+	// Sandbox limits — 0 means "use the default" (see DefaultMaxOps etc.).
+	MaxOps         int
+	MaxScriptBytes int
+	MaxOutputBytes int
+}
+
+// Default sandbox limits — picked conservatively so an operator writing
+// a typical transform won't trip them, but a buggy or hostile script
+// can't pin a worker forever or balloon memory.
+const (
+	DefaultMaxOps         = 1000
+	DefaultMaxScriptBytes = 32 * 1024     // 32 KiB
+	DefaultMaxOutputBytes = 4 * 1024 * 1024 // 4 MiB
+)
+
+// ErrScriptResourceLimit is returned when a script hits a sandbox cap.
+// Wrapped with details (op count, byte count) so the pipeline error
+// surface tells the operator which cap they tripped.
+var ErrScriptResourceLimit = errors.New("script: resource limit exceeded")
+
+func (s *ScriptStage) opCap() int {
+	if s.MaxOps > 0 {
+		return s.MaxOps
+	}
+	return DefaultMaxOps
+}
+func (s *ScriptStage) scriptByteCap() int {
+	if s.MaxScriptBytes > 0 {
+		return s.MaxScriptBytes
+	}
+	return DefaultMaxScriptBytes
+}
+func (s *ScriptStage) outputByteCap() int {
+	if s.MaxOutputBytes > 0 {
+		return s.MaxOutputBytes
+	}
+	return DefaultMaxOutputBytes
 }
 
 func (s *ScriptStage) Name() string { return "script" }
@@ -34,6 +89,13 @@ func (s *ScriptStage) Name() string { return "script" }
 func (s *ScriptStage) Execute(ctx context.Context, message []byte, format Format) ([]byte, Format, *Result, error) {
 	if strings.TrimSpace(s.Script) == "" {
 		return message, format, nil, nil
+	}
+
+	// Sandbox cap #1: source size. A 10 MB script is almost certainly
+	// not a transform — refuse upfront rather than spend CPU parsing it.
+	if cap := s.scriptByteCap(); len(s.Script) > cap {
+		return nil, format, nil, fmt.Errorf("%w: script source %d bytes exceeds cap %d",
+			ErrScriptResourceLimit, len(s.Script), cap)
 	}
 
 	if s.Timeout > 0 {
@@ -59,7 +121,7 @@ func (s *ScriptStage) Execute(ctx context.Context, message []byte, format Format
 	default:
 	}
 
-	if err := runScript(ctx, s.Script, data); err != nil {
+	if err := runScript(ctx, s.Script, data, s.opCap()); err != nil {
 		return nil, format, nil, fmt.Errorf("script: %w", err)
 	}
 
@@ -67,10 +129,22 @@ func (s *ScriptStage) Execute(ctx context.Context, message []byte, format Format
 	if err != nil {
 		return nil, format, nil, fmt.Errorf("script: encode: %w", err)
 	}
+	// Sandbox cap #3: output size. An append-in-a-loop bug can balloon
+	// the message past every reasonable broker max. Reject so the
+	// pipeline routes to DLQ rather than panicking downstream.
+	if cap := s.outputByteCap(); len(out) > cap {
+		return nil, format, nil, fmt.Errorf("%w: output %d bytes exceeds cap %d",
+			ErrScriptResourceLimit, len(out), cap)
+	}
 	return out, originalFormat, nil, nil
 }
 
-func runScript(ctx context.Context, script string, data map[string]any) error {
+// runScript walks each line of the script, enforcing the op-count cap
+// as it goes. A line is "an op" — comments and blank lines don't count
+// (they cost effectively nothing). Counting *executable* lines means
+// the cap reflects real work, not source-code formatting.
+func runScript(ctx context.Context, script string, data map[string]any, maxOps int) error {
+	ops := 0
 	for _, raw := range splitScriptLines(script) {
 		select {
 		case <-ctx.Done():
@@ -80,6 +154,11 @@ func runScript(ctx context.Context, script string, data map[string]any) error {
 		line := trimLine(raw)
 		if line == "" || line == "msg" || line == "msg;" || strings.HasPrefix(line, "//") {
 			continue
+		}
+		ops++
+		if ops > maxOps {
+			return fmt.Errorf("%w: op count %d exceeds cap %d",
+				ErrScriptResourceLimit, ops, maxOps)
 		}
 		switch {
 		case strings.HasPrefix(line, "delete "):

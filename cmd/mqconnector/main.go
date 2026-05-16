@@ -237,6 +237,7 @@ func run(configPath string) error {
 		Pipeline:   mgr,
 		Health:     checker,
 		Leadership: leaseRunner, // nil when leadership is disabled
+		Sealer:     sealer,      // nil when MQC_MASTER_KEY is unset
 		Logger:     logger,
 	})
 	if err != nil {

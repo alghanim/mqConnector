@@ -54,6 +54,18 @@ func (c *KafkaConnector) Connect(_ context.Context) error {
 	cfg.Producer.Return.Errors = true
 	cfg.Consumer.Return.Errors = true
 
+	// TLS / mTLS, opt-in via the connection's TLS section. We always
+	// set MinVersion to TLS 1.2 inside BuildTLSConfig — sarama defaults
+	// would otherwise let a misconfigured broker negotiate down.
+	if c.cfg.TLS.Enabled() {
+		tlsCfg, err := BuildTLSConfig(c.cfg.TLS)
+		if err != nil {
+			return fmt.Errorf("kafka TLS: %w", err)
+		}
+		cfg.Net.TLS.Enable = true
+		cfg.Net.TLS.Config = tlsCfg
+	}
+
 	producer, err := sarama.NewSyncProducer(c.cfg.Brokers, cfg)
 	if err != nil {
 		return fmt.Errorf("kafka NewSyncProducer: %w", err)

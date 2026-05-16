@@ -218,6 +218,44 @@ var migrations = []string{
 	INSERT OR IGNORE INTO tenant_memberships (tenant_id, user_sub, username, role)
 	VALUES ('00000000-0000-0000-0000-000000000000', 'bootstrap:admin', 'admin', 'owner');
 	`,
+	// 0005 — tamper-evident audit log. Each row carries a SHA-256 hash of
+	// (prev_hash || canonical(row)). The verifier walks the chain in
+	// insertion order and reports the first row where the recomputed hash
+	// disagrees — a single-row mutation is therefore detectable in O(n).
+	//
+	// `prev_hash` of the very first row in a tenant chain is the empty
+	// string. We chain per tenant so tenants stay logically independent
+	// and archival prunes one tenant without breaking another's chain.
+	//
+	// audit_log_diffs (separate table): optional before/after JSON for
+	// PUT mutations. Joined on audit_id so list views aren't bloated.
+	`
+	ALTER TABLE audit_log ADD COLUMN hash      TEXT NOT NULL DEFAULT '';
+	ALTER TABLE audit_log ADD COLUMN prev_hash TEXT NOT NULL DEFAULT '';
+
+	CREATE INDEX IF NOT EXISTS idx_audit_chain ON audit_log(tenant_id, at ASC, id ASC);
+
+	CREATE TABLE IF NOT EXISTS audit_log_diffs (
+		audit_id  TEXT PRIMARY KEY REFERENCES audit_log(id) ON DELETE CASCADE,
+		before    TEXT NOT NULL DEFAULT '',
+		after     TEXT NOT NULL DEFAULT ''
+	);
+	`,
+	// 0006 — broker TLS / mTLS. Each connection optionally carries paths
+	// to PEM files for server-cert verification (tls_ca_file) and client
+	// mTLS auth (tls_cert_file + tls_key_file). tls_insecure_skip_verify
+	// is a dev-only escape hatch; production deploys leave it 0.
+	//
+	// Files-on-disk rather than inline PEMs keeps the SQLite row small
+	// and lets ops rotate certs without rewriting every connection row.
+	// The connection.Open path reads the files at dial time, so an
+	// updated cert takes effect on the next reconnect.
+	`
+	ALTER TABLE connections ADD COLUMN tls_ca_file              TEXT NOT NULL DEFAULT '';
+	ALTER TABLE connections ADD COLUMN tls_cert_file            TEXT NOT NULL DEFAULT '';
+	ALTER TABLE connections ADD COLUMN tls_key_file             TEXT NOT NULL DEFAULT '';
+	ALTER TABLE connections ADD COLUMN tls_insecure_skip_verify INTEGER NOT NULL DEFAULT 0;
+	`,
 }
 
 func migrate(db *sql.DB) error {
