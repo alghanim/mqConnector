@@ -205,6 +205,22 @@ func (s *Server) mountStatic(r chi.Router) {
 			return
 		}
 
+		// SvelteKit emits hashed filenames under /_app/immutable/* — same
+		// bytes always map to the same URL, so they're safe to cache for
+		// a year and skip revalidation. Without this header browsers fall
+		// back to heuristic caching, which can leak stale CSS across
+		// deploys (we hit this in dev when the metrics page CSS chunk
+		// wouldn't refresh until a hard reload).
+		if strings.HasPrefix(p, "_app/immutable/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		// Embedded font files are also content-addressed enough — they
+		// never change for a given binary version — and benefit from
+		// long caching.
+		if strings.HasPrefix(p, "fonts/") {
+			w.Header().Set("Cache-Control", "public, max-age=2592000")
+		}
+
 		fileServer.ServeHTTP(w, r)
 	})
 }

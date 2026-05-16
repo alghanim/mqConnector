@@ -132,16 +132,72 @@ components:
         name: { type: string }
         type:
           type: string
-          enum: [ibm, rabbitmq, kafka]
-        queue_manager: { type: string }
-        conn_name: { type: string, description: "host(port)" }
-        channel: { type: string }
+          description: |
+            Broker family.
+              * `ibm`      — IBM MQ via MQI (requires server build with -tags ibmmq)
+              * `rabbitmq` — AMQP 0.9.1
+              * `kafka`    — Kafka 3.x
+              * `mqtt`     — MQTT 3.1 / 3.1.1 / 5
+              * `nats`     — NATS or NATS JetStream (set `stream_name` to opt in)
+              * `amqp10`   — OASIS AMQP 1.0 (ActiveMQ, Artemis, Solace, Azure SB)
+          enum: [ibm, rabbitmq, kafka, mqtt, nats, amqp10]
+        queue_manager:
+          type: string
+          description: "IBM MQ queue manager name."
+        conn_name:
+          type: string
+          description: "host(port) — IBM MQ."
+        channel:
+          type: string
+          description: "IBM MQ channel."
         username: { type: string }
-        password: { type: string, format: password, description: "Encrypted at rest when MQC_MASTER_KEY is set." }
-        queue_name: { type: string }
-        url: { type: string, description: "AMQP URL (RabbitMQ)" }
-        brokers: { type: string, description: "Comma-separated host:port list (Kafka)" }
-        topic: { type: string }
+        password:
+          type: string
+          format: password
+          description: "AES-256-GCM-encrypted at rest with versioned keys (`secrets.encryption_keys`)."
+        queue_name:
+          type: string
+          description: "IBM MQ / RabbitMQ destination queue."
+        url:
+          type: string
+          description: |
+            Endpoint URL.
+              * RabbitMQ: `amqp://user:pass@host:5672/`
+              * MQTT:     `tcp://host:1883/` or `ssl://host:8883/`
+              * NATS:     `nats://host:4222/`
+              * AMQP 1.0: `amqp://host:5672/` or `amqps://host:5671/`
+        brokers:
+          type: string
+          description: "Kafka — comma-separated host:port list."
+        topic:
+          type: string
+          description: "Kafka topic / MQTT topic / NATS subject."
+        client_id:
+          type: string
+          description: "MQTT client id. Optional — auto-generated if omitted. Also used as the AMQP 1.0 container id."
+        qos:
+          type: integer
+          minimum: 0
+          maximum: 2
+          description: "MQTT QoS level (0, 1, or 2). Default 0."
+        stream_name:
+          type: string
+          description: "NATS JetStream stream name. Setting this opts into JetStream (PullSubscribe + Ack); leaving it empty uses core NATS (channel-buffered drain)."
+        consumer_name:
+          type: string
+          description: "NATS JetStream durable consumer name. Required when `stream_name` is set."
+        tls_ca_file:
+          type: string
+          description: "Path to a PEM CA bundle for broker TLS verification."
+        tls_cert_file:
+          type: string
+          description: "Path to a PEM client certificate (mutual TLS)."
+        tls_key_file:
+          type: string
+          description: "Path to the matching PEM private key."
+        tls_insecure_skip_verify:
+          type: boolean
+          description: "Skip broker certificate verification. Dev-only — never set in prod."
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -163,7 +219,13 @@ components:
         destination_id: { type: string, format: uuid }
         output_format:
           type: string
-          enum: [same, json, xml]
+          description: |
+            Wire format the pipeline should emit on the destination side.
+            `same` is a no-op (preserves the source's detected format).
+            `protobuf` requires the pipeline's translate stage to reference
+            a schema row whose `schema_type` is `protobuf` and a
+            `proto_message` FQN matching a message inside the descriptor set.
+          enum: [same, json, xml, protobuf]
           default: same
         schema_id: { type: string, format: uuid, nullable: true }
         filter_paths:
@@ -239,7 +301,14 @@ components:
         name: { type: string }
         schema_type:
           type: string
-          enum: [json_schema, xsd]
+          description: |
+            `json_schema` — Draft-07 JSON Schema (UTF-8 JSON text in `content`).
+            `xsd`         — XML Schema document (UTF-8 XML text in `content`).
+            `protobuf`    — base64-encoded `FileDescriptorSet`
+                            (output of `protoc --descriptor_set_out=`).
+                            The corresponding ValidateStage / TranslateStage
+                            must also carry a `proto_message` FQN.
+          enum: [json_schema, xsd, protobuf]
         content: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }

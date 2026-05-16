@@ -1,0 +1,36 @@
+mqConnector has been deployed.
+
+To check the install:
+  kubectl --namespace {{ .Release.Namespace }} get pods \
+    -l app.kubernetes.io/instance={{ .Release.Name }}
+
+{{ if .Values.ingress.enabled }}
+The admin UI is reachable at:
+{{- range .Values.ingress.hosts }}
+  https://{{ .host }}
+{{- end }}
+{{- else if contains "NodePort" .Values.service.type }}
+Get the admin UI URL:
+  NODE_PORT=$(kubectl get -n {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "mqconnector.fullname" . }})
+  NODE_IP=$(kubectl get nodes -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "https://$NODE_IP:$NODE_PORT"
+{{- else }}
+Port-forward to reach the admin UI:
+  kubectl --namespace {{ .Release.Namespace }} port-forward \
+    svc/{{ include "mqconnector.fullname" . }} 8443:{{ .Values.service.port }}
+  Then open: https://localhost:8443/
+{{- end }}
+
+Health probe:
+  kubectl --namespace {{ .Release.Namespace }} exec \
+    deploy/{{ include "mqconnector.fullname" . }} -- \
+    wget -qO- --no-check-certificate https://localhost:8443/api/health
+
+{{ if not .Values.secrets.create }}
+NOTE: secrets.create=false. The Deployment expects a Secret named
+  "{{ include "mqconnector.secretName" . }}"
+in namespace "{{ .Release.Namespace }}" with these keys:
+  - SIMPLEAUTH_ADMIN_TOKEN
+  - MQC_ENCRYPTION_KEY_V1
+Provision it via external-secrets-operator, sops, or kubectl create secret.
+{{- end }}

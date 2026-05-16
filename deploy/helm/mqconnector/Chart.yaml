@@ -1,0 +1,23 @@
+apiVersion: v2
+name: mqconnector
+description: |
+  Message-queue bridge and pipeline runner — consume from one MQ, run a
+  configurable pipeline (validate → filter → transform → translate →
+  route → script), forward to another. Single-binary deployment with an
+  embedded SvelteKit admin UI.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - message-queue
+  - bridge
+  - pipeline
+  - ibm-mq
+  - rabbitmq
+  - kafka
+  - mqtt
+  - nats
+sources:
+  - https://github.com/alghanim/mqConnector
+maintainers:
+  - name: mqConnector contributors

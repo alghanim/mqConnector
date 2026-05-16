@@ -1,0 +1,154 @@
+# Default values for the mqconnector chart.
+#
+# This is a minimal-but-real production-shaped deploy: 1 replica
+# (mqConnector is leader-elected single-writer — see README §High
+# availability), a PVC for SQLite + DLQ, a Service, an optional Ingress.
+#
+# Override what you need on `helm install -f values.yaml`. The chart is
+# intentionally small — it doesn't try to template every config knob;
+# anything not exposed here goes into the ConfigMap below verbatim
+# under `config:`.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/alghanim/mqconnector
+  # Pin a real tag in your overrides; "latest" makes rollouts hard to
+  # reproduce. Default left as the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# Configuration that lands in /etc/mqconnector/config.yaml inside the
+# pod. The chart renders this map straight into a ConfigMap and mounts
+# it read-only.
+config:
+  mode: prod
+  server:
+    listen: ":8443"
+    tls:
+      enabled: true
+      cert_file: /etc/mqconnector/tls/tls.crt
+      key_file: /etc/mqconnector/tls/tls.key
+    max_body_bytes: 4194304
+    write_timeout: 60s
+    cors_origins: []
+  auth:
+    simpleauth:
+      base_url: https://simpleauth.svc.cluster.local/
+      # admin_token is sourced from the Secret named below, not inlined.
+  storage:
+    sqlite:
+      path: /var/lib/mqconnector/mqconnector.db
+    retention:
+      audit_days: 90
+      dlq_days: 30
+
+# Secrets — declared by reference so you can bring your own Secret
+# objects (e.g. managed by external-secrets-operator). Set
+# `secrets.create: true` to have the chart create a Secret with the
+# values inlined below (dev / CI only — don't ship inline secrets to
+# prod).
+secrets:
+  create: false
+  # Name of an existing Secret holding the keys below. The chart
+  # mounts this secret into the pod as env vars.
+  existingSecret: mqconnector-secrets
+  data:
+    # SimpleAuth admin token used to verify session cookies.
+    simpleauthAdminToken: ""
+    # AES-256 envelope encryption key (32 bytes, base64). The version
+    # id `v1` matches the default in config.example.yaml. Rotate by
+    # adding a v2 entry and running `POST /api/v1/secrets/rotate`.
+    encryptionKeyV1: ""
+
+# TLS — the chart expects a Secret of type kubernetes.io/tls. Easiest
+# path is cert-manager: create a Certificate that targets this Secret
+# name. Set tls.existingSecret to point at it. For self-signed dev,
+# set tls.selfSigned: true and the chart will generate one.
+tls:
+  existingSecret: mqconnector-tls
+  selfSigned: false
+
+# Persistent volume for the SQLite DB + DLQ. Resize is a manual op
+# (most clouds allow PVC expansion in-place; check your StorageClass).
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+
+service:
+  type: ClusterIP
+  port: 8443
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: mqconnector.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: mqconnector-tls
+      hosts:
+        - mqconnector.example.com
+
+resources:
+  # mqConnector's hot path is allocation-heavy but bounded. These
+  # defaults are sized for ~1k msg/s on a small cluster; tune up if
+  # you push more.
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+# Pod-level posture
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault
+
+# Liveness / readiness — the /api/health endpoint is unauthenticated
+# and reports both the DB status and per-pipeline state.
+probes:
+  liveness:
+    path: /api/health
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    failureThreshold: 3
+  readiness:
+    path: /api/health
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+
+# Prometheus scrape — point your prometheus-operator (or generic
+# scrape config) here. The chart only emits the annotation hints;
+# wiring a ServiceMonitor is left to the consumer to avoid pulling in
+# the prometheus-operator CRDs.
+metrics:
+  enabled: true
+  port: 8443
+  path: /api/metrics/prometheus
+  # Bearer token used by the scraper. mqConnector's metrics endpoint
+  # requires an admin session; provision a long-lived API token under
+  # /tokens in the UI and reference it here via a Secret.
+  bearerTokenSecret: ""
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

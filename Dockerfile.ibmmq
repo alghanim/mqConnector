@@ -69,12 +69,17 @@ RUN CGO_ENABLED=1 go build \
 # -----------------------------------------------------------------------------
 # Stage 3: runtime — debian-slim with the IBM client copied in
 # -----------------------------------------------------------------------------
+# IBM MQ's redistributable client is glibc-linked so musl/alpine isn't an
+# option. bookworm-slim it is; we pin to the current security-patched
+# digest and run `apt-get upgrade` at build time to flush any CVE backport
+# that landed in the Debian point release after the tag was cut.
 FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.title="mqConnector (IBM MQ variant)" \
       org.opencontainers.image.description="mqConnector built with -tags ibmmq against the IBM MQ Redistributable Client"
 
 RUN apt-get update -qq \
+    && apt-get -y upgrade -qq \
     && apt-get install -y -qq --no-install-recommends \
         ca-certificates tzdata wget \
     && rm -rf /var/lib/apt/lists/*

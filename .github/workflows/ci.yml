@@ -20,6 +20,13 @@ on:
 permissions:
   contents: read
 
+# Pin Node.js 20-based actions onto the Node 24 runtime now. GitHub's
+# default switches in June 2026 and removes Node 20 in September 2026;
+# opting in early surfaces any incompatibility on our terms rather than
+# during a freeze window.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   backend:
     name: Backend (test + lint)
