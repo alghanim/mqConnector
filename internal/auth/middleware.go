@@ -61,8 +61,15 @@ func (s *Service) RequireSession(next http.Handler) http.Handler {
 	})
 }
 
-// RequireRole rejects requests whose user does not hold role. Must be
-// composed after RequireSession.
+// RequireRole gates a handler behind a minimum tenant-scoped role.
+// Roles are ordered viewer < operator < admin < owner; "admin" lets
+// admin and owner through, "viewer" lets everyone authenticated through.
+// Must be composed after RequireSession.
+//
+// Legacy: a role like "admin" with no matching tenant-scoped role
+// falls back to the SimpleAuth global-role check. Lets existing tests
+// that grant a global "admin" role continue to work; production
+// deployments should rely on tenant-scoped roles instead.
 func (s *Service) RequireRole(role string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,11 +78,41 @@ func (s *Service) RequireRole(role string) func(http.Handler) http.Handler {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}
-			if !user.HasRole(role) {
+			// Tenant-scoped check first.
+			if claim, ok := TenantFromContext(r.Context()); ok && claim.Role != "" {
+				if roleAtLeast(claim.Role, role) {
+					next.ServeHTTP(w, r)
+					return
+				}
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 				return
 			}
-			next.ServeHTTP(w, r)
+			// Fallback: global SimpleAuth role.
+			if user.HasRole(role) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		})
 	}
+}
+
+// roleAtLeast reports whether have is at least as strong as want.
+// Order: viewer < operator < admin < owner. Unknown role strings
+// rank below viewer (treated as no-access).
+func roleAtLeast(have, want string) bool {
+	return rank(have) >= rank(want) && rank(have) >= 0
+}
+func rank(r string) int {
+	switch r {
+	case "viewer":
+		return 0
+	case "operator":
+		return 1
+	case "admin":
+		return 2
+	case "owner":
+		return 3
+	}
+	return -1
 }

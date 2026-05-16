@@ -93,6 +93,15 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 	}
 	go s.loginLimiter.gc(s.stopGC)
 
+	// Install the memberships-backed tenant resolver onto the auth
+	// service. Without this, RequireSession falls back to the legacy
+	// "everyone is owner of the default tenant" model, which keeps
+	// single-tenant deployments working unchanged but doesn't isolate
+	// new tenants — so we always install it when storage is wired.
+	if deps.Auth != nil && deps.Store != nil {
+		deps.Auth.SetTenantResolver(newTenantResolver(deps.Store, deps.Logger))
+	}
+
 	router := s.routes()
 
 	s.httpSrv = &http.Server{

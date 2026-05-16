@@ -168,19 +168,48 @@ func TestRequireSession_ValidCookie_PassesUser(t *testing.T) {
 	}
 }
 
-func TestRequireRole(t *testing.T) {
-	user := &simpleauth.User{Sub: "u1", Roles: []string{"viewer"}}
-	s := newTestService(&fakeClient{verifyOK: map[string]*simpleauth.User{"good": user}})
+// fixedResolver returns a fixed TenantClaim for every request — used
+// by these tests to bypass the storage-backed resolver.
+type fixedResolver struct{ claim TenantClaim }
 
-	stack := s.RequireSession(s.RequireRole("admin")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})))
+func (f fixedResolver) Resolve(_ *http.Request, _ any) (TenantClaim, bool) {
+	if f.claim.TenantID == "" {
+		return TenantClaim{}, false
+	}
+	return f.claim, true
+}
 
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.AddCookie(&http.Cookie{Name: "mqc_session", Value: "good"})
-	rec := httptest.NewRecorder()
-	stack.ServeHTTP(rec, r)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("expected 403 for missing role, got %d", rec.Code)
+func TestRequireRole_TenantScoped(t *testing.T) {
+	cases := []struct {
+		name     string
+		userRole string // tenant-scoped role
+		needRole string
+		want     int
+	}{
+		{"viewer cannot reach admin", "viewer", "admin", http.StatusForbidden},
+		{"operator cannot reach admin", "operator", "admin", http.StatusForbidden},
+		{"admin reaches admin", "admin", "admin", http.StatusOK},
+		{"owner reaches admin", "owner", "admin", http.StatusOK},
+		{"viewer reaches viewer", "viewer", "viewer", http.StatusOK},
+		{"admin reaches operator", "admin", "operator", http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			user := &simpleauth.User{Sub: "u1"}
+			s := newTestService(&fakeClient{verifyOK: map[string]*simpleauth.User{"good": user}})
+			s.SetTenantResolver(fixedResolver{claim: TenantClaim{TenantID: "t1", Role: tc.userRole}})
+
+			stack := s.RequireSession(s.RequireRole(tc.needRole)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})))
+
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			r.AddCookie(&http.Cookie{Name: "mqc_session", Value: "good"})
+			rec := httptest.NewRecorder()
+			stack.ServeHTTP(rec, r)
+			if rec.Code != tc.want {
+				t.Errorf("status = %d, want %d", rec.Code, tc.want)
+			}
+		})
 	}
 }
