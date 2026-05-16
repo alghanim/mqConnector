@@ -276,6 +276,48 @@ components:
         per_page: { type: integer }
         total: { type: integer }
 
+    Tenant:
+      type: object
+      required: [slug, name]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string, description: "URL-safe handle. Unique." }
+        name: { type: string }
+        status:
+          type: string
+          enum: [active, suspended, disabled]
+          default: active
+        max_pipelines: { type: integer, description: "0 = unlimited" }
+        max_msgs_per_minute: { type: integer, description: "0 = unlimited" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Role:
+      type: string
+      enum: [viewer, operator, admin, owner]
+      description: |
+        Tenant-scoped role. Order weakest→strongest:
+        viewer < operator < admin < owner.
+
+    Membership:
+      type: object
+      required: [tenant_id, user_sub, role]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        user_sub: { type: string, description: "JWT sub" }
+        username: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TenantMembership:
+      type: object
+      description: "What GET /api/v1/tenants returns — pairs a tenant with the caller's role."
+      properties:
+        tenant: { $ref: '#/components/schemas/Tenant' }
+        role: { $ref: '#/components/schemas/Role' }
+        is_active: { type: boolean, description: "True for the caller's active tenant." }
+
 # -----------------------------------------------------------------------------
 # Paths
 # -----------------------------------------------------------------------------
@@ -841,6 +883,148 @@ paths:
                       items:
                         type: array
                         items: { $ref: '#/components/schemas/AuditEntry' }
+
+  /api/v1/tenants:
+    get:
+      tags: [tenants]
+      summary: List the caller's own tenant memberships.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Memberships.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TenantMembership' }
+    post:
+      tags: [tenants]
+      summary: Create a new tenant. System-admin only.
+      description: |
+        Only the owner of the seeded "default" tenant can create new
+        tenants. The creator is auto-added as owner of the new tenant.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Tenant' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tenant' }
+        '403':
+          description: Caller is not the system admin.
+
+  /api/v1/tenants/{id}:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      tags: [tenants]
+      summary: Get a tenant. Caller must be a member.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Tenant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tenant' }
+        '404':
+          description: Not found or caller is not a member.
+    put:
+      tags: [tenants]
+      summary: Update a tenant. Owner only.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Tenant' }
+      responses:
+        '200': { description: Updated. }
+        '403': { description: Caller is not an owner of this tenant. }
+    delete:
+      tags: [tenants]
+      summary: Delete a tenant. Owner only. Refuses the default tenant.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Deleted. }
+        '400': { description: Refused (e.g. attempting to delete the default tenant). }
+        '403': { description: Caller is not an owner. }
+
+  /api/v1/tenants/{id}/switch:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    post:
+      tags: [tenants]
+      summary: Set the mqc_active_tenant cookie so subsequent requests resolve into {id}.
+      description: |
+        Used by the browser tenant switcher. SDK callers should prefer
+        the X-Tenant-Id header instead — it's stateless and doesn't
+        require cookie support.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Cookie set.
+        '403':
+          description: Caller is not a member of {id}.
+
+  /api/v1/tenants/{id}/members:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      tags: [tenants]
+      summary: List members of a tenant. Owner only.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Members.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Membership' }
+        '403': { description: Caller is not an owner. }
+    post:
+      tags: [tenants]
+      summary: Upsert a member (create or change role). Owner only.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_sub, role]
+              properties:
+                user_sub: { type: string, description: "JWT sub of the user to add." }
+                username: { type: string, description: "Display name." }
+                role: { $ref: '#/components/schemas/Role' }
+      responses:
+        '200':
+          description: Upserted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Membership' }
+
+  /api/v1/tenants/{id}/members/{user_sub}:
+    parameters:
+      - $ref: '#/components/parameters/pathID'
+      - in: path
+        name: user_sub
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [tenants]
+      summary: Remove a member. Owner only. Refuses removing the last owner.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Removed. }
+        '400': { description: Refused (e.g. last owner). }
+        '403': { description: Caller is not an owner. }
+        '404': { description: Membership not found. }
 
   /api/v1/bridge/publish/{connectionId}:
     parameters:
