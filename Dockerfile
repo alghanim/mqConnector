@@ -31,6 +31,12 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 FROM golang:1.25-alpine AS build
 
+# go mod download invokes git when a `replace` directive can't be
+# satisfied locally (the fallback path in CI when no simpleauth-sdk
+# build-context is supplied). Alpine ships without git, so install it
+# defensively — keeps the layer tiny and means the fetch path works.
+RUN apk add --no-cache git
+
 WORKDIR /src
 
 # The SimpleAuth Go SDK is consumed via a `replace` directive that points at

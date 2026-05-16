@@ -92,24 +92,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # SimpleAuth SDK is consumed via additional_contexts in compose, but
-      # a plain `docker build` needs the sibling tree too. Clone the
-      # public mirror at the SDK's go.mod module path so the COPY in the
-      # Dockerfile resolves.
-      - name: Fetch SimpleAuth SDK as build context
+      # SimpleAuth SDK is consumed in development via additional_contexts
+      # in docker-compose.yml; for the CI build we fetch the public mirror
+      # and point the Dockerfile's `simpleauth-sdk` build-context at
+      # `sdk/go` so the COPY + go.mod replace directive resolve cleanly.
+      - name: Fetch SimpleAuth SDK
         run: |
-          mkdir -p ../SimpleAuth-sdk
-          # In a real deployment this is a tagged release. Skip cleanly
-          # if the public repo isn't reachable — the dockerfile falls
-          # back to stripping the replace directive in that case.
-          true
+          git clone --depth 1 https://github.com/bodaay/SimpleAuth.git /tmp/SimpleAuth
+          test -f /tmp/SimpleAuth/sdk/go/go.mod
 
       - uses: docker/setup-buildx-action@v3
 
       - name: Build mqconnector image
         run: |
           docker buildx build \
-            --build-context simpleauth-sdk=./internal \
+            --build-context simpleauth-sdk=/tmp/SimpleAuth/sdk/go \
             -t mqconnector:ci \
             --load \
             .

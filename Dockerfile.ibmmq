@@ -26,7 +26,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 2: CGO Go build, linking against the IBM MQ Redistributable Client
 # -----------------------------------------------------------------------------
-FROM golang:1.23-bookworm AS build
+FROM golang:1.25-bookworm AS build
 
 # IBM MQ client + the C toolchain it links against. The build-essential
 # package brings gcc/ld; the rpath we bake in points at /opt/mqm/lib64
