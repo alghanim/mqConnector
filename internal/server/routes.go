@@ -143,6 +143,7 @@ func (s *Server) routes() http.Handler {
 			r.Put("/{id}/routing-rules", s.handleReplaceRoutingRules)
 		})
 		r.Post("/api/v1/reload", s.handleReload)
+		r.Post("/api/v1/pipelines/{id}/replay", s.handleReplayPipeline)
 
 		r.Route("/api/v1/dlq", func(r chi.Router) {
 			r.Get("/", s.handleListDLQ)
