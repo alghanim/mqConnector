@@ -30,6 +30,15 @@ type Connection struct {
 	TLSCertFile           string `json:"tls_cert_file,omitempty"`
 	TLSKeyFile            string `json:"tls_key_file,omitempty"`
 	TLSInsecureSkipVerify bool   `json:"tls_insecure_skip_verify,omitempty"`
+	// MQTT / NATS / AMQP 1.0 — see migration 0009.
+	// ClientID is used by MQTT (must be unique per broker) and AMQP
+	// 1.0 (link/container name). NATS uses StreamName + ConsumerName
+	// for JetStream subscriptions. QoS is the MQTT delivery
+	// guarantee (0=at-most-once, 1=at-least-once, 2=exactly-once).
+	ClientID     string `json:"client_id,omitempty"`
+	StreamName   string `json:"stream_name,omitempty"`
+	ConsumerName string `json:"consumer_name,omitempty"`
+	QoS          int    `json:"qos,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

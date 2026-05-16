@@ -85,7 +85,13 @@ export const api = {
 
 // --- Domain types ---------------------------------------------------------
 
-export type ConnectionType = 'ibm' | 'rabbitmq' | 'kafka';
+export type ConnectionType =
+  | 'ibm'
+  | 'rabbitmq'
+  | 'kafka'
+  | 'mqtt'
+  | 'nats'
+  | 'amqp10';
 
 export interface Connection {
   id?: string;
@@ -100,6 +106,16 @@ export interface Connection {
   url?: string;
   brokers?: string;
   topic?: string;
+  // Phase 22 — MQTT / NATS / AMQP 1.0
+  client_id?: string;
+  stream_name?: string;
+  consumer_name?: string;
+  qos?: number;
+  // Broker TLS (Phase 17)
+  tls_ca_file?: string;
+  tls_cert_file?: string;
+  tls_key_file?: string;
+  tls_insecure_skip_verify?: boolean;
   created_at?: string;
   updated_at?: string;
 }

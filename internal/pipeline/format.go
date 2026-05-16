@@ -16,9 +16,10 @@ import (
 type Format string
 
 const (
-	FormatJSON Format = "json"
-	FormatXML  Format = "xml"
-	// FormatBytes is the catch-all when neither JSON nor XML matched. Messages
+	FormatJSON     Format = "json"
+	FormatXML      Format = "xml"
+	FormatProtobuf Format = "protobuf"
+	// FormatBytes is the catch-all when no specific format matched. Messages
 	// in this format pass through stages largely unchanged.
 	FormatBytes Format = "bytes"
 )

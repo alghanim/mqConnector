@@ -312,6 +312,25 @@ var migrations = []string{
 	);
 	CREATE INDEX IF NOT EXISTS idx_webhooks_tenant ON webhooks(tenant_id);
 	`,
+	// 0009 — broker-specific config fields shared across MQTT, NATS,
+	// AMQP 1.0. Adding once means one migration covers all three new
+	// connector types instead of three back-to-back column additions.
+	//
+	// client_id     MQTT + AMQP 1.0 (per-client identity).
+	// stream_name   NATS JetStream — the stream a consumer is bound to.
+	// consumer_name NATS JetStream — durable consumer name.
+	// qos           MQTT delivery quality of service (0|1|2). 0 by
+	//                 default. Ignored by the other connectors.
+	//
+	// Existing columns reused: url (all three), queue_name → used as
+	// MQTT topic / NATS subject / AMQP address, username/password,
+	// the tls_* set from migration 0006.
+	`
+	ALTER TABLE connections ADD COLUMN client_id     TEXT NOT NULL DEFAULT '';
+	ALTER TABLE connections ADD COLUMN stream_name   TEXT NOT NULL DEFAULT '';
+	ALTER TABLE connections ADD COLUMN consumer_name TEXT NOT NULL DEFAULT '';
+	ALTER TABLE connections ADD COLUMN qos           INTEGER NOT NULL DEFAULT 0;
+	`,
 }
 
 func migrate(db *sql.DB) error {

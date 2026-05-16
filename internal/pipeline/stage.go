@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"mqConnector/internal/storage"
 )
@@ -43,8 +44,16 @@ type FilterConfig struct {
 }
 
 // TranslateConfig is the JSON payload for a `translate` stage.
+//
+// SchemaID + ProtoMessage are only consulted when OutputFormat is
+// "protobuf" or when the incoming format is "protobuf". The schema
+// row's SchemaType must be "protobuf" and its Content must hold a
+// base64-encoded FileDescriptorSet (output of
+// `protoc --descriptor_set_out=...`).
 type TranslateConfig struct {
-	OutputFormat string `json:"output_format"` // "json"|"xml"|"same"
+	OutputFormat string `json:"output_format"` // "json" | "xml" | "protobuf" | "same"
+	SchemaID     string `json:"schema_id,omitempty"`
+	ProtoMessage string `json:"proto_message,omitempty"` // FQN, e.g. "acme.orders.Order"
 }
 
 // RouteConfig is the JSON payload for a `route` stage. The stage holds the
@@ -61,10 +70,15 @@ type ScriptConfig struct {
 }
 
 // ValidateConfig is the JSON payload for a `validate` stage.
+//
+// ProtoMessage is the fully-qualified message name when SchemaType is
+// "protobuf" (e.g. "acme.orders.Order"). The schema's stored Content
+// in that case is the base64-encoded FileDescriptorSet.
 type ValidateConfig struct {
-	SchemaID   string `json:"schema_id"`
-	SchemaType string `json:"schema_type"` // json_schema | xsd
-	Content    string `json:"content"`
+	SchemaID     string `json:"schema_id"`
+	SchemaType   string `json:"schema_type"` // json_schema | xsd | protobuf
+	Content      string `json:"content"`
+	ProtoMessage string `json:"proto_message,omitempty"`
 }
 
 // BuildContext bundles every input BuildStages needs to materialise stages
@@ -110,7 +124,31 @@ func Build(ctx BuildContext) ([]Stage, error) {
 			if cfg.OutputFormat == "" {
 				cfg.OutputFormat = ctx.Pipeline.OutputFormat
 			}
-			stages = append(stages, &TranslateStage{Target: Format(cfg.OutputFormat)})
+			// Optional protobuf schema. Operators set SchemaID +
+			// ProtoMessage on the stage config when either side of the
+			// translation is protobuf. Loading is lazy enough that a
+			// JSON↔XML stage with no schema doesn't pay the cost.
+			var proto *ProtoSchema
+			if cfg.SchemaID != "" {
+				schema := ctx.Schemas[cfg.SchemaID]
+				if schema == nil {
+					return nil, fmt.Errorf("translate stage references schema %q but it is not loaded", cfg.SchemaID)
+				}
+				if !strings.EqualFold(schema.SchemaType, "protobuf") &&
+					!strings.EqualFold(schema.SchemaType, "proto") {
+					return nil, fmt.Errorf("translate stage's schema %q is %q, expected protobuf",
+						cfg.SchemaID, schema.SchemaType)
+				}
+				ps, err := LoadProtoSchema(schema.Content, cfg.ProtoMessage)
+				if err != nil {
+					return nil, fmt.Errorf("translate stage: load proto schema: %w", err)
+				}
+				proto = ps
+			}
+			stages = append(stages, &TranslateStage{
+				Target: Format(cfg.OutputFormat),
+				Proto:  proto,
+			})
 		case "route":
 			stages = append(stages, &RouteStage{Rules: ctx.RoutingRules})
 		case "script":
@@ -138,14 +176,16 @@ func Build(ctx BuildContext) ([]Stage, error) {
 					return nil, fmt.Errorf("validate stage references schema %q but it is not loaded", schemaID)
 				}
 				stages = append(stages, &ValidateStage{
-					SchemaType: schema.SchemaType,
-					Content:    schema.Content,
+					SchemaType:   schema.SchemaType,
+					Content:      schema.Content,
+					ProtoMessage: cfg.ProtoMessage,
 				})
 				continue
 			}
 			stages = append(stages, &ValidateStage{
-				SchemaType: cfg.SchemaType,
-				Content:    cfg.Content,
+				SchemaType:   cfg.SchemaType,
+				Content:      cfg.Content,
+				ProtoMessage: cfg.ProtoMessage,
 			})
 		default:
 			return nil, fmt.Errorf("unknown stage type %q", row.StageType)

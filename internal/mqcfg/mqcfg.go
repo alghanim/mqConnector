@@ -27,6 +27,14 @@ func From(c *storage.Connection) mq.Config {
 		QueueName:    c.QueueName,
 		URL:          c.URL,
 		Topic:        c.Topic,
+		// MQTT / NATS / AMQP 1.0 — see storage migration 0009.
+		// ClientID / QoS go to MQTT + AMQP 1.0; StreamName /
+		// ConsumerName to NATS JetStream. Each connector reads only
+		// the fields it cares about; the rest are no-ops.
+		ClientID:     c.ClientID,
+		QoS:          c.QoS,
+		StreamName:   c.StreamName,
+		ConsumerName: c.ConsumerName,
 		TLS: mq.TLSConfig{
 			CAFile:             c.TLSCAFile,
 			CertFile:           c.TLSCertFile,

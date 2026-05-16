@@ -61,7 +61,10 @@
   const typeOptions = [
     { value: 'rabbitmq', label: 'RabbitMQ' },
     { value: 'kafka', label: 'Kafka' },
-    { value: 'ibm', label: 'IBM MQ' }
+    { value: 'ibm', label: 'IBM MQ' },
+    { value: 'mqtt', label: 'MQTT' },
+    { value: 'nats', label: 'NATS / JetStream' },
+    { value: 'amqp10', label: 'AMQP 1.0' }
   ];
   $: filterOptions = [
     { value: '', label: t($locale, 'connections.allTypes') ?? 'All types' },
@@ -248,6 +251,34 @@
       {:else if editing.type === 'kafka'}
         <Input bind:value={editing.brokers} label={t($locale, 'connections.brokers')} />
         <Input bind:value={editing.topic} label={t($locale, 'connections.topic')} />
+      {:else if editing.type === 'mqtt'}
+        <!-- MQTT: URL scheme picks TLS (mqtt:// vs ssl://). Topic
+             can use + and # wildcards on subscribe. ClientID must
+             be unique per broker — leave blank to auto-generate. -->
+        <Input bind:value={editing.url} label={t($locale, 'connections.mqttUrl')} placeholder="tcp://host:1883" />
+        <Input bind:value={editing.topic} label={t($locale, 'connections.topic')} placeholder="sensors/temp" />
+        <Input bind:value={editing.client_id} label={t($locale, 'connections.clientId')} placeholder="auto-generated" />
+        <Input bind:value={editing.username} label={t($locale, 'connections.username')} />
+        <Input bind:value={editing.password} type="password" label={t($locale, 'connections.password')} />
+        <Input bind:value={editing.qos} type="number" label={t($locale, 'connections.qos')} />
+      {:else if editing.type === 'nats'}
+        <!-- NATS: leaving stream + consumer blank → core NATS (fire-
+             and-forget). Setting both → JetStream (durable). Subject
+             goes in Topic. -->
+        <Input bind:value={editing.url} label={t($locale, 'connections.natsUrl')} placeholder="nats://host:4222" />
+        <Input bind:value={editing.topic} label={t($locale, 'connections.subject')} placeholder="events.>" />
+        <Input bind:value={editing.stream_name} label={t($locale, 'connections.streamName')} placeholder={t($locale, 'connections.streamName.placeholder')} />
+        <Input bind:value={editing.consumer_name} label={t($locale, 'connections.consumerName')} placeholder={t($locale, 'connections.consumerName.placeholder')} />
+        <Input bind:value={editing.username} label={t($locale, 'connections.username')} />
+        <Input bind:value={editing.password} type="password" label={t($locale, 'connections.password')} />
+      {:else if editing.type === 'amqp10'}
+        <!-- AMQP 1.0 (the standard, not RabbitMQ's 0.9.1). Covers
+             Azure Service Bus, ActiveMQ Artemis, Solace. -->
+        <Input bind:value={editing.url} label={t($locale, 'connections.amqp10Url')} placeholder="amqps://host:5671" />
+        <Input bind:value={editing.topic} label={t($locale, 'connections.address')} placeholder="queue-or-topic-name" />
+        <Input bind:value={editing.client_id} label={t($locale, 'connections.containerId')} placeholder="mqconnector" />
+        <Input bind:value={editing.username} label={t($locale, 'connections.username')} />
+        <Input bind:value={editing.password} type="password" label={t($locale, 'connections.password')} />
       {/if}
     </div>
     <div class="flex gap-2 justify-end mt-5">

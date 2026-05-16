@@ -17,6 +17,9 @@ const (
 	TypeIBM      Type = "ibm"
 	TypeRabbitMQ Type = "rabbitmq"
 	TypeKafka    Type = "kafka"
+	TypeMQTT     Type = "mqtt"
+	TypeNATS     Type = "nats"
+	TypeAMQP10   Type = "amqp10"
 )
 
 // Sentinel errors returned across the package.
@@ -34,10 +37,19 @@ func ParseType(s string) (Type, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "ibm", "ibmmq", "ibm_mq":
 		return TypeIBM, nil
+	// "amqp" is intentionally kept on RabbitMQ for backward compat —
+	// AMQP 1.0 is a *different protocol* despite the shared name, so
+	// we use explicit "amqp10" / "amqp1.0" aliases for it below.
 	case "rabbit", "rabbitmq", "amqp":
 		return TypeRabbitMQ, nil
 	case "kafka":
 		return TypeKafka, nil
+	case "mqtt":
+		return TypeMQTT, nil
+	case "nats", "jetstream":
+		return TypeNATS, nil
+	case "amqp10", "amqp1", "amqp1.0":
+		return TypeAMQP10, nil
 	default:
 		return "", fmt.Errorf("mq: unknown type %q", s)
 	}
@@ -57,12 +69,20 @@ type Config struct {
 	QueueName     string
 	IBMRecvBuffer int // max bytes per receive (defaults to 4MB if 0)
 
-	// RabbitMQ
-	URL string // amqp[s]://user:pass@host/
+	// RabbitMQ / NATS / MQTT / AMQP 1.0
+	URL string // amqp[s]://user:pass@host/ | nats://… | tcp://… | amqps://…
 
 	// Kafka
 	Brokers []string
 	Topic   string
+
+	// MQTT
+	ClientID string // unique per broker; auto-generated if blank
+	QoS      int    // 0 | 1 | 2 — defaults to 0
+
+	// NATS / JetStream
+	StreamName   string // bound stream for JetStream subscribe
+	ConsumerName string // durable consumer (recommended)
 
 	// TLS / mTLS to the broker. TLS is enabled if any of the
 	// CA/Cert/Key paths are set, or if InsecureSkipVerify is true (the
@@ -111,6 +131,12 @@ func New(cfg Config) (Connector, error) {
 		return newKafka(cfg), nil
 	case TypeIBM:
 		return newIBM(cfg)
+	case TypeMQTT:
+		return newMQTT(cfg), nil
+	case TypeNATS:
+		return newNATS(cfg), nil
+	case TypeAMQP10:
+		return newAMQP10(cfg), nil
 	default:
 		return nil, fmt.Errorf("mq: unknown type %q", cfg.Type)
 	}

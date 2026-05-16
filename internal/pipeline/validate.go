@@ -8,17 +8,23 @@ import (
 	"strings"
 )
 
-// ValidateStage performs lightweight structural validation. Two schema types
-// are supported:
+// ValidateStage performs lightweight structural validation. Three schema
+// types are supported:
 //
 //   - "json_schema" — a tiny subset of JSON Schema (type, required, properties)
 //   - "xsd"         — a newline-separated list of required element names
+//   - "protobuf"    — Content is a base64-encoded FileDescriptorSet,
+//                     ProtoMessage is the fully-qualified message name
+//                     (e.g. "acme.orders.Order"). The stage attempts a
+//                     proto.Unmarshal into a dynamic message; a parse
+//                     failure rejects the message.
 //
 // Full JSON Schema and XSD validation are explicitly out of scope; this stage
 // is for "fast-reject on missing required fields" cases.
 type ValidateStage struct {
-	SchemaType string
-	Content    string
+	SchemaType   string
+	Content      string
+	ProtoMessage string // FQN, e.g. "acme.orders.Order" — required for protobuf
 }
 
 func (s *ValidateStage) Name() string { return "validate" }
@@ -40,6 +46,19 @@ func (s *ValidateStage) Execute(_ context.Context, message []byte, format Format
 			return nil, format, nil, fmt.Errorf("validate: xsd requires XML messages")
 		}
 		if err := validateXMLStructure(message, s.Content); err != nil {
+			return nil, format, nil, fmt.Errorf("validate: %w", err)
+		}
+	case "protobuf", "proto":
+		// Protobuf validation: try to parse the bytes against the
+		// descriptor. Format detection isn't strict here because
+		// protobuf bytes can look like raw bytes — we trust the
+		// operator's declaration. A parse failure rejects the
+		// message; the pipeline routes it to DLQ as expected.
+		schema, err := LoadProtoSchema(s.Content, s.ProtoMessage)
+		if err != nil {
+			return nil, format, nil, fmt.Errorf("validate: %w", err)
+		}
+		if err := schema.Validate(message); err != nil {
 			return nil, format, nil, fmt.Errorf("validate: %w", err)
 		}
 	default:

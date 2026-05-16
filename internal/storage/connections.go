@@ -79,11 +79,13 @@ func (r *ConnectionRepo) Create(ctx context.Context, tenantID string, c *Connect
 		INSERT INTO connections (id, tenant_id, name, type, queue_manager, conn_name, channel,
 		                         username, password, queue_name, url, brokers, topic,
 		                         tls_ca_file, tls_cert_file, tls_key_file, tls_insecure_skip_verify,
+		                         client_id, stream_name, consumer_name, qos,
 		                         created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, tenantID, c.Name, c.Type, c.QueueManager, c.ConnName, c.Channel,
 		c.Username, pw, c.QueueName, c.URL, c.Brokers, c.Topic,
 		c.TLSCAFile, c.TLSCertFile, c.TLSKeyFile, boolToInt(c.TLSInsecureSkipVerify),
+		c.ClientID, c.StreamName, c.ConsumerName, c.QoS,
 		c.CreatedAt, c.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert connection: %w", err)
@@ -107,11 +109,14 @@ func (r *ConnectionRepo) Update(ctx context.Context, tenantID string, c *Connect
 		UPDATE connections SET name=?, type=?, queue_manager=?, conn_name=?, channel=?,
 		                       username=?, password=?, queue_name=?, url=?, brokers=?,
 		                       topic=?, tls_ca_file=?, tls_cert_file=?, tls_key_file=?,
-		                       tls_insecure_skip_verify=?, updated_at=?
+		                       tls_insecure_skip_verify=?,
+		                       client_id=?, stream_name=?, consumer_name=?, qos=?,
+		                       updated_at=?
 		WHERE id=? AND tenant_id=?`,
 		c.Name, c.Type, c.QueueManager, c.ConnName, c.Channel,
 		c.Username, pw, c.QueueName, c.URL, c.Brokers, c.Topic,
 		c.TLSCAFile, c.TLSCertFile, c.TLSKeyFile, boolToInt(c.TLSInsecureSkipVerify),
+		c.ClientID, c.StreamName, c.ConsumerName, c.QoS,
 		c.UpdatedAt, c.ID, tenantID)
 	if err != nil {
 		return fmt.Errorf("update connection: %w", err)
@@ -147,6 +152,7 @@ func (r *ConnectionRepo) Get(ctx context.Context, tenantID, id string) (*Connect
 		SELECT id, tenant_id, name, type, queue_manager, conn_name, channel, username, password,
 		       queue_name, url, brokers, topic,
 		       tls_ca_file, tls_cert_file, tls_key_file, tls_insecure_skip_verify,
+		       client_id, stream_name, consumer_name, qos,
 		       created_at, updated_at
 		FROM connections WHERE id=? AND tenant_id=?`, id, tenantID)
 	return r.scanConnection(row)
@@ -161,6 +167,7 @@ func (r *ConnectionRepo) GetUnsafe(ctx context.Context, id string) (*Connection,
 		SELECT id, tenant_id, name, type, queue_manager, conn_name, channel, username, password,
 		       queue_name, url, brokers, topic,
 		       tls_ca_file, tls_cert_file, tls_key_file, tls_insecure_skip_verify,
+		       client_id, stream_name, consumer_name, qos,
 		       created_at, updated_at
 		FROM connections WHERE id=?`, id)
 	return r.scanConnection(row)
@@ -174,6 +181,7 @@ func (r *ConnectionRepo) List(ctx context.Context, tenantID string) ([]*Connecti
 		SELECT id, tenant_id, name, type, queue_manager, conn_name, channel, username, password,
 		       queue_name, url, brokers, topic,
 		       tls_ca_file, tls_cert_file, tls_key_file, tls_insecure_skip_verify,
+		       client_id, stream_name, consumer_name, qos,
 		       created_at, updated_at
 		FROM connections WHERE tenant_id=? ORDER BY name`, tenantID)
 	if err != nil {
@@ -198,6 +206,7 @@ func (r *ConnectionRepo) ListAll(ctx context.Context) ([]*Connection, error) {
 		SELECT id, tenant_id, name, type, queue_manager, conn_name, channel, username, password,
 		       queue_name, url, brokers, topic,
 		       tls_ca_file, tls_cert_file, tls_key_file, tls_insecure_skip_verify,
+		       client_id, stream_name, consumer_name, qos,
 		       created_at, updated_at
 		FROM connections ORDER BY tenant_id, name`)
 	if err != nil {
@@ -296,6 +305,7 @@ func (r *ConnectionRepo) scanConnection(s scanner) (*Connection, error) {
 	err := s.Scan(&c.ID, &c.TenantID, &c.Name, &c.Type, &c.QueueManager, &c.ConnName, &c.Channel,
 		&c.Username, &c.Password, &c.QueueName, &c.URL, &c.Brokers, &c.Topic,
 		&c.TLSCAFile, &c.TLSCertFile, &c.TLSKeyFile, &skip,
+		&c.ClientID, &c.StreamName, &c.ConsumerName, &c.QoS,
 		&c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound

@@ -11,6 +11,15 @@ import (
 	"mqConnector/internal/storage"
 )
 
+// connectionDTO is the wire-format the HTTP handler accepts /
+// emits. Field set matches storage.Connection 1:1; new broker
+// support is added here AND in dtoToConnection below.
+//
+// decodeJSON sets DisallowUnknownFields so any field not listed
+// here causes a 400. That's deliberate: typos in the API client
+// (wrong field name, stale schema) surface loudly instead of
+// silently dropping data. The cost is that every new column needs
+// a parallel DTO field — a real but acceptable tax.
 type connectionDTO struct {
 	ID           string `json:"id,omitempty"`
 	Name         string `json:"name"`
@@ -24,6 +33,21 @@ type connectionDTO struct {
 	URL          string `json:"url,omitempty"`
 	Brokers      string `json:"brokers,omitempty"`
 	Topic        string `json:"topic,omitempty"`
+	// Phase 17 — broker TLS / mTLS (paths to PEM files).
+	TLSCAFile             string `json:"tls_ca_file,omitempty"`
+	TLSCertFile           string `json:"tls_cert_file,omitempty"`
+	TLSKeyFile            string `json:"tls_key_file,omitempty"`
+	TLSInsecureSkipVerify bool   `json:"tls_insecure_skip_verify,omitempty"`
+	// Phase 22 — MQTT / NATS / AMQP 1.0 specific fields.
+	ClientID     string `json:"client_id,omitempty"`
+	StreamName   string `json:"stream_name,omitempty"`
+	ConsumerName string `json:"consumer_name,omitempty"`
+	QoS          int    `json:"qos,omitempty"`
+	// Read-only echoes — the handler returns these from storage; the
+	// DTO includes them so a round-trip GET → edit → PUT doesn't drop
+	// timestamps that callers might pin to.
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 func (s *Server) handleListConnections(w http.ResponseWriter, r *http.Request) {
@@ -129,5 +153,13 @@ func dtoToConnection(d connectionDTO) *storage.Connection {
 		URL:          d.URL,
 		Brokers:      d.Brokers,
 		Topic:        d.Topic,
+		TLSCAFile:             d.TLSCAFile,
+		TLSCertFile:           d.TLSCertFile,
+		TLSKeyFile:            d.TLSKeyFile,
+		TLSInsecureSkipVerify: d.TLSInsecureSkipVerify,
+		ClientID:     d.ClientID,
+		StreamName:   d.StreamName,
+		ConsumerName: d.ConsumerName,
+		QoS:          d.QoS,
 	}
 }
