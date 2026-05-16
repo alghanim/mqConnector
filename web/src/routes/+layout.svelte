@@ -58,6 +58,9 @@
     AlertOctagon,
     Activity,
     Users2,
+    KeyRound as KeyIcon,
+    Webhook as WebhookIcon,
+    SlidersHorizontal,
     Search,
     BellDot,
     KeyRound
@@ -181,7 +184,12 @@
     {
       id: 'admin',
       label: t($locale, 'nav.section.administration'),
-      items: [{ href: '/tenants', label: t($locale, 'nav.tenants'), icon: Users2 }] as NavItem[]
+      items: [
+        { href: '/tenants', label: t($locale, 'nav.tenants'), icon: Users2 },
+        { href: '/tokens', label: t($locale, 'nav.tokens'), icon: KeyIcon },
+        { href: '/webhooks', label: t($locale, 'nav.webhooks'), icon: WebhookIcon },
+        { href: '/settings', label: t($locale, 'nav.settings'), icon: SlidersHorizontal }
+      ] as NavItem[]
     }
   ] satisfies Section[];
 

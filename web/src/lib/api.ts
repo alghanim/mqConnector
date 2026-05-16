@@ -264,3 +264,65 @@ export interface TenantMembership {
   role: Role;
   is_active: boolean;
 }
+
+// ─── api tokens ──────────────────────────────────────────────────
+
+export interface APIToken {
+  id: string;
+  tenant_id: string;
+  user_sub: string;
+  name: string;
+  prefix: string;        // first 8 chars of the user-visible secret
+  role: Role;
+  created_at: string;
+  expires_at?: string | null;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+}
+
+// Response from POST /api/v1/tokens — `secret` is shown exactly once.
+export interface APITokenCreateResponse {
+  token: APIToken;
+  secret: string;
+  warning: string;
+}
+
+// ─── webhooks ────────────────────────────────────────────────────
+
+export interface Webhook {
+  id: string;
+  tenant_id: string;
+  name: string;
+  url: string;
+  secret: string;        // returned on list — the receiver needs it to verify HMAC
+  events: string;        // "*" or "type1,type2"
+  enabled: boolean;
+  last_status: number;
+  last_error?: string;
+  last_attempt_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── config bundle (import/export) ───────────────────────────────
+
+// Shape returned from GET /api/v1/config/export and accepted by the
+// import endpoint. The UI doesn't need to round-trip every field —
+// we display a summary on import dry-run and let the operator
+// confirm or cancel.
+export interface ConfigBundle {
+  version: number;
+  exported_at: string;
+  tenant_slug: string;
+  connections: Array<{ name: string; type: string }>;
+  schemas?: Array<{ name: string }>;
+  scripts?: Array<{ name: string }>;
+  pipelines: Array<{ name: string; source_connection: string; dest_connection: string }>;
+}
+
+export interface ConfigImportResult {
+  status: string;
+  connections: number;
+  pipelines: number;
+  dry_run?: boolean;
+}
