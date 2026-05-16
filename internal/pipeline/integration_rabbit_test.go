@@ -148,17 +148,12 @@ func TestIntegration_RabbitMQ_FilterRoundTrip(t *testing.T) {
 			t.Fatalf("publish: %v", err)
 		}
 	}
-	// Drain dst. The strict success bar for the wire-format check is "at
-	// least one message arrives with `secret` stripped" — enough to catch
-	// AMQP property / encoding regressions that the in-memory connector
-	// can't see. Counting all three is sensitive to a multi-message
-	// throughput flake whose root cause isn't on this phase's critical
-	// path (TODO: investigate the pipeline executor's per-message latency
-	// under amqp091's default prefetch).
+	// Drain dst. Expect all three messages: the rabbit connector now
+	// uses a single long-lived consumer with manual ack, so messages
+	// flow in order at the rate the executor processes them.
 	got := 0
 	deadline := time.After(15 * time.Second)
-loop:
-	for {
+	for got < 3 {
 		select {
 		case d, ok := <-dsts:
 			if !ok {
@@ -169,15 +164,9 @@ loop:
 				t.Errorf("message %s still carries secret: %s", d.MessageId, body)
 			}
 			got++
-			if got >= 3 {
-				break loop
-			}
 		case <-deadline:
-			break loop
+			t.Fatalf("timed out waiting for messages; got %d/3", got)
 		}
-	}
-	if got < 1 {
-		t.Fatalf("no messages reached destination via real broker")
 	}
 	t.Logf("delivered %d/3 messages within the deadline", got)
 }

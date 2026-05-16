@@ -640,12 +640,28 @@ paths:
 
   /api/v1/dlq:
     get:
-      summary: List dead-letter entries.
+      summary: List dead-letter entries, with optional filters.
       tags: [dlq]
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: '#/components/parameters/queryPage'
         - $ref: '#/components/parameters/queryPerPage'
+        - in: query
+          name: pipeline_id
+          description: Exact pipeline ID match.
+          schema: { type: string, format: uuid }
+        - in: query
+          name: error
+          description: Case-insensitive substring match on error_reason.
+          schema: { type: string }
+        - in: query
+          name: since
+          description: RFC3339 lower bound on created_at (inclusive).
+          schema: { type: string, format: date-time }
+        - in: query
+          name: until
+          description: RFC3339 upper bound on created_at (exclusive).
+          schema: { type: string, format: date-time }
       responses:
         '200':
           description: Paginated DLQ entries.

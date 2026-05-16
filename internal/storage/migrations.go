@@ -132,6 +132,53 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_audit_actor   ON audit_log(actor);
 	CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_log(resource);
 	`,
+	// 0003 — multi-tenancy. Every domain row gets a tenant_id; existing
+	// rows are backfilled to the seeded "default" tenant so a single-
+	// tenant deploy keeps working without operator intervention.
+	`
+	CREATE TABLE IF NOT EXISTS tenants (
+		id          TEXT PRIMARY KEY,
+		slug        TEXT NOT NULL UNIQUE,           -- URL-safe handle
+		name        TEXT NOT NULL,
+		status      TEXT NOT NULL DEFAULT 'active'
+		            CHECK(status IN ('active','suspended','disabled')),
+		max_pipelines       INTEGER NOT NULL DEFAULT 0,  -- 0 = unlimited
+		max_msgs_per_minute INTEGER NOT NULL DEFAULT 0,  -- 0 = unlimited
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_tenants_slug ON tenants(slug);
+
+	-- Seed the "default" tenant up-front so the backfill below has
+	-- something to point at. Operators in a single-tenant deploy never
+	-- need to know this exists.
+	INSERT OR IGNORE INTO tenants (id, slug, name)
+	VALUES ('00000000-0000-0000-0000-000000000000', 'default', 'Default tenant');
+
+	-- Add tenant_id to every domain table. SQLite ALTER TABLE only
+	-- supports ADD COLUMN, which is what we need — every existing row
+	-- gets the seeded default tenant.
+	ALTER TABLE connections   ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
+	ALTER TABLE pipelines     ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
+	ALTER TABLE stages        ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
+	ALTER TABLE transforms    ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
+	ALTER TABLE routing_rules ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
+	ALTER TABLE scripts       ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
+	ALTER TABLE schemas       ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
+	ALTER TABLE dlq           ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
+	ALTER TABLE audit_log     ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
+
+	-- Tenant-scoped lookups dominate every list query.
+	CREATE INDEX IF NOT EXISTS idx_connections_tenant   ON connections(tenant_id);
+	CREATE INDEX IF NOT EXISTS idx_pipelines_tenant     ON pipelines(tenant_id);
+	CREATE INDEX IF NOT EXISTS idx_stages_tenant        ON stages(tenant_id);
+	CREATE INDEX IF NOT EXISTS idx_transforms_tenant    ON transforms(tenant_id);
+	CREATE INDEX IF NOT EXISTS idx_routing_rules_tenant ON routing_rules(tenant_id);
+	CREATE INDEX IF NOT EXISTS idx_scripts_tenant       ON scripts(tenant_id);
+	CREATE INDEX IF NOT EXISTS idx_schemas_tenant       ON schemas(tenant_id);
+	CREATE INDEX IF NOT EXISTS idx_dlq_tenant           ON dlq(tenant_id, created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_audit_tenant         ON audit_log(tenant_id, at DESC);
+	`,
 }
 
 func migrate(db *sql.DB) error {

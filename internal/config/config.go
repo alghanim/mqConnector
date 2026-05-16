@@ -26,6 +26,17 @@ type Config struct {
 	Pipeline   PipelineConfig   `yaml:"pipeline"`
 	Script     ScriptConfig     `yaml:"script"`
 	Leadership LeadershipConfig `yaml:"leadership"`
+	Audit      AuditConfig      `yaml:"audit"`
+}
+
+// AuditConfig controls the audit-log archival exporter. When ArchiveDir
+// is non-empty AND MaxAge > 0, the audit sweeper streams rows older
+// than MaxAge into per-day JSONL files under ArchiveDir, then deletes
+// them from the live table.
+type AuditConfig struct {
+	ArchiveDir    string        `yaml:"archive_dir"`
+	MaxAge        time.Duration `yaml:"max_age"`
+	SweepInterval time.Duration `yaml:"sweep_interval"`
 }
 
 // LeadershipConfig controls the multi-replica safety lease. When Enabled
@@ -167,6 +178,11 @@ func Default() Config {
 			Enabled: false,
 			ID:      "",
 			TTL:     30 * time.Second,
+		},
+		Audit: AuditConfig{
+			ArchiveDir:    "",                  // disabled by default
+			MaxAge:        7 * 24 * time.Hour,  // archive rows older than a week
+			SweepInterval: time.Hour,
 		},
 	}
 }

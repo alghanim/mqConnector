@@ -179,49 +179,95 @@ single-host procedure instead:
 
 ## High-availability constraints
 
-mqConnector is **single-instance by design** for the current release:
+mqConnector supports a **hot-warm** HA posture via an in-database
+leadership lease. Multiple replicas can point at the same SQLite file
+(over a shared network volume); only the lease-holder runs pipeline
+workers. The standbys serve the admin UI and read-only endpoints but
+stay idle on the source queues, so messages aren't double-consumed.
 
-- The pipeline Manager assumes it's the only consumer of each source
-  queue. Running two instances against the same queue will
-  double-consume messages.
-- The SQLite store is local — there is no clustering or replication.
+Enable it in config:
 
-Acceptable HA postures:
+```yaml
+leadership:
+  enabled: true
+  id: ""           # empty → hostname; set explicitly per replica in compose/k8s
+  ttl: "30s"       # how long a lease lives between renewals
+```
 
-1. **Hot-cold with shared storage** — two hosts share a network volume
-   carrying the SQLite file + TLS files. Only one runs `mqconnector`
-   at a time. Failover means: stop on host A, start on host B,
-   re-point DNS. Targets ≤ 1 min RTO.
-2. **Cold standby** — periodic backup restored to a stand-by host on
-   demand. RTO matches your backup cadence + restore time.
+Failover semantics:
 
-For genuine multi-active deployment, plan around:
-- Leader election for the pipeline Manager (etcd / pg advisory lock)
-- Sharding pipelines by ID across nodes
-- A shared store (Postgres or libsql) instead of file-local SQLite
+- Leader renews every `ttl/2`. A clean shutdown clears the lease so a
+  standby promotes within one tick.
+- A crashed leader's lease expires after `ttl`; standbys see the
+  expiry on their next tick and one promotes. Worst-case takeover
+  is `ttl + tick` ≈ `1.5 * ttl`.
+- The current leader is visible at `/api/health` and tracked in the
+  audit log via state-change events.
 
-That work is not in scope for the current release.
+Single-process deployments (the default — `leadership.enabled: false`)
+behave exactly as before: workers start at boot and run for the
+lifetime of the process.
+
+Constraints that still apply:
+
+- All replicas MUST point at the same SQLite file (shared NFS, EBS,
+  whatever). Without that, the lease they're competing on lives in
+  different files and you get split-brain. Use a single shared volume.
+- The store is still SQLite. WAL mode tolerates the read-side standby
+  traffic but writes serialise through the leader.
+- Pipelines are not yet sharded across leaders. Multi-active deployment
+  (where two replicas each own a subset of pipelines) is future work
+  and would require a partition key in the leadership table.
 
 ## Common operational tasks
 
 ### Rotate the master encryption key
 
-The pre-rotation state must be backed up. Then:
-
 ```sh
-# 1. snapshot current state
+# 1. snapshot current state (always)
 ./scripts/backup.sh
 
 # 2. generate the new key
 NEW_KEY=$(openssl rand -hex 32)
 
-# 3. read each connection, decrypt with old key, re-encrypt with new
-#    (no CLI yet — do this through the admin UI: Edit + Save each
-#    connection, which re-seals the password on write)
+# 3. stop the service so it doesn't fight the rotator for the SQLite lock
+sudo systemctl stop mqconnector
+
+# 4. dry-run to confirm the row count you expect
+mqconnector rotate-secrets --old-key "$OLD_KEY" --new-key "$NEW_KEY" --dry-run
+
+# 5. rotate for real
+mqconnector rotate-secrets --old-key "$OLD_KEY" --new-key "$NEW_KEY"
+
+# 6. update the service env (MQC_MASTER_KEY) and restart
+sudo systemctl set-environment MQC_MASTER_KEY="$NEW_KEY"
+sudo systemctl start mqconnector
 ```
 
-A built-in `mqconnector rotate-secrets` subcommand is on the roadmap.
-Until then the admin-UI loop is the official path.
+Edge cases:
+- First-time encryption (rows currently plaintext) — omit `--old-key`.
+- Removing encryption (return to plaintext) — omit `--new-key` and
+  unset `MQC_MASTER_KEY` before restart.
+
+### Audit-log archival
+
+Live `audit_log` rows are queryable via `/api/v1/audit`. To keep the
+table bounded and ship history to a SIEM, enable the archiver:
+
+```yaml
+audit:
+  archive_dir: /var/log/mqconnector/audit
+  max_age: "168h"          # archive rows older than 7 days
+  sweep_interval: "1h"
+```
+
+Each sweep streams matching rows into `audit-YYYY-MM-DD.jsonl` (one
+record per line, keyed by row `id`), fsyncs the file, then deletes the
+rows. A crash between fsync and DELETE re-archives the same rows on
+the next sweep — downstream consumers must deduplicate on `id`. Point
+your SIEM's file-input at `*.jsonl` in the archive dir.
+
+### Bulk-edit DLQ
 
 ### Bulk-edit DLQ
 

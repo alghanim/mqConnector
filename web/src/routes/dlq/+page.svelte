@@ -36,12 +36,25 @@
   async function refresh() {
     busy = true;
     try {
+      const params = new URLSearchParams({
+        page: String(pageNum),
+        per_page: String(perPage)
+      });
+      // Push the filter through to the server so pagination counts and
+      // matches reflect the WHOLE table, not just the current page. The
+      // client-side `filtered` is still derived from the loaded rows for
+      // visual immediacy when the user is mid-keystroke.
+      if (filterPipeline) params.set('pipeline_id', filterPipeline);
+      if (filterError) params.set('error', filterError);
+      const since = windowToSince(filterWindow);
+      if (since) params.set('since', since);
+
       const res = await api.get<{
         page: number;
         per_page: number;
         total: number;
         items: DLQEntry[];
-      }>(`/v1/dlq?page=${pageNum}&per_page=${perPage}`);
+      }>(`/v1/dlq?${params.toString()}`);
       entries = res.items ?? [];
       total = res.total ?? 0;
       error = '';
@@ -50,6 +63,14 @@
     } finally {
       busy = false;
     }
+  }
+
+  // Translates the UI's window selection into an RFC3339 lower-bound that
+  // the server understands. "all" → undefined (no bound applied).
+  function windowToSince(win: 'all' | '1h' | '24h' | '7d'): string | undefined {
+    if (win === 'all') return undefined;
+    const ms = win === '1h' ? 3600_000 : win === '24h' ? 86_400_000 : 7 * 86_400_000;
+    return new Date(Date.now() - ms).toISOString();
   }
 
   onMount(refresh);
@@ -95,6 +116,23 @@
     filterError = '';
     filterWindow = 'all';
   }
+
+  // Re-fetch when the user pauses typing. The reactive statement watches
+  // the four filter inputs together so any change schedules a single
+  // debounce window. Skipped during the initial refresh (busy=true) and
+  // during page navigation (we want pageNum changes to fire immediately).
+  let refetchTimer: ReturnType<typeof setTimeout> | undefined;
+  $: scheduleRefetch(filterPipeline, filterError, filterWindow);
+  function scheduleRefetch(_p: string, _e: string, _w: typeof filterWindow) {
+    if (refetchTimer) clearTimeout(refetchTimer);
+    refetchTimer = setTimeout(() => {
+      pageNum = 1;
+      refresh();
+    }, 250);
+  }
+  onDestroy(() => {
+    if (refetchTimer) clearTimeout(refetchTimer);
+  });
 
   // ─── Selection (bulk) ───────────────────────────────────────────
   let selected = new Set<string>();

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -11,10 +12,38 @@ import (
 	"mqConnector/internal/storage"
 )
 
+// handleListDLQ serves GET /api/v1/dlq with optional filters:
+//
+//	pipeline_id — exact match
+//	error       — case-insensitive substring of error_reason
+//	since       — RFC3339 lower bound on created_at
+//	until       — RFC3339 upper bound (exclusive) on created_at
+//	page, per_page — newest-first pagination
+//
+// Filter values that don't parse (e.g. malformed timestamps) are silently
+// ignored rather than 400'd — the UI is the primary caller and degraded
+// filtering is friendlier than a hard error on a typo.
 func (s *Server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
-	list, total, err := s.dlq.List(r.Context(), page, perPage)
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	perPage, _ := strconv.Atoi(q.Get("per_page"))
+
+	f := storage.DLQFilter{
+		PipelineID: q.Get("pipeline_id"),
+		Error:      q.Get("error"),
+	}
+	if v := q.Get("since"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			f.Since = &t
+		}
+	}
+	if v := q.Get("until"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			f.Until = &t
+		}
+	}
+
+	list, total, err := s.dlq.ListFiltered(r.Context(), f, page, perPage)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

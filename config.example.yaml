@@ -96,3 +96,13 @@ leadership:
   # your worst pause budget (GC, fsync stalls) but small enough that
   # takeover after a crashed leader is bounded.
   ttl: "30s"
+
+# Audit-log archival. When archive_dir is empty the archiver is a no-op
+# (audit_log stays queryable via /api/v1/audit but grows unbounded). When
+# set, the sweeper streams rows older than max_age into per-day JSONL
+# files under archive_dir, fsyncs each, then prunes the rows from the
+# live table. Downstream SIEMs should deduplicate on the row `id`.
+audit:
+  archive_dir: ""             # e.g. "/var/log/mqconnector/audit"
+  max_age: "168h"             # archive rows older than 7 days
+  sweep_interval: "1h"

@@ -26,6 +26,43 @@ type AuditEntry struct {
 // AuditRepo persists and lists audit entries.
 type AuditRepo struct{ db *sql.DB }
 
+// IterOlderThan streams audit entries created strictly before cutoff,
+// oldest-first. The callback runs synchronously for each row; returning
+// a non-nil error aborts iteration. Used by the archival exporter so it
+// can stream-to-disk without buffering an unbounded result set.
+func (r *AuditRepo) IterOlderThan(ctx context.Context, cutoff time.Time, fn func(*AuditEntry) error) error {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, at, actor, actor_sub, action, resource, status, request_id, remote_ip
+		 FROM audit_log WHERE at < ? ORDER BY at ASC`, cutoff)
+	if err != nil {
+		return fmt.Errorf("query audit: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		e := &AuditEntry{}
+		if err := rows.Scan(&e.ID, &e.At, &e.Actor, &e.ActorSub, &e.Action,
+			&e.Resource, &e.Status, &e.RequestID, &e.RemoteIP); err != nil {
+			return err
+		}
+		if err := fn(e); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// DeleteOlderThan removes audit rows strictly older than cutoff. Returns
+// the number of rows removed. Called by the archival exporter after a
+// successful flush so the working table doesn't grow unbounded.
+func (r *AuditRepo) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM audit_log WHERE at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune audit: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // Insert appends an entry to the log.
 func (r *AuditRepo) Insert(ctx context.Context, e *AuditEntry) error {
 	if e.ID == "" {

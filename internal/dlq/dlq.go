@@ -116,7 +116,13 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.store.DLQ.Delete(ctx, id)
 }
 
-// List returns a paginated DLQ slice.
+// List returns a paginated DLQ slice (no filter).
 func (s *Service) List(ctx context.Context, page, perPage int) ([]*storage.DLQEntry, int, error) {
 	return s.store.DLQ.List(ctx, page, perPage)
+}
+
+// ListFiltered exposes the storage-level filter unchanged. Callers in
+// internal/server map URL query params onto storage.DLQFilter.
+func (s *Service) ListFiltered(ctx context.Context, f storage.DLQFilter, page, perPage int) ([]*storage.DLQEntry, int, error) {
+	return s.store.DLQ.ListFiltered(ctx, f, page, perPage)
 }

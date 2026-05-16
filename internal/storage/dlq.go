@@ -34,7 +34,25 @@ func (r *DLQRepo) Get(ctx context.Context, id string) (*DLQEntry, error) {
 	return scanDLQ(row)
 }
 
+// DLQFilter narrows a List query. Zero-valued fields mean "any".
+//   - PipelineID: exact match.
+//   - Error: case-insensitive substring match against error_reason.
+//   - Since / Until: half-open time window over created_at.
+type DLQFilter struct {
+	PipelineID string
+	Error      string
+	Since      *time.Time
+	Until      *time.Time
+}
+
+// List returns DLQ entries matching f, newest-first, with the total count
+// for the filter (independent of pagination).
 func (r *DLQRepo) List(ctx context.Context, page, perPage int) ([]*DLQEntry, int, error) {
+	return r.ListFiltered(ctx, DLQFilter{}, page, perPage)
+}
+
+// ListFiltered is the full-fidelity list with optional predicates.
+func (r *DLQRepo) ListFiltered(ctx context.Context, f DLQFilter, page, perPage int) ([]*DLQEntry, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -42,14 +60,38 @@ func (r *DLQRepo) List(ctx context.Context, page, perPage int) ([]*DLQEntry, int
 		perPage = 20
 	}
 
+	where := "1=1"
+	args := []any{}
+	if f.PipelineID != "" {
+		where += " AND pipeline_id = ?"
+		args = append(args, f.PipelineID)
+	}
+	if f.Error != "" {
+		// LOWER(...) LIKE LOWER(?) for case-insensitive contains. SQLite
+		// indexes don't accelerate this; the table is small enough
+		// (capped by retention) that a scan is fine.
+		where += " AND LOWER(error_reason) LIKE LOWER(?)"
+		args = append(args, "%"+f.Error+"%")
+	}
+	if f.Since != nil {
+		where += " AND created_at >= ?"
+		args = append(args, *f.Since)
+	}
+	if f.Until != nil {
+		where += " AND created_at < ?"
+		args = append(args, *f.Until)
+	}
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM dlq`).Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM dlq WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count dlq: %w", err)
 	}
 
 	offset := (page - 1) * perPage
 	rows, err := r.db.QueryContext(ctx,
-		dlqSelect+` ORDER BY created_at DESC LIMIT ? OFFSET ?`, perPage, offset)
+		dlqSelect+` WHERE `+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		append(args, perPage, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list dlq: %w", err)
 	}

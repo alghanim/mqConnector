@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"mqConnector/internal/audit"
 	"mqConnector/internal/auth"
 	"mqConnector/internal/config"
 	"mqConnector/internal/dlq"
@@ -30,6 +31,18 @@ import (
 var version = "dev"
 
 func main() {
+	// Subcommand routing: anything before flags is treated as a verb.
+	// Today there's exactly one — `rotate-secrets` — so we keep this
+	// dispatch trivial instead of pulling in cobra.
+	if len(os.Args) > 1 && os.Args[1] == "rotate-secrets" {
+		os.Args = append(os.Args[:1], os.Args[2:]...) // drop the verb so flag.Parse sees the right argv
+		if err := rotateSecrets(); err != nil {
+			fmt.Fprintf(os.Stderr, "rotate-secrets: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	var (
 		configPath  = flag.String("config", "config.yaml", "path to config file (use empty string for defaults+env only)")
 		showVersion = flag.Bool("version", false, "print version and exit")
@@ -150,6 +163,24 @@ func run(configPath string) error {
 		logger,
 	)
 	go retention.Run(rootCtx)
+
+	// Audit-log archival — streams rows older than cfg.Audit.MaxAge to
+	// per-day JSONL files in cfg.Audit.ArchiveDir, then prunes the
+	// live table. No-op when ArchiveDir is empty.
+	archiver := audit.New(
+		store.Audit,
+		cfg.Audit.ArchiveDir,
+		cfg.Audit.MaxAge,
+		cfg.Audit.SweepInterval,
+		logger,
+	)
+	go archiver.Run(rootCtx)
+	if cfg.Audit.ArchiveDir != "" {
+		logger.Info("audit archival enabled",
+			"archive_dir", cfg.Audit.ArchiveDir,
+			"max_age", cfg.Audit.MaxAge,
+			"sweep_interval", cfg.Audit.SweepInterval)
+	}
 
 	// Pipeline manager
 	mgr := pipeline.NewManager(rootCtx, store, pool, metricsStore, dlqSvc, logger)
