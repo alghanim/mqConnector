@@ -187,6 +187,9 @@
               <td>
                 <div class="flex gap-2 justify-end">
                   {#if p.id}
+                    <a href="/flow?pipeline={p.id}" class="btn-link btn-link--primary">
+                      {t($locale, 'flow.openVisual')}
+                    </a>
                     <a href="/pipelines/{p.id}" class="btn-link">{t($locale, 'pipelines.configure')}</a>
                   {/if}
                   <Button variant="ghost" on:click={() => toggleEnabled(p)}>
@@ -242,5 +245,21 @@
   }
   .btn-link:active {
     background: color-mix(in srgb, var(--primary) 20%, transparent);
+  }
+  /*
+   * Row-level primary action — filled gold variant. Used for the
+   * canvas-editor entry point ("Visual") since Phase 5 will make the
+   * flow editor the recommended workflow. Maroon stays reserved for the
+   * page-level CTA ("Add pipeline") per brand-tokens.css Rule 16.
+   */
+  .btn-link--primary {
+    color: var(--primary-on);
+    background: var(--primary);
+  }
+  .btn-link--primary:hover {
+    background: var(--qb-copper);
+  }
+  .btn-link--primary:active {
+    background: var(--qb-gold-muted);
   }
 </style>

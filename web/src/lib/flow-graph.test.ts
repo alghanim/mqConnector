@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { topoFromSource, validateFlow, type FlowGraphNode, type FlowGraphEdge } from './flow-graph';
+import {
+  topoFromSource,
+  validateFlow,
+  pipelineToFlow,
+  type FlowGraphNode,
+  type FlowGraphEdge,
+  type StageSummary,
+  type RuleSummary
+} from './flow-graph';
 
 const n = (id: string, kind: FlowGraphNode['kind']): FlowGraphNode => ({ id, kind });
 
@@ -111,5 +119,206 @@ describe('validateFlow', () => {
     );
     expect(r.stages.map((x) => x.kind)).toEqual(['filter']);
     expect(r.destinations.map((x) => x.id).sort()).toEqual(['d1', 'd2']);
+  });
+});
+
+describe('pipelineToFlow', () => {
+  const stage = (
+    order: number,
+    type: StageSummary['stage_type'],
+    config = '{}'
+  ): StageSummary => ({
+    stage_order: order,
+    stage_type: type,
+    stage_config: config,
+    enabled: true
+  });
+
+  it('source-only (no stages) wires source directly to destination', () => {
+    const r = pipelineToFlow(
+      { source_id: 'conn-A', destination_id: 'conn-B' },
+      [],
+      []
+    );
+    expect(r.nodes).toHaveLength(2);
+    expect(r.nodes[0].kind).toBe('source');
+    expect(r.nodes[0].connection_id).toBe('conn-A');
+    expect(r.nodes[1].kind).toBe('destination');
+    expect(r.nodes[1].connection_id).toBe('conn-B');
+    expect(r.edges).toEqual([{ from: r.nodes[0].id, to: r.nodes[1].id }]);
+  });
+
+  it('emits stages in stage_order even when given unsorted', () => {
+    const r = pipelineToFlow(
+      { source_id: 'A', destination_id: 'B' },
+      [stage(3, 'translate'), stage(1, 'filter'), stage(2, 'transform')],
+      []
+    );
+    const kinds = r.nodes.map((n) => n.kind);
+    expect(kinds).toEqual([
+      'source',
+      'filter',
+      'transform',
+      'translate',
+      'destination'
+    ]);
+    // Linear chain
+    expect(r.edges).toEqual([
+      { from: r.nodes[0].id, to: r.nodes[1].id },
+      { from: r.nodes[1].id, to: r.nodes[2].id },
+      { from: r.nodes[2].id, to: r.nodes[3].id },
+      { from: r.nodes[3].id, to: r.nodes[4].id }
+    ]);
+  });
+
+  it('preserves each stage config verbatim onto its node', () => {
+    const cfg = '{"paths":["a.b","c"]}';
+    const r = pipelineToFlow(
+      { source_id: 'A', destination_id: 'B' },
+      [stage(1, 'filter', cfg)],
+      []
+    );
+    const filter = r.nodes.find((n) => n.kind === 'filter')!;
+    expect(filter.config).toBe(cfg);
+  });
+
+  it('positions nodes left-to-right with consistent spacing', () => {
+    const r = pipelineToFlow(
+      { source_id: 'A', destination_id: 'B' },
+      [stage(1, 'filter'), stage(2, 'transform')],
+      []
+    );
+    const xs = r.nodes.map((n) => n.x);
+    expect(xs[1]).toBeGreaterThan(xs[0]);
+    expect(xs[2]).toBeGreaterThan(xs[1]);
+    expect(xs[3]).toBeGreaterThan(xs[2]);
+  });
+
+  it('with a route stage, every rule becomes an extra destination node', () => {
+    const rules: RuleSummary[] = [
+      {
+        destination_id: 'D-EUR',
+        priority: 1,
+        condition_path: 'region',
+        condition_operator: 'eq',
+        condition_value: 'eu'
+      },
+      {
+        destination_id: 'D-APAC',
+        priority: 2,
+        condition_path: 'region',
+        condition_operator: 'eq',
+        condition_value: 'apac'
+      }
+    ];
+    const r = pipelineToFlow(
+      { source_id: 'src', destination_id: 'D-DEFAULT' },
+      [stage(1, 'route')],
+      rules
+    );
+    const dests = r.nodes.filter((n) => n.kind === 'destination');
+    // Default destination + 2 rule destinations
+    expect(dests).toHaveLength(3);
+    const conns = dests.map((d) => d.connection_id).sort();
+    expect(conns).toEqual(['D-APAC', 'D-DEFAULT', 'D-EUR']);
+
+    // Route node has 3 outgoing edges: one in the linear chain to the
+    // default destination, plus one per rule destination.
+    const route = r.nodes.find((n) => n.kind === 'route')!;
+    const routeEdges = r.edges.filter((e) => e.from === route.id);
+    expect(routeEdges).toHaveLength(3);
+    const targets = routeEdges
+      .map((e) => r.nodes.find((n) => n.id === e.to)?.connection_id)
+      .sort();
+    expect(targets).toEqual(['D-APAC', 'D-DEFAULT', 'D-EUR']);
+  });
+
+  it('rule whose destination matches default is collapsed (no duplicate)', () => {
+    // A rule that targets the same connection as the pipeline's default
+    // destination is already represented by the source→…→default edge;
+    // duplicating it as a separate node would clutter the canvas.
+    const r = pipelineToFlow(
+      { source_id: 'src', destination_id: 'D-DEFAULT' },
+      [stage(1, 'route')],
+      [
+        {
+          destination_id: 'D-DEFAULT',
+          priority: 1,
+          condition_path: 'x',
+          condition_operator: 'eq',
+          condition_value: 'y'
+        }
+      ]
+    );
+    const dests = r.nodes.filter((n) => n.kind === 'destination');
+    expect(dests).toHaveLength(1);
+    expect(dests[0].connection_id).toBe('D-DEFAULT');
+  });
+
+  it('rules are ignored when no route stage is present', () => {
+    // Without a `route` stage, routing rules cannot fire — drop them.
+    const r = pipelineToFlow(
+      { source_id: 'src', destination_id: 'D-DEFAULT' },
+      [stage(1, 'filter')],
+      [
+        {
+          destination_id: 'D-OTHER',
+          priority: 1,
+          condition_path: 'x',
+          condition_operator: 'eq',
+          condition_value: 'y'
+        }
+      ]
+    );
+    const dests = r.nodes.filter((n) => n.kind === 'destination');
+    expect(dests).toHaveLength(1);
+    expect(dests[0].connection_id).toBe('D-DEFAULT');
+  });
+
+  it('encodes rule predicate into the destination node config JSON', () => {
+    const r = pipelineToFlow(
+      { source_id: 'src', destination_id: 'D-DEFAULT' },
+      [stage(1, 'route')],
+      [
+        {
+          destination_id: 'D-EUR',
+          priority: 5,
+          condition_path: 'region',
+          condition_operator: 'eq',
+          condition_value: 'eu'
+        }
+      ]
+    );
+    const ruleDest = r.nodes.find(
+      (n) => n.kind === 'destination' && n.connection_id === 'D-EUR'
+    )!;
+    const cfg = JSON.parse(ruleDest.config);
+    expect(cfg.condition_path).toBe('region');
+    expect(cfg.condition_operator).toBe('eq');
+    expect(cfg.condition_value).toBe('eu');
+    expect(cfg.priority).toBe(5);
+  });
+
+  it('reconstruction passes validateFlow without changes', () => {
+    // The whole point — what we draw must validate so Save & Deploy
+    // works against it the moment a pipeline loads.
+    const r = pipelineToFlow(
+      { source_id: 'src', destination_id: 'dst' },
+      [stage(1, 'filter'), stage(2, 'transform'), stage(3, 'translate')],
+      []
+    );
+    const graph: FlowGraphNode[] = r.nodes.map((n) => ({ id: n.id, kind: n.kind }));
+    expect(() => validateFlow(graph, r.edges)).not.toThrow();
+  });
+
+  it('nextIdCounter equals the count of generated nodes', () => {
+    // Callers need this to seed their own id counter so subsequent
+    // palette-drops don't collide with reconstructed ids.
+    const r = pipelineToFlow(
+      { source_id: 'A', destination_id: 'B' },
+      [stage(1, 'filter')],
+      []
+    );
+    expect(r.nextIdCounter).toBe(r.nodes.length);
   });
 });

@@ -19,8 +19,21 @@
 -->
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { api, type Connection, type Schema, type StageType } from '$lib/api';
-  import { topoFromSource as topoFromSourceCore } from '$lib/flow-graph';
+  import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
+  import {
+    api,
+    type Connection,
+    type Pipeline,
+    type RoutingRule,
+    type Schema,
+    type Stage,
+    type StageType
+  } from '$lib/api';
+  import {
+    topoFromSource as topoFromSourceCore,
+    pipelineToFlow
+  } from '$lib/flow-graph';
   import { locale, t } from '$lib/stores/locale';
   import Card from '$lib/components/Card.svelte';
   import Button from '$lib/components/Button.svelte';
@@ -70,6 +83,11 @@
   let savedMsg = '';
   let saving = false;
   let connections: Connection[] = [];
+  // Round-trip state — when the page is opened with ?pipeline=:id we
+  // load that pipeline into the canvas and update-save instead of
+  // create-save. `null` means "draw a new pipeline" (legacy behaviour).
+  let pipelineId: string | null = null;
+  let loadingPipeline = false;
 
   let canvasEl: HTMLElement | null = null;
   let svgEl: SVGSVGElement | null = null;
@@ -144,7 +162,55 @@
       schemas = [];
     }
   }
-  onMount(loadBackground);
+
+  /**
+   * Reconstruct the canvas from an existing pipeline. Called when the
+   * page is opened with ?pipeline=:id — turns the form-editor's flat
+   * stage list + routing rules back into nodes + edges so the operator
+   * can edit visually. The save step then updates the same pipeline
+   * rather than POSTing a new one.
+   */
+  async function loadExistingPipeline(id: string) {
+    loadingPipeline = true;
+    error = '';
+    try {
+      const [pipe, stages, loadedRules] = await Promise.all([
+        api.get<Pipeline>(`/v1/pipelines/${id}`),
+        api.get<Stage[]>(`/v1/pipelines/${id}/stages`).then((v) => v ?? []),
+        api.get<RoutingRule[]>(`/v1/pipelines/${id}/routing-rules`).then((v) => v ?? [])
+      ]);
+      const recon = pipelineToFlow(
+        { source_id: pipe.source_id, destination_id: pipe.destination_id },
+        stages.map((s) => ({
+          stage_order: s.stage_order,
+          stage_type: s.stage_type as NodeKind,
+          stage_config: s.stage_config,
+          enabled: s.enabled
+        })),
+        loadedRules
+      );
+      pipelineId = id;
+      pipelineName = pipe.name;
+      nodes = recon.nodes;
+      edges = recon.edges;
+      // Seed the local id counter past whatever the reconstruction
+      // produced, otherwise a palette drop could collide with 'n3'.
+      nextNodeIdCounter = recon.nextIdCounter;
+      selectedId = null;
+    } catch (e: unknown) {
+      error = (e as { message?: string }).message || t($locale, 'flow.loadError');
+    } finally {
+      loadingPipeline = false;
+    }
+  }
+
+  onMount(async () => {
+    await loadBackground();
+    const pid = $page.url.searchParams.get('pipeline');
+    if (pid) {
+      await loadExistingPipeline(pid);
+    }
+  });
 
   // ─── Sample → filter (the core app workflow) ────────────────────
   // Upload or paste a representative MQ message, see the paths inside
@@ -363,6 +429,18 @@
     selectedId = null;
     error = '';
     savedMsg = '';
+    // Clearing the canvas also drops the pipeline binding — otherwise
+    // hitting Save would silently empty the loaded pipeline's stages.
+    pipelineId = null;
+    pipelineName = '';
+    const u = new URL(window.location.href);
+    if (u.searchParams.has('pipeline')) {
+      u.searchParams.delete('pipeline');
+      goto(u.pathname + (u.search ? u.search : ''), {
+        replaceState: true,
+        noScroll: true
+      });
+    }
   }
 
   // ─── Edge path helpers (drawn as SVG cubic Béziers) ──────────────
@@ -436,16 +514,39 @@
         }
       }
 
-      // 1. Create the pipeline.
+      // 1. Create the pipeline, OR update the one we loaded with
+      //    ?pipeline=:id. Update mode preserves output_format, filter_paths,
+      //    enabled, schema_id — fields the canvas doesn't currently
+      //    expose; refetching avoids clobbering them with defaults.
       const defaultDest = destinations[0];
-      const pipe = await api.post<{ id: string }>('/v1/pipelines', {
-        name: pipelineName || 'flow-' + Date.now(),
-        source_id: source.connection_id,
-        destination_id: defaultDest.connection_id,
-        output_format: 'same',
-        filter_paths: [],
-        enabled: true
-      });
+      let pipe: { id: string };
+      if (pipelineId) {
+        const current = await api.get<Pipeline>(`/v1/pipelines/${pipelineId}`);
+        const updated: Pipeline = {
+          ...current,
+          id: pipelineId,
+          name: pipelineName || current.name,
+          source_id: source.connection_id,
+          destination_id: defaultDest.connection_id
+        };
+        await api.put(`/v1/pipelines/${pipelineId}`, updated);
+        pipe = { id: pipelineId };
+      } else {
+        pipe = await api.post<{ id: string }>('/v1/pipelines', {
+          name: pipelineName || 'flow-' + Date.now(),
+          source_id: source.connection_id,
+          destination_id: defaultDest.connection_id,
+          output_format: 'same',
+          filter_paths: [],
+          enabled: true
+        });
+        pipelineId = pipe.id;
+        // Reflect the new id in the URL so a refresh round-trips back
+        // into edit mode instead of starting a blank canvas.
+        const u = new URL(window.location.href);
+        u.searchParams.set('pipeline', pipe.id);
+        goto(u.pathname + u.search, { replaceState: true, noScroll: true });
+      }
 
       // 2. Stages.
       const stages = stageNodes
@@ -723,12 +824,28 @@
 <div class="flow-header">
   <div>
     <h2 class="text-2xl font-semibold" style="color: var(--text)">
-      {t($locale, 'flow.title')}
+      {#if pipelineId}
+        <span class="editing-tag">{t($locale, 'flow.editing')}</span>
+        {pipelineName || t($locale, 'flow.title')}
+      {:else}
+        {t($locale, 'flow.title')}
+      {/if}
     </h2>
-    <p class="text-sm mt-1" style="color: var(--text-muted)">{t($locale, 'flow.help')}</p>
+    <p class="text-sm mt-1" style="color: var(--text-muted)">
+      {#if loadingPipeline}
+        {t($locale, 'flow.loading')}
+      {:else}
+        {t($locale, 'flow.help')}
+      {/if}
+    </p>
   </div>
   <div class="flex items-center gap-2">
     <Input bind:value={pipelineName} label={t($locale, 'flow.props.name')} placeholder="flow-1" />
+    {#if pipelineId}
+      <Button variant="ghost" on:click={() => goto('/flow')}>
+        {t($locale, 'flow.actions.newFlow')}
+      </Button>
+    {/if}
     <Button variant="ghost" on:click={clearAll}>{t($locale, 'flow.actions.clear')}</Button>
     <Button on:click={saveAndDeploy} loading={saving}>{t($locale, 'flow.actions.save')}</Button>
   </div>
@@ -752,6 +869,23 @@
     border-bottom: 1px solid var(--border);
     background: var(--surface);
     gap: 16px;
+  }
+  /*
+   * Editing-mode prefix on the page title — small uppercase eyebrow
+   * inline with the pipeline name. Uses --section-header (gold on dark,
+   * dark-gold on light) so it reads as a Brand Guide §5.8 eyebrow, not
+   * a CTA. Maroon is reserved for actual destructive/primary actions
+   * per Rule 16 of brand-tokens.css.
+   */
+  .editing-tag {
+    display: inline-block;
+    margin-inline-end: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--section-header);
+    vertical-align: middle;
   }
 
   .flow-shell {

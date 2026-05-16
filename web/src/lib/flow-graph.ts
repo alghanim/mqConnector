@@ -103,6 +103,154 @@ export interface ValidationResult {
   stages: FlowGraphNode[];
 }
 
+// ─── Phase 1: round-trip reconstruction ─────────────────────────────
+// The canvas was build-only; pipelineToFlow inverts the deploy step so
+// /flow?pipeline=:id can load an existing pipeline back into nodes+edges
+// the operator can edit visually. Pure data → data so we can pin the
+// behaviour with vitest without standing the Svelte component up.
+
+export interface PipelineSummary {
+  source_id: string;
+  destination_id: string;
+}
+
+export interface StageSummary {
+  stage_order: number;
+  stage_type: FlowNodeKind;
+  stage_config: string;
+  enabled: boolean;
+}
+
+export interface RuleSummary {
+  destination_id: string;
+  priority: number;
+  condition_path: string;
+  condition_operator: string;
+  condition_value: string;
+}
+
+export interface FlowReconstructionNode {
+  id: string;
+  kind: FlowNodeKind;
+  x: number;
+  y: number;
+  label: string;
+  connection_id: string;
+  config: string;
+}
+
+export interface FlowReconstruction {
+  nodes: FlowReconstructionNode[];
+  edges: FlowGraphEdge[];
+  nextIdCounter: number;
+}
+
+// Layout constants — kept here (not in the component) so the tests can
+// assert exact positions without screen-scraping the DOM.
+const RECON_NODE_SPACING = 220;
+const RECON_ROW_Y = 120;
+const RECON_DEST_STACK_GAP = 100;
+const RECON_X_ORIGIN = 60;
+
+/**
+ * Reconstruct a canvas layout from a saved pipeline.
+ *
+ * Layout: a horizontal chain placed left → right
+ *   source → stage1 → stage2 → … → destination
+ *
+ * Stages are emitted in stage_order. The default destination always
+ * receives an edge from the last stage (or directly from the source
+ * when there are no stages). If the chain contains a `route` stage,
+ * each routing rule becomes an additional destination node stacked
+ * vertically to the right of the route node, with the rule's predicate
+ * stored in the destination node's `config` JSON.
+ */
+export function pipelineToFlow(
+  pipeline: PipelineSummary,
+  stages: StageSummary[],
+  rules: RuleSummary[]
+): FlowReconstruction {
+  const ordered = [...stages].sort((a, b) => a.stage_order - b.stage_order);
+  const nodes: FlowReconstructionNode[] = [];
+  const edges: FlowGraphEdge[] = [];
+
+  let counter = 0;
+  const mkId = () => `n${++counter}`;
+
+  const sourceId = mkId();
+  nodes.push({
+    id: sourceId,
+    kind: 'source',
+    x: RECON_X_ORIGIN,
+    y: RECON_ROW_Y,
+    label: 'source',
+    connection_id: pipeline.source_id || '',
+    config: '{}'
+  });
+
+  let prevId = sourceId;
+  let routeId: string | null = null;
+  ordered.forEach((s, i) => {
+    const id = mkId();
+    const x = RECON_X_ORIGIN + (i + 1) * RECON_NODE_SPACING;
+    nodes.push({
+      id,
+      kind: s.stage_type,
+      x,
+      y: RECON_ROW_Y,
+      label: s.stage_type,
+      connection_id: '',
+      config: s.stage_config || '{}'
+    });
+    edges.push({ from: prevId, to: id });
+    if (s.stage_type === 'route') routeId = id;
+    prevId = id;
+  });
+
+  const destX = RECON_X_ORIGIN + (ordered.length + 1) * RECON_NODE_SPACING;
+  const defaultDestId = mkId();
+  nodes.push({
+    id: defaultDestId,
+    kind: 'destination',
+    x: destX,
+    y: RECON_ROW_Y,
+    label: 'destination',
+    connection_id: pipeline.destination_id || '',
+    config: '{}'
+  });
+  edges.push({ from: prevId, to: defaultDestId });
+
+  if (routeId !== null) {
+    const sortedRules = [...rules].sort((a, b) => a.priority - b.priority);
+    sortedRules.forEach((r, i) => {
+      // Skip the rule that targets the default destination — that edge
+      // already exists as the linear chain output. Duplicating it would
+      // produce two destination nodes wired to the same connection.
+      if (r.destination_id && r.destination_id === pipeline.destination_id) {
+        return;
+      }
+      const id = mkId();
+      nodes.push({
+        id,
+        kind: 'destination',
+        x: destX,
+        y: RECON_ROW_Y + (i + 1) * RECON_DEST_STACK_GAP,
+        label: 'destination',
+        connection_id: r.destination_id || '',
+        config: JSON.stringify({
+          condition_path: r.condition_path || '',
+          condition_operator: r.condition_operator || 'eq',
+          condition_value: r.condition_value || '',
+          priority: r.priority
+        })
+      });
+      edges.push({ from: routeId as string, to: id });
+    });
+  }
+
+  return { nodes, edges, nextIdCounter: counter };
+}
+
 export function validateFlow(
   nodes: FlowGraphNode[],
   edges: FlowGraphEdge[]
