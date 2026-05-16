@@ -4,6 +4,62 @@
 @tailwind utilities;
 
 /*
+ * Embedded webfonts — Inter Variable for Latin, Noto Kufi Arabic for
+ * Arabic. Both ship bundled under /fonts/ inside the static adapter
+ * output, then ride into the binary via `go:embed web/dist/**`. No
+ * runtime download → the air-gapped department deploy stays sealed.
+ *
+ * Licensing: Inter is under the SIL Open Font License (Rasmus Andersson
+ * + Inter Foundry). Noto Kufi Arabic is under the SIL OFL (Google
+ * Fonts). The OFL permits redistribution as part of an application,
+ * which is exactly what go:embed produces.
+ *
+ * font-display: swap — keep the system-font fallback rendering until
+ * the file lands so first paint is never blocked. On the first load
+ * the user sees system-ui glyphs for a few hundred ms before they
+ * swap to Inter / Noto Kufi Arabic.
+ */
+
+/* ─── Inter Variable (Latin) ────────────────────────────────────── */
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/InterVariable.woff2') format('woff2-variations'),
+       url('/fonts/InterVariable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/InterVariable-Italic.woff2') format('woff2-variations'),
+       url('/fonts/InterVariable-Italic.woff2') format('woff2');
+}
+
+/* ─── Noto Kufi Arabic (Arabic glyphs only) ─────────────────────── */
+/*
+ * Single variable-axis file covers weights 400-700. Restricted to the
+ * Arabic / Arabic-Supplement / Arabic-Presentation-Forms ranges via
+ * `unicode-range` — Latin glyphs come from Inter without conflict, so
+ * the browser only fetches Noto when an Arabic codepoint hits the
+ * screen.
+ */
+@font-face {
+  font-family: 'Noto Kufi Arabic';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/NotoKufiArabic-arabic.woff2') format('woff2-variations'),
+       url('/fonts/NotoKufiArabic-arabic.woff2') format('woff2');
+  unicode-range:
+    U+0600-06FF, U+0750-077F, U+0870-088E, U+0890-0891, U+0897-08E1,
+    U+08E3-08FF, U+200C-200E, U+2010-2011, U+204F, U+2E41,
+    U+FB50-FDFF, U+FE70-FE74, U+FE76-FEFC;
+}
+
+/*
  * Component primitives, all wired against brand-tokens.css.
  * Specs reference Brand & Design System v1.0 (March 2026).
  *
