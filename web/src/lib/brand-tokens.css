@@ -243,6 +243,11 @@
   /* §5.14 Dialog */
   --dialog-bg:          var(--qb-slate-93);
   --dialog-scrim:       rgba(0, 0, 0, 0.6);             /* 60% on dark per §5.14 */
+  /* §5.14 doesn't enumerate a dialog shadow explicitly. Follow §5.2
+     (cards: 4dp at 20% dark / 2dp at 8% light) scaled up — dialogs sit
+     above cards in elevation, so a longer Y-offset + matching opacity
+     keeps the system consistent without inventing a new opacity value. */
+  --dialog-shadow:      0 12px 32px rgba(0, 0, 0, 0.20);
 
   /* Focus ring — Dark Gold 2dp per §9.5 */
   --focus-ring:         0 0 0 2px var(--qb-dark-gold);
@@ -355,6 +360,10 @@
 
   --dialog-bg:          var(--qb-white);
   --dialog-scrim:       rgba(0, 0, 0, 0.4);             /* 40% on light per §5.14 */
+  /* Same elevation-step logic as dark theme, but at the §5.2 light
+     shadow opacity (#333F48 at 8%) — keeps shadows readable on cream
+     surfaces without darkening the visual weight. */
+  --dialog-shadow:      0 12px 32px rgba(51, 63, 72, 0.10);
 
   --focus-ring:         0 0 0 2px var(--qb-dark-gold);
 }

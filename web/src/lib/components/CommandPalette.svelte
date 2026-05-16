@@ -375,10 +375,12 @@
     max-height: 70vh;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 14px;
-    box-shadow:
-      0 24px 60px rgba(0, 0, 0, 0.35),
-      0 4px 12px rgba(0, 0, 0, 0.18);
+    /* §7 rule 10: containers are 16dp. The previous 14px was midway
+       between interactive (12) and container (16) — pick a side. */
+    border-radius: 16px;
+    /* §5.14 elevation via the brand-token shadow; the previous custom
+       multi-layer was darker than the spec and not theme-aware. */
+    box-shadow: var(--dialog-shadow);
     display: flex;
     flex-direction: column;
     overflow: hidden;

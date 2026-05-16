@@ -330,11 +330,14 @@
     font-weight: 500;
   }
   .tokens-prefix {
+    /* Labeled chip per brand guide §5.5 / §7 rule 10 → 12dp. The
+       prefix string is a stable visual identifier; treat as a
+       category chip rather than a free-form code span. */
     font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
     font-size: 12px;
     background: var(--surface-2);
     padding: 2px 6px;
-    border-radius: 6px;
+    border-radius: 12px;
     color: var(--text);
   }
 
@@ -356,11 +359,11 @@
   .reveal-panel {
     background: var(--dialog-bg);
     border: 1px solid var(--card-border);
-    border-radius: 16px;
+    border-radius: 16px; /* container per §7 rule 10 */
     padding: 24px;
     inline-size: 100%;
     max-inline-size: 600px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--dialog-shadow); /* §5.14 + §5.2 elevation step */
   }
   .reveal-title {
     margin: 0 0 8px;
@@ -369,21 +372,24 @@
     font-weight: 600;
   }
   .reveal-warning {
+    /* §5.10 alert spec → 12dp corner radius. */
     color: var(--warning);
     background: color-mix(in srgb, var(--warning) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
-    border-radius: 10px;
+    border-radius: 12px;
     padding: 8px 12px;
     font-size: 13px;
     margin-block-end: 12px;
   }
   .reveal-secret-row {
+    /* Interactive surface (user select / copy target) → 12dp per
+       §7 rule 10. */
     display: flex;
     align-items: center;
     gap: 8px;
     background: var(--bg);
     border: 1px solid var(--card-border);
-    border-radius: 10px;
+    border-radius: 12px;
     padding: 10px 12px;
   }
   .reveal-secret {
@@ -396,6 +402,7 @@
     user-select: all;
   }
   .reveal-copy {
+    /* Interactive button → 12dp per §7 rule 10. */
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
@@ -403,7 +410,7 @@
     padding: 6px 12px;
     background: var(--surface);
     border: 1px solid var(--border-strong);
-    border-radius: 8px;
+    border-radius: 12px;
     color: var(--text);
     font-size: 12px;
     cursor: pointer;

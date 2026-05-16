@@ -171,7 +171,10 @@
     inline-size: 100%;
     max-inline-size: 480px;
     padding: 24px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    /* §5.14 dialog elevation via the brand-token shadow; the previous
+       literal rgba(0,0,0,0.35) ignored the light-theme adjustment in
+       §5.2 (#333F48 at 8%). */
+    box-shadow: var(--dialog-shadow);
     /* The scrim's fixed-position container scrolls the body, but make
        sure a very tall dialog body doesn't push the actions out of
        viewport. */

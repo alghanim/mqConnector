@@ -471,13 +471,14 @@
     font-size: 12px;
   }
   .wh-secret-gen {
+    /* Interactive button → 12dp per §7 rule 10. */
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     gap: 4px;
     padding: 6px 12px;
     border: 1px solid var(--border-strong);
-    border-radius: 8px;
+    border-radius: 12px;
     background: var(--surface);
     color: var(--text);
     font-size: 12px;

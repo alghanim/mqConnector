@@ -287,12 +287,14 @@
     margin-block-start: 16px;
   }
   .staged-row {
+    /* Interactive container (clear button lives inside) → 12dp per
+       §7 rule 10. */
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 10px 12px;
     border: 1px solid var(--card-border);
-    border-radius: 10px;
+    border-radius: 12px;
     background: var(--surface-2);
     color: var(--text);
   }
@@ -310,9 +312,10 @@
     font-variant-numeric: tabular-nums;
   }
   .staged-remove {
+    /* Interactive icon button → 12dp per §7 rule 10. */
     inline-size: 24px;
     block-size: 24px;
-    border-radius: 6px;
+    border-radius: 12px;
     background: transparent;
     border: 1px solid var(--divider);
     color: var(--text-muted);
@@ -328,17 +331,19 @@
   }
 
   .import-error {
+    /* Alert per §5.10 → 12dp corner radius. */
     margin-block-start: 12px;
     padding: 10px 12px;
     background: var(--danger-bg);
     border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
-    border-radius: 10px;
+    border-radius: 12px;
     color: var(--danger);
     font-size: 13px;
     line-height: 1.45;
     font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
   }
   .import-summary {
+    /* Labeled chip per §5.5 / §7 rule 10 → 12dp. */
     margin-block-start: 12px;
     display: inline-flex;
     align-items: center;
@@ -346,7 +351,7 @@
     padding: 8px 12px;
     background: var(--surface-2);
     border: 1px solid var(--divider);
-    border-radius: 10px;
+    border-radius: 12px;
   }
   .summary-num {
     color: var(--text);
