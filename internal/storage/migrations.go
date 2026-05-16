@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -331,6 +332,114 @@ var migrations = []string{
 	ALTER TABLE connections ADD COLUMN consumer_name TEXT NOT NULL DEFAULT '';
 	ALTER TABLE connections ADD COLUMN qos           INTEGER NOT NULL DEFAULT 0;
 	`,
+	// 0010 — relax the CHECK constraints that gate Phase 22.
+	//
+	// Migration 0009 added the *columns* for MQTT/NATS/AMQP 1.0, but the
+	// original `connections.type` CHECK clause from migration 0001 still
+	// allows only ibm/rabbitmq/kafka, so the API layer's "type" validation
+	// passes but the INSERT fails downstream with constraint failed (275).
+	// Two more CHECKs need the same treatment to fully unlock Phase 22:
+	//   - schemas.schema_type     → +protobuf
+	//   - pipelines.output_format → +protobuf
+	//
+	// SQLite has no ALTER TABLE for CHECK, so we recreate each table with
+	// the loosened constraint and copy data over. The legacy_* renames
+	// keep the operation atomic — if the COPY fails for any reason the
+	// rollback puts the original table back in place. Indexes + FK
+	// targets are re-established explicitly.
+	`
+	-- pipelines.source_id / destination_id reference connections(id), so
+	-- the recreate-with-new-CHECK dance needs FKs off. The migrate()
+	-- driver disables PRAGMA foreign_keys before BEGIN and restores it
+	-- after COMMIT, so this migration runs FK-free.
+
+	-- connections.type — recreate with mqtt/nats/amqp10 in the CHECK
+	CREATE TABLE connections_new (
+		id            TEXT PRIMARY KEY,
+		name          TEXT NOT NULL,
+		type          TEXT NOT NULL CHECK(type IN ('ibm','rabbitmq','kafka','mqtt','nats','amqp10')),
+		queue_manager TEXT NOT NULL DEFAULT '',
+		conn_name     TEXT NOT NULL DEFAULT '',
+		channel       TEXT NOT NULL DEFAULT '',
+		username      TEXT NOT NULL DEFAULT '',
+		password      TEXT NOT NULL DEFAULT '',
+		queue_name    TEXT NOT NULL DEFAULT '',
+		url           TEXT NOT NULL DEFAULT '',
+		brokers       TEXT NOT NULL DEFAULT '',
+		topic         TEXT NOT NULL DEFAULT '',
+		created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		tenant_id     TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+		tls_ca_file              TEXT NOT NULL DEFAULT '',
+		tls_cert_file            TEXT NOT NULL DEFAULT '',
+		tls_key_file             TEXT NOT NULL DEFAULT '',
+		tls_insecure_skip_verify INTEGER NOT NULL DEFAULT 0,
+		client_id     TEXT NOT NULL DEFAULT '',
+		stream_name   TEXT NOT NULL DEFAULT '',
+		consumer_name TEXT NOT NULL DEFAULT '',
+		qos           INTEGER NOT NULL DEFAULT 0
+	);
+	INSERT INTO connections_new (
+		id, name, type, queue_manager, conn_name, channel, username, password,
+		queue_name, url, brokers, topic, created_at, updated_at, tenant_id,
+		tls_ca_file, tls_cert_file, tls_key_file, tls_insecure_skip_verify,
+		client_id, stream_name, consumer_name, qos
+	) SELECT
+		id, name, type, queue_manager, conn_name, channel, username, password,
+		queue_name, url, brokers, topic, created_at, updated_at, tenant_id,
+		tls_ca_file, tls_cert_file, tls_key_file, tls_insecure_skip_verify,
+		client_id, stream_name, consumer_name, qos
+	FROM connections;
+	DROP TABLE connections;
+	ALTER TABLE connections_new RENAME TO connections;
+	CREATE INDEX IF NOT EXISTS idx_connections_name   ON connections(name);
+	CREATE INDEX IF NOT EXISTS idx_connections_tenant ON connections(tenant_id);
+
+	-- schemas.schema_type — recreate with protobuf in the CHECK
+	CREATE TABLE schemas_new (
+		id          TEXT PRIMARY KEY,
+		name        TEXT NOT NULL,
+		schema_type TEXT NOT NULL CHECK(schema_type IN ('json_schema','xsd','protobuf')),
+		content     TEXT NOT NULL DEFAULT '',
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		tenant_id   TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'
+	);
+	INSERT INTO schemas_new (
+		id, name, schema_type, content, created_at, updated_at, tenant_id
+	) SELECT
+		id, name, schema_type, content, created_at, updated_at, tenant_id
+	FROM schemas;
+	DROP TABLE schemas;
+	ALTER TABLE schemas_new RENAME TO schemas;
+	CREATE INDEX IF NOT EXISTS idx_schemas_tenant ON schemas(tenant_id);
+
+	-- pipelines.output_format — recreate with protobuf in the CHECK
+	CREATE TABLE pipelines_new (
+		id              TEXT PRIMARY KEY,
+		name            TEXT NOT NULL,
+		source_id       TEXT NOT NULL REFERENCES connections(id) ON DELETE RESTRICT,
+		destination_id  TEXT NOT NULL REFERENCES connections(id) ON DELETE RESTRICT,
+		output_format   TEXT NOT NULL DEFAULT 'same' CHECK(output_format IN ('same','json','xml','protobuf')),
+		schema_id       TEXT REFERENCES schemas(id) ON DELETE SET NULL,
+		filter_paths    TEXT NOT NULL DEFAULT '[]',
+		enabled         INTEGER NOT NULL DEFAULT 1,
+		created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		tenant_id       TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'
+	);
+	INSERT INTO pipelines_new (
+		id, name, source_id, destination_id, output_format, schema_id,
+		filter_paths, enabled, created_at, updated_at, tenant_id
+	) SELECT
+		id, name, source_id, destination_id, output_format, schema_id,
+		filter_paths, enabled, created_at, updated_at, tenant_id
+	FROM pipelines;
+	DROP TABLE pipelines;
+	ALTER TABLE pipelines_new RENAME TO pipelines;
+	CREATE INDEX IF NOT EXISTS idx_pipelines_enabled ON pipelines(enabled);
+	CREATE INDEX IF NOT EXISTS idx_pipelines_tenant  ON pipelines(tenant_id);
+	`,
 }
 
 func migrate(db *sql.DB) error {
@@ -352,21 +461,48 @@ func migrate(db *sql.DB) error {
 			continue
 		}
 
-		tx, err := db.Begin()
+		// PRAGMA foreign_keys is a per-connection setting and is silently
+		// ignored inside a transaction. database/sql pools connections,
+		// so a bare db.Exec("PRAGMA …") lands on a different connection
+		// than the subsequent db.Begin(). Pin one connection for the
+		// entire migration so the PRAGMA, BEGIN, statements, COMMIT, and
+		// the matching PRAGMA-restore all execute on the same conn.
+		conn, err := db.Conn(context.Background())
 		if err != nil {
+			return fmt.Errorf("acquire conn for migration %d: %w", version, err)
+		}
+		if _, err := conn.ExecContext(context.Background(), `PRAGMA foreign_keys = OFF`); err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("disable FK for migration %d: %w", version, err)
+		}
+
+		tx, err := conn.BeginTx(context.Background(), nil)
+		if err != nil {
+			_ = conn.Close()
 			return fmt.Errorf("begin migration %d: %w", version, err)
 		}
 		if _, err := tx.Exec(m); err != nil {
 			_ = tx.Rollback()
+			_, _ = conn.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`)
+			_ = conn.Close()
 			return fmt.Errorf("apply migration %d: %w", version, err)
 		}
 		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, version); err != nil {
 			_ = tx.Rollback()
+			_, _ = conn.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`)
+			_ = conn.Close()
 			return fmt.Errorf("record migration %d: %w", version, err)
 		}
 		if err := tx.Commit(); err != nil {
+			_, _ = conn.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`)
+			_ = conn.Close()
 			return fmt.Errorf("commit migration %d: %w", version, err)
 		}
+		if _, err := conn.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`); err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("re-enable FK after migration %d: %w", version, err)
+		}
+		_ = conn.Close()
 	}
 	return nil
 }
