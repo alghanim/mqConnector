@@ -34,6 +34,12 @@
   import { tenants } from '$lib/stores/tenants';
   import { locale, t } from '$lib/stores/locale';
   import { api, type DLQEntry } from '$lib/api';
+  import {
+    connect as liveConnect,
+    disconnect as liveDisconnect,
+    dlqTotal as liveDlqTotal,
+    liveMode as liveModeStore
+  } from '$lib/stores/live';
   import Logo from '$lib/components/Logo.svelte';
   import ThemeToggle from '$lib/components/ThemeToggle.svelte';
   import LocaleToggle from '$lib/components/LocaleToggle.svelte';
@@ -62,6 +68,11 @@
   let paletteOpen = false;
   let shortcutsOpen = false;
 
+  // Bind dlqCount to the shared live store. The badge follows whatever
+  // the SSE stream pushed; the polling fallback below keeps it accurate
+  // when SSE drops.
+  $: dlqCount = $liveDlqTotal;
+
   onMount(async () => {
     await auth.refresh();
     if (!$auth.user && $page.url.pathname !== '/login') {
@@ -70,8 +81,11 @@
     }
     if ($auth.user) {
       await tenants.refresh();
+      // Paint the badge from a one-shot fetch while the SSE stream
+      // comes up. The shared live store takes over once the first
+      // frame arrives.
       void refreshDlqBadge();
-      dlqTimer = setInterval(refreshDlqBadge, 30_000);
+      liveConnect(2000);
     }
 
     document.addEventListener('keydown', onKey);
@@ -79,8 +93,21 @@
 
   onDestroy(() => {
     if (dlqTimer) clearInterval(dlqTimer);
+    liveDisconnect();
     document.removeEventListener('keydown', onKey);
   });
+
+  // Fallback polling — engaged whenever the live stream is down. Watches
+  // the shared liveMode store and toggles a 30 s interval to keep the
+  // badge fresh.
+  $: if ($auth.user && !$liveModeStore) {
+    if (!dlqTimer) {
+      dlqTimer = setInterval(refreshDlqBadge, 30_000);
+    }
+  } else if (dlqTimer) {
+    clearInterval(dlqTimer);
+    dlqTimer = undefined;
+  }
 
   function onKey(e: KeyboardEvent) {
     if (!$auth.user) return;
@@ -116,7 +143,7 @@
       const res = await api.get<{ total: number; items: DLQEntry[] }>(
         '/v1/dlq?page=1&per_page=1'
       );
-      dlqCount = res.total ?? 0;
+      liveDlqTotal.set(res.total ?? 0);
     } catch {
       // Silent — the badge is best-effort.
     }

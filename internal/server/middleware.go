@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -66,6 +67,14 @@ func (s *statusRecorder) WriteHeader(code int) {
 		s.wrote = true
 	}
 	s.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.NewResponseController(...) reach the underlying
+// writer's Flush/SetWriteDeadline methods through our wrapper. Without
+// this, long-lived SSE handlers can't drive the flusher because the
+// type assertion fails on the recorder.
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
 }
 
 // MaxBodyBytes returns middleware that caps the request body size.
@@ -170,15 +179,39 @@ func SecurityHeaders(next http.Handler) http.Handler {
 // (e.g. an unreachable MQ broker hanging a publish) could pin a goroutine
 // past the server's Write timeout. Pair with WriteTimeout for defence in
 // depth.
+//
+// Long-lived streaming endpoints (SSE today, websockets later) opt out:
+// requests with Accept: text/event-stream bypass the timeout. The SSE
+// handler additionally clears the per-connection write deadline via
+// http.NewResponseController, so neither side of the timeout chain
+// severs the stream.
 func RequestContextTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if timeout <= 0 {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isStreaming(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
 			defer cancel()
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// isStreaming returns true for long-lived streaming requests that must not
+// be cut off by the per-request timeout.
+func isStreaming(r *http.Request) bool {
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		return true
+	}
+	// Path-based fallback for clients that don't set the Accept header
+	// (curl, k6, etc.) — keeps testing/observability flexible.
+	if strings.HasSuffix(r.URL.Path, "/events") {
+		return true
+	}
+	return false
 }

@@ -32,7 +32,14 @@
     </script>
     %sveltekit.head%
   </head>
-  <body data-sveltekit-preload-data="hover">
+  <!--
+    Aggressive prefetch on hover for both the route's JS bundle and the
+    load() data. preload-code primes the chunk so the navigation paint
+    is instant; preload-data primes any +page.ts result so the first
+    render doesn't wait for the API. Combined effect: hovering a sidebar
+    link for >50ms makes the click feel like a tab switch, not a fetch.
+  -->
+  <body data-sveltekit-preload-code="hover" data-sveltekit-preload-data="hover">
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>

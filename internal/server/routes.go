@@ -61,6 +61,12 @@ func (s *Server) routes() http.Handler {
 		r.Get("/api/metrics/prometheus", s.handleMetricsPrometheus)
 		r.Get("/api/v1/audit", s.handleListAudit)
 
+		// Server-Sent Events — long-lived stream. The RequestContextTimeout
+		// middleware detects "Accept: text/event-stream" and skips the
+		// per-request deadline; the SSE handler clears the per-connection
+		// write deadline so neither timeout severs the stream.
+		r.Get("/api/v1/events", s.handleEvents)
+
 		// Tenant management. Read-self is open to any authenticated
 		// user; everything else is enforced inside the handler.
 		r.Route("/api/v1/tenants", func(r chi.Router) {

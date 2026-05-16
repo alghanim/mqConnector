@@ -38,6 +38,12 @@
   import PageHeader from '$lib/components/PageHeader.svelte';
   import StatChip from '$lib/components/StatChip.svelte';
   import SystemPulse from '$lib/components/SystemPulse.svelte';
+  import {
+    metrics as liveMetrics,
+    dlqTotal as liveDlqTotal,
+    health as liveHealth,
+    liveMode as liveModeStore
+  } from '$lib/stores/live';
   import { ArrowUpRight } from 'lucide-svelte';
 
   let health: Health | null = null;
@@ -48,6 +54,26 @@
   let error = '';
   let lastRefreshed = '';
   let interval: ReturnType<typeof setInterval> | undefined;
+  let metricsFallbackTimer: ReturnType<typeof setInterval> | undefined;
+
+  // Bind to the shared live stream. The layout already opened it; this
+  // page just subscribes to the metrics + health + dlqTotal stores and
+  // pushes each sample into the sparkline buffer.
+  $: health = $liveHealth;
+  $: pipelines = $liveMetrics?.pipelines ?? pipelines;
+  $: dlqTotal = $liveDlqTotal;
+  $: liveMode = $liveModeStore;
+
+  // Side effect: every time a new metrics snapshot lands, record it for
+  // the sparkline window. Cap at the snapshot's receivedAt to avoid
+  // recording the same frame twice on store rebroadcast.
+  let lastMetricsAt = 0;
+  $: if ($liveMetrics && $liveMetrics.receivedAt !== lastMetricsAt) {
+    lastMetricsAt = $liveMetrics.receivedAt;
+    recordSamples($liveMetrics.pipelines);
+    lastRefreshed = new Date($liveMetrics.receivedAt).toLocaleTimeString();
+    error = '';
+  }
 
   // History per pipeline of cumulative counters with timestamps.
   // 13 snapshots = 12 deltas = 60 s at the 5 s polling cadence.
@@ -106,43 +132,59 @@
     return out;
   }
 
-  async function refresh(): Promise<void> {
-    const [h, m, dlq, aud] = await Promise.allSettled([
-      api.get<Health>('/health'),
-      api.get<{ uptime: string; pipelines: Record<string, PipelineMetric> }>('/metrics'),
+  // Slow-cadence fetches for the two surfaces SSE doesn't push: the
+  // latest DLQ items panel and the recent admin activity feed. The
+  // dlq_total badge is fed by SSE; these are the *list* views.
+  async function refreshSlowSurfaces(): Promise<void> {
+    const [dlq, aud] = await Promise.allSettled([
       api.get<{ total: number; items: DLQEntry[] }>('/v1/dlq?page=1&per_page=5'),
       api.get<{ items: AuditEntry[] }>('/v1/audit?page=1&per_page=10')
     ]);
-    if (h.status === 'fulfilled') health = h.value;
-    if (m.status === 'fulfilled') {
-      pipelines = Object.values(m.value.pipelines || {});
-      recordSamples(pipelines);
-    }
     if (dlq.status === 'fulfilled') {
-      dlqTotal = dlq.value.total ?? 0;
       dlqLatest = dlq.value.items ?? [];
     }
     if (aud.status === 'fulfilled') audit = aud.value.items ?? [];
+  }
 
-    const failures = [h, m, dlq, aud].filter((r) => r.status === 'rejected');
-    if (failures.length === [h, m, dlq, aud].length) {
-      // Every endpoint failed — surface a single error banner. Partial
-      // failures stay silent: each card has its own empty state.
-      const f = failures[0] as PromiseRejectedResult;
-      error = (f.reason as { message?: string })?.message || 'failed to load';
-    } else {
-      error = '';
+  // Engaged only when SSE has dropped. Pulls /health + /metrics so the
+  // sparkline window doesn't go flat.
+  async function pollLiveFallback(): Promise<void> {
+    const [h, m] = await Promise.allSettled([
+      api.get<Health>('/health'),
+      api.get<{ uptime: string; pipelines: Record<string, PipelineMetric> }>('/metrics')
+    ]);
+    if (h.status === 'fulfilled') liveHealth.set(h.value);
+    if (m.status === 'fulfilled') {
+      const pipes = Object.values(m.value.pipelines || {});
+      liveMetrics.set({
+        uptime: m.value.uptime,
+        pipelines: pipes,
+        active: pipes.length,
+        receivedAt: Date.now()
+      });
     }
-    lastRefreshed = new Date().toLocaleTimeString();
   }
 
   onMount(() => {
-    refresh();
-    interval = setInterval(refresh, 5_000);
+    refreshSlowSurfaces();
+    interval = setInterval(refreshSlowSurfaces, 15_000);
   });
   onDestroy(() => {
     if (interval) clearInterval(interval);
+    if (metricsFallbackTimer) clearInterval(metricsFallbackTimer);
   });
+
+  // Polling fallback for the live-data surfaces. Engages only while
+  // SSE is down so we don't double-fetch in steady state.
+  $: if (!$liveModeStore) {
+    if (!metricsFallbackTimer) {
+      pollLiveFallback();
+      metricsFallbackTimer = setInterval(pollLiveFallback, 5_000);
+    }
+  } else if (metricsFallbackTimer) {
+    clearInterval(metricsFallbackTimer);
+    metricsFallbackTimer = undefined;
+  }
 
   // ── Derived KPIs ────────────────────────────────────────────────
   $: totalProcessed = pipelines.reduce((s, m) => s + m.messages_processed, 0);
@@ -219,7 +261,11 @@
         <StatChip label="v" value={health.version} />
       {/if}
       {#if lastRefreshed}
-        <StatChip label={t($locale, 'dash.refreshed')} value={lastRefreshed} />
+        <StatChip
+          label={liveMode ? t($locale, 'dash.live') : t($locale, 'dash.refreshed')}
+          value={lastRefreshed}
+          tone={liveMode ? 'success' : 'default'}
+        />
       {/if}
     </svelte:fragment>
   </PageHeader>

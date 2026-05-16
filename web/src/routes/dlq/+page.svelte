@@ -33,7 +33,11 @@
   let entries: DLQEntry[] = [];
   let total = 0;
   let pageNum = 1;
-  const perPage = 100;
+  // Page size is generous on purpose: during incident triage the
+  // operator scrolls a wide window of failures rather than clicking
+  // through pages. The CSS rule on .dlq-table tbody tr applies row
+  // virtualization (content-visibility) so 500 rows render fast.
+  const perPage = 500;
   let error = '';
   let busy = false;
 
@@ -770,6 +774,22 @@
   }
 
   /* ─── Table ──────────────────────────────────────────────────── */
+  /*
+   * Row-level virtualization via the browser. content-visibility: auto
+   * lets the engine skip layout + paint for rows outside the viewport;
+   * contain-intrinsic-size reserves the right height so the scrollbar
+   * doesn't jump as rows scroll into view. Together they keep DLQ snappy
+   * up to a few thousand rows without a windowing library.
+   *
+   * For datasets beyond what content-visibility comfortably handles
+   * (~5–10k rows), the proper fix is the VirtualTable component in
+   * lib/components/VirtualTable.svelte. The pagination cap (per_page
+   * <= 500) keeps us well below that here.
+   */
+  .dlq-table tbody tr {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 48px;
+  }
   .dlq-checkbox-cell {
     inline-size: 36px;
     text-align: center;

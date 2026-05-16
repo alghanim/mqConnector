@@ -42,10 +42,31 @@
   import Select from '$lib/components/Select.svelte';
   import Badge from '$lib/components/Badge.svelte';
   import Alert from '$lib/components/Alert.svelte';
+  import Dialog from '$lib/components/Dialog.svelte';
   import StageConfigForm from '$lib/components/StageConfigForm.svelte';
   import TransformListEditor from '$lib/components/TransformListEditor.svelte';
   import RoutingRuleListEditor from '$lib/components/RoutingRuleListEditor.svelte';
   import { SAMPLE_FIXTURES } from '$lib/sample-fixtures';
+  import {
+    Plug,
+    Send,
+    Filter as FilterIcon,
+    Shuffle,
+    Languages,
+    GitFork,
+    Code2,
+    ShieldCheck,
+    ZoomIn,
+    ZoomOut,
+    Maximize2,
+    HelpCircle,
+    CheckCircle2,
+    AlertTriangle,
+    Trash2,
+    Plus,
+    Database,
+    PanelLeftClose
+  } from 'lucide-svelte';
 
   // ─── Types ────────────────────────────────────────────────────────
   type NodeKind =
@@ -728,227 +749,569 @@
       throw new Error(t($locale, 'flow.error.cycleDetected'));
     }
   }
+
+  // ─── Icon + metadata per stage kind ──────────────────────────────
+  // The palette + canvas nodes both need an icon, a translated label,
+  // and a one-line helper for tooltips/onboarding. Centralised here so
+  // adding a new stage type is one row, not three files.
+  const KIND_META: Record<NodeKind, { icon: typeof Plug; tone: string }> = {
+    source: { icon: Plug, tone: 'var(--primary)' },
+    destination: { icon: Send, tone: 'var(--secondary)' },
+    filter: { icon: FilterIcon, tone: 'var(--qb-slate-130)' },
+    transform: { icon: Shuffle, tone: 'var(--qb-olive-gold)' },
+    translate: { icon: Languages, tone: 'var(--qb-sand)' },
+    route: { icon: GitFork, tone: 'var(--qb-slate-120)' },
+    script: { icon: Code2, tone: 'var(--qb-slate-110)' },
+    validate: { icon: ShieldCheck, tone: 'var(--qb-warm-gray)' }
+  };
+  function iconFor(kind: NodeKind) {
+    return KIND_META[kind]?.icon ?? Plug;
+  }
+  function kindLabel(kind: NodeKind): string {
+    return t($locale, `flow.kind.${kind}`);
+  }
+  function kindHelp(kind: NodeKind): string {
+    return t($locale, `flow.kind.help.${kind}`);
+  }
+
+  // ─── Canvas zoom + pan ───────────────────────────────────────────
+  // Zoom is a CSS transform on the inner "world" layer, not on the
+  // viewport itself — so the SVG edge layer + node layer scale
+  // together but the dotted background stays at 1:1 (a small price
+  // for crisp grid dots under zoom-out).
+  let zoom = 1;
+  const MIN_ZOOM = 0.5;
+  const MAX_ZOOM = 1.5;
+  function zoomIn() {
+    zoom = Math.min(MAX_ZOOM, Math.round((zoom + 0.1) * 100) / 100);
+  }
+  function zoomOut() {
+    zoom = Math.max(MIN_ZOOM, Math.round((zoom - 0.1) * 100) / 100);
+  }
+  function zoomReset() {
+    zoom = 1;
+  }
+  function onCanvasWheel(e: WheelEvent) {
+    // Cmd/Ctrl + wheel zooms; bare wheel scrolls (browser default).
+    // We intentionally don't intercept bare scroll so the operator
+    // can pan the canvas with the trackpad.
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    if (e.deltaY < 0) zoomIn();
+    else zoomOut();
+  }
+
+  // ─── Dirty tracking ──────────────────────────────────────────────
+  // Used by the status bar's "saved/dirty" pill. A small heuristic
+  // serializer covers the cases the operator actually edits — node
+  // positions and edges are deliberately excluded so a layout tweak
+  // doesn't read as dirty.
+  let baseline = '';
+  $: signature = JSON.stringify({
+    name: pipelineName,
+    nodes: nodes.map((n) => ({
+      id: n.id,
+      kind: n.kind,
+      label: n.label,
+      connection_id: n.connection_id,
+      config: n.config
+    })),
+    edges: edges.map((e) => ({ from: e.from, to: e.to })),
+    transforms,
+    rules
+  });
+  $: dirty = baseline !== '' && signature !== baseline;
+  function markClean() {
+    baseline = signature;
+  }
+
+  // ─── Validation summary (drives the status bar pill) ─────────────
+  $: validation = (() => {
+    const sources = nodes.filter((n) => n.kind === 'source');
+    const dests = nodes.filter((n) => n.kind === 'destination');
+    if (nodes.length === 0) return { ok: false, msg: '' };
+    if (sources.length !== 1) return { ok: false, msg: t($locale, 'flow.error.needSource') };
+    if (dests.length < 1) return { ok: false, msg: t($locale, 'flow.error.needDest') };
+    if (!sources[0].connection_id) return { ok: false, msg: t($locale, 'flow.error.missingConn') };
+    for (const d of dests) if (!d.connection_id) return { ok: false, msg: t($locale, 'flow.error.missingConn') };
+    try {
+      const order = topoFromSourceCore(
+        nodes.map((n) => ({ id: n.id, kind: n.kind })),
+        edges,
+        sources[0].id
+      );
+      const reachable = new Set(order);
+      for (const d of dests) if (!reachable.has(d.id)) {
+        return { ok: false, msg: t($locale, 'flow.error.notConnected') };
+      }
+    } catch {
+      return { ok: false, msg: t($locale, 'flow.error.cycleDetected') };
+    }
+    return { ok: true, msg: t($locale, 'flow.status.valid') };
+  })();
+
+  // ─── Clear-canvas confirmation dialog ────────────────────────────
+  let clearDialogOpen = false;
+  function askClear() {
+    clearDialogOpen = true;
+  }
+  function confirmClear() {
+    clearDialogOpen = false;
+    clearAllImmediate();
+  }
+  function cancelClear() {
+    clearDialogOpen = false;
+  }
+  // The old clearAll() used window.confirm() — keep it as the
+  // immediate implementation so existing callers still work.
+  function clearAllImmediate() {
+    nodes = [];
+    edges = [];
+    selectedId = null;
+    error = '';
+    savedMsg = '';
+    transforms = [];
+    rules = [];
+    pipelineId = null;
+    pipelineName = '';
+    const u = new URL(window.location.href);
+    if (u.searchParams.has('pipeline')) {
+      u.searchParams.delete('pipeline');
+      goto(u.pathname + (u.search ? u.search : ''), {
+        replaceState: true,
+        noScroll: true
+      });
+    }
+    markClean();
+  }
+
+  // Mark clean after a successful save so the pill flips back to
+  // "Saved". Done in a reactive block so the existing saveAndDeploy
+  // doesn't need to know about dirty tracking.
+  $: if (savedMsg) markClean();
 </script>
 
 <svelte:window on:mousemove={onCanvasMouseMove} on:mouseup={onCanvasMouseUp} />
 
-<div class="flow-shell" class:preview-open={previewOpen}>
-  <!-- ─── Palette + canvas + props ──────────────────────────────────── -->
-  <aside class="palette">
-    <p class="palette-heading">{t($locale, 'flow.palette.stages')}</p>
-    {#each palette as p}
-      <div
-        class="palette-item"
-        role="button"
-        tabindex="0"
-        draggable="true"
-        on:dragstart={(e) => onPaletteDragStart(e, p.kind)}
-        style:--tone={p.tone}
-      >
-        <span class="dot" style="background:{p.tone}"></span>
-        {p.label}
-      </div>
-    {/each}
-
-    <!-- ─── Sample → filter (the core workflow) ──────────────────────── -->
-    <p class="palette-heading mt-4">{t($locale, 'preview.sample')}</p>
-    <p class="palette-help">{t($locale, 'flow.sample.help')}</p>
-    <input
-      type="file"
-      accept=".json,.xml,.txt"
-      on:change={onFlowSampleFile}
-      class="palette-file"
-    />
-    <div class="try-row">
-      <span class="try-label">{t($locale, 'preview.try')}</span>
-      {#each SAMPLE_FIXTURES as f}
-        <button type="button" class="try-btn" on:click={() => loadFlowSample(f.body)}>
-          {f.label}
-        </button>
-      {/each}
+<!-- ─── Header (sticky, above the shell) ───────────────────────────── -->
+<header class="flow-header">
+  <div class="flow-header-title">
+    <h2 class="flow-header-h">
+      {#if pipelineId}
+        <span class="editing-tag">{t($locale, 'flow.editing')}</span>
+        {pipelineName || t($locale, 'flow.title')}
+      {:else}
+        {t($locale, 'flow.title')}
+      {/if}
+    </h2>
+    <p class="flow-header-sub">
+      {#if loadingPipeline}
+        {t($locale, 'flow.loading')}
+      {:else}
+        {t($locale, 'flow.subtitle')}
+      {/if}
+    </p>
+  </div>
+  <div class="flow-header-actions">
+    <div class="flow-header-name">
+      <Input
+        bind:value={pipelineName}
+        label={t($locale, 'flow.props.name')}
+        placeholder="flow-1"
+      />
     </div>
-    <textarea
-      class="palette-sample"
-      rows="4"
-      bind:value={flowSample}
-      on:blur={extractFlowPaths}
-      placeholder={'{"id":"order-1","secret":"hush"}'}
-    ></textarea>
-    {#if flowExtractError}
-      <p class="palette-help" style="color: var(--danger)">{flowExtractError}</p>
+    {#if pipelineId}
+      <Button variant="ghost" on:click={() => goto('/flow')}>
+        {t($locale, 'flow.actions.newFlow')}
+      </Button>
     {/if}
-    {#if flowExtractedPaths.length > 0}
-      <div class="palette-paths">
-        {#each flowExtractedPaths as p}
-          <button
-            type="button"
-            class="path-chip"
-            class:on={flowFilterPathSet.has(p)}
-            on:click={() => addPathToFlowFilter(p)}
-            title={t($locale, 'preview.paths.chipHint')}
+    <Button variant="ghost" on:click={askClear}>
+      {t($locale, 'flow.actions.clear')}
+    </Button>
+    <Button variant="outline" on:click={runPreview} loading={previewing}>
+      {t($locale, 'preview.run')}
+    </Button>
+    <Button on:click={saveAndDeploy} loading={saving} disabled={!validation.ok}>
+      {t($locale, 'flow.actions.save')}
+    </Button>
+  </div>
+</header>
+
+{#if error}
+  <div class="flow-banner"><Alert variant="error">{error}</Alert></div>
+{/if}
+{#if savedMsg}
+  <div class="flow-banner"><Alert variant="success">{savedMsg}</Alert></div>
+{/if}
+
+<div class="flow-shell" class:preview-open={previewOpen}>
+  <!-- ─── Palette ────────────────────────────────────────────────── -->
+  <aside class="palette" aria-label={t($locale, 'flow.section.stages')}>
+    <section class="palette-section">
+      <header class="palette-section-head">
+        <span class="palette-section-icon" aria-hidden="true">
+          <Database size={14} strokeWidth={1.75} />
+        </span>
+        <p class="palette-section-title">{t($locale, 'flow.section.stages')}</p>
+      </header>
+      <div class="palette-grid">
+        {#each palette as p (p.kind)}
+          {@const Icon = iconFor(p.kind)}
+          <div
+            class="palette-card"
+            role="button"
+            tabindex="0"
+            draggable="true"
+            on:dragstart={(e) => onPaletteDragStart(e, p.kind)}
+            style:--tone={p.tone}
+            title={kindHelp(p.kind)}
           >
-            {flowFilterPathSet.has(p) ? '✓ ' : '+ '}{p}
+            <span class="palette-card-icon" aria-hidden="true">
+              <svelte:component this={Icon} size={16} strokeWidth={1.75} />
+            </span>
+            <div class="palette-card-text">
+              <span class="palette-card-label">{kindLabel(p.kind)}</span>
+              <span class="palette-card-help">{kindHelp(p.kind)}</span>
+            </div>
+          </div>
+        {/each}
+      </div>
+    </section>
+
+    <section class="palette-section">
+      <header class="palette-section-head">
+        <span class="palette-section-icon" aria-hidden="true">
+          <FilterIcon size={14} strokeWidth={1.75} />
+        </span>
+        <p class="palette-section-title">{t($locale, 'flow.palette.sample')}</p>
+      </header>
+      <p class="palette-help">{t($locale, 'flow.palette.sampleHelp')}</p>
+      <input
+        type="file"
+        accept=".json,.xml,.txt"
+        on:change={onFlowSampleFile}
+        class="palette-file"
+      />
+      <div class="try-row">
+        <span class="try-label">{t($locale, 'preview.try')}</span>
+        {#each SAMPLE_FIXTURES as f}
+          <button type="button" class="try-btn" on:click={() => loadFlowSample(f.body)}>
+            {f.label}
           </button>
         {/each}
       </div>
-      <button type="button" class="palette-use-all" on:click={addAllPathsToFlowFilter}>
-        {t($locale, 'preview.paths.useAll')}
-      </button>
-    {/if}
-
-    <p class="palette-heading mt-4">{t($locale, 'flow.palette.connections')}</p>
-    {#if connections.length === 0}
-      <p class="palette-help">{t($locale, 'flow.connections.empty')}</p>
-    {:else}
-      {#each connections as c}
-        <button
-          type="button"
-          class="palette-conn"
-          on:click={() => navigator.clipboard?.writeText(c.id || '')}
-          title={c.id}
-        >
-          <span class="dot" style="background: var(--text-muted)"></span>
-          {c.name} <span style="color: var(--text-muted)">({c.type})</span>
+      <textarea
+        class="palette-sample"
+        rows="4"
+        bind:value={flowSample}
+        on:blur={extractFlowPaths}
+        placeholder={'{"id":"order-1","secret":"hush"}'}
+      ></textarea>
+      {#if flowExtractError}
+        <p class="palette-help" style="color: var(--danger)">{flowExtractError}</p>
+      {/if}
+      {#if flowExtractedPaths.length > 0}
+        <div class="palette-paths">
+          {#each flowExtractedPaths as p}
+            <button
+              type="button"
+              class="path-chip"
+              class:on={flowFilterPathSet.has(p)}
+              on:click={() => addPathToFlowFilter(p)}
+              title={t($locale, 'preview.paths.chipHint')}
+            >
+              {flowFilterPathSet.has(p) ? '✓ ' : '+ '}{p}
+            </button>
+          {/each}
+        </div>
+        <button type="button" class="palette-use-all" on:click={addAllPathsToFlowFilter}>
+          {t($locale, 'preview.paths.useAll')}
         </button>
-      {/each}
-    {/if}
+      {/if}
+    </section>
+
+    <section class="palette-section">
+      <header class="palette-section-head">
+        <span class="palette-section-icon" aria-hidden="true">
+          <Plug size={14} strokeWidth={1.75} />
+        </span>
+        <p class="palette-section-title">{t($locale, 'flow.palette.connections')}</p>
+      </header>
+      {#if connections.length === 0}
+        <p class="palette-help">{t($locale, 'flow.connections.empty')}</p>
+      {:else}
+        <p class="palette-help">{t($locale, 'flow.palette.connectionsHelp')}</p>
+        {#each connections as c (c.id)}
+          <button
+            type="button"
+            class="palette-conn"
+            on:click={() => navigator.clipboard?.writeText(c.id || '')}
+            title={c.id}
+          >
+            <span class="palette-conn-dot" style="background: var(--text-muted)"></span>
+            <span class="palette-conn-name">{c.name}</span>
+            <span class="palette-conn-type">{c.type}</span>
+          </button>
+        {/each}
+      {/if}
+    </section>
   </aside>
 
+  <!-- ─── Canvas ─────────────────────────────────────────────────── -->
   <section
     class="canvas-wrap"
     bind:this={canvasEl}
     on:dragover={onCanvasDragOver}
     on:drop={onCanvasDrop}
+    on:wheel={onCanvasWheel}
     role="application"
     aria-label="Flow canvas"
   >
-    <!-- Edges go in an SVG underneath the nodes. pointer-events:none lets
-         drags pass through onto nodes; the SVG only paints. -->
-    <svg
-      bind:this={svgEl}
-      class="edges"
-      preserveAspectRatio="xMinYMin"
-      role="presentation"
-    >
-      {#each edges as e (e.from + '→' + e.to)}
-        {@const a = byId(e.from)}
-        {@const b = byId(e.to)}
-        {#if a && b}
-          <path d={edgePath(a, b)} class="edge" />
-        {/if}
-      {/each}
-      {#if connecting}
-        {@const a = byId(connecting.fromId)}
-        {#if a}
-          <path d={dragPath(a, connecting.cursorX, connecting.cursorY)} class="edge edge-drag" />
-        {/if}
-      {/if}
-    </svg>
+    <!-- Floating canvas controls -->
+    <div class="canvas-controls" aria-label="Canvas controls">
+      <button
+        type="button"
+        class="canvas-ctl"
+        on:click={zoomIn}
+        aria-label={t($locale, 'flow.canvas.controls.zoomIn')}
+        title={t($locale, 'flow.canvas.controls.zoomIn')}
+      >
+        <ZoomIn size={14} strokeWidth={1.75} />
+      </button>
+      <button
+        type="button"
+        class="canvas-ctl"
+        on:click={zoomOut}
+        aria-label={t($locale, 'flow.canvas.controls.zoomOut')}
+        title={t($locale, 'flow.canvas.controls.zoomOut')}
+      >
+        <ZoomOut size={14} strokeWidth={1.75} />
+      </button>
+      <button
+        type="button"
+        class="canvas-ctl"
+        on:click={zoomReset}
+        aria-label={t($locale, 'flow.canvas.controls.fit')}
+        title={t($locale, 'flow.canvas.controls.fit')}
+      >
+        <Maximize2 size={14} strokeWidth={1.75} />
+      </button>
+      <button
+        type="button"
+        class="canvas-ctl"
+        aria-label={t($locale, 'flow.canvas.controls.help')}
+        title={t($locale, 'flow.canvas.controls.help')}
+      >
+        <HelpCircle size={14} strokeWidth={1.75} />
+      </button>
+    </div>
 
-    {#if nodes.length === 0}
-      <p class="canvas-empty">{t($locale, 'flow.canvas.empty')}</p>
-    {/if}
-
-    {#each nodes as n (n.id)}
-      <div
-        class="flow-node"
-        class:selected={n.id === selectedId}
-        style="left: {n.x}px; top: {n.y}px; --tone: {toneFor(n.kind)}"
-        on:mousedown={(e) => onNodeMouseDown(e, n)}
-        on:click={() => (selectedId = n.id)}
+    <!-- Zoomable inner layer ("world"). Both the edge SVG and the
+         positioned nodes scale together. -->
+    <div class="canvas-world" style:transform="scale({zoom})">
+      <svg
+        bind:this={svgEl}
+        class="edges"
+        preserveAspectRatio="xMinYMin"
         role="presentation"
       >
-        <div class="flow-node-head">
-          <span class="dot" style="background: {toneFor(n.kind)}"></span>
-          <span class="flow-node-kind">{n.kind}</span>
-          {#if n.id === selectedId}
-            <button
-              type="button"
-              class="delete-btn"
-              title={t($locale, 'flow.props.delete')}
-              on:click|stopPropagation={() => deleteNode(n.id)}
-            >×</button>
+        <defs>
+          <marker
+            id="edge-arrow"
+            viewBox="0 0 8 8"
+            refX="6"
+            refY="4"
+            markerWidth="6"
+            markerHeight="6"
+            orient="auto-start-reverse"
+          >
+            <path d="M0,0 L8,4 L0,8 z" />
+          </marker>
+        </defs>
+        {#each edges as e (e.from + '→' + e.to)}
+          {@const a = byId(e.from)}
+          {@const b = byId(e.to)}
+          {#if a && b}
+            <path d={edgePath(a, b)} class="edge" marker-end="url(#edge-arrow)" />
           {/if}
-        </div>
-        <div class="flow-node-body">
-          {#if n.kind === 'source' || n.kind === 'destination'}
-            {connections.find((c) => c.id === n.connection_id)?.name || '— pick connection —'}
-          {:else}
-            {n.label || n.kind}
+        {/each}
+        {#if connecting}
+          {@const a = byId(connecting.fromId)}
+          {#if a}
+            <path d={dragPath(a, connecting.cursorX, connecting.cursorY)} class="edge edge-drag" />
           {/if}
-        </div>
-        {#if n.kind !== 'source'}
-          <span
-            class="port port-in"
-            role="presentation"
-            on:mouseup={(e) => onPortInMouseUp(e, n)}
-          ></span>
         {/if}
-        {#if n.kind !== 'destination'}
-          <span
-            class="port port-out"
-            role="presentation"
-            on:mousedown={(e) => onPortOutMouseDown(e, n)}
-          ></span>
+      </svg>
+
+      {#each nodes as n (n.id)}
+        {@const Icon = iconFor(n.kind)}
+        <div
+          class="flow-node flow-node-{n.kind}"
+          class:selected={n.id === selectedId}
+          style="left: {n.x}px; top: {n.y}px; --tone: {toneFor(n.kind)}"
+          on:mousedown={(e) => onNodeMouseDown(e, n)}
+          on:click={() => (selectedId = n.id)}
+          role="presentation"
+        >
+          <div class="flow-node-head">
+            <span class="flow-node-icon" aria-hidden="true">
+              <svelte:component this={Icon} size={14} strokeWidth={1.75} />
+            </span>
+            <span class="flow-node-kind">{kindLabel(n.kind)}</span>
+            {#if n.id === selectedId}
+              <button
+                type="button"
+                class="delete-btn"
+                aria-label={t($locale, 'flow.props.delete')}
+                title={t($locale, 'flow.props.delete')}
+                on:click|stopPropagation={() => deleteNode(n.id)}
+              >
+                <Trash2 size={12} strokeWidth={2} />
+              </button>
+            {/if}
+          </div>
+          <div class="flow-node-body">
+            {#if n.kind === 'source' || n.kind === 'destination'}
+              {#if n.connection_id}
+                <span class="flow-node-connection">
+                  {connections.find((c) => c.id === n.connection_id)?.name || n.connection_id}
+                </span>
+              {:else}
+                <span class="flow-node-missing">{t($locale, 'flow.props.connection')}…</span>
+              {/if}
+            {:else}
+              {n.label || kindLabel(n.kind)}
+            {/if}
+          </div>
+          {#if n.kind !== 'source'}
+            <span
+              class="port port-in"
+              role="presentation"
+              aria-label="input"
+              on:mouseup={(e) => onPortInMouseUp(e, n)}
+            ></span>
+          {/if}
+          {#if n.kind !== 'destination'}
+            <span
+              class="port port-out"
+              role="presentation"
+              aria-label="output"
+              on:mousedown={(e) => onPortOutMouseDown(e, n)}
+            ></span>
+          {/if}
+        </div>
+      {/each}
+    </div>
+
+    {#if nodes.length === 0}
+      <div class="canvas-empty">
+        <div class="canvas-empty-icon" aria-hidden="true">
+          <Plus size={24} strokeWidth={1.5} />
+        </div>
+        <p class="canvas-empty-title">{t($locale, 'flow.canvas.empty')}</p>
+        <p class="canvas-empty-sub">{t($locale, 'flow.canvas.controls.help')}</p>
+      </div>
+    {/if}
+
+    <!-- ─── Canvas status bar ────────────────────────────────────── -->
+    <footer class="canvas-status">
+      <div class="canvas-status-validity">
+        {#if validation.ok}
+          <span class="status-pill status-pill-success">
+            <CheckCircle2 size={12} strokeWidth={2} />
+            <span>{validation.msg}</span>
+          </span>
+        {:else if validation.msg}
+          <span class="status-pill status-pill-warning">
+            <AlertTriangle size={12} strokeWidth={2} />
+            <span>{validation.msg}</span>
+          </span>
+        {/if}
+        {#if pipelineId}
+          {#if dirty}
+            <span class="status-pill status-pill-neutral">
+              <PanelLeftClose size={12} strokeWidth={2} />
+              <span>{t($locale, 'flow.status.dirty')}</span>
+            </span>
+          {:else}
+            <span class="status-pill status-pill-muted">
+              <CheckCircle2 size={12} strokeWidth={2} />
+              <span>{t($locale, 'flow.status.clean')}</span>
+            </span>
+          {/if}
         {/if}
       </div>
-    {/each}
+      <div class="canvas-status-counts">
+        <span class="status-count">
+          <span class="status-count-label">{t($locale, 'flow.status.nodes')}</span>
+          <span class="status-count-value">{nodes.length}</span>
+        </span>
+        <span class="status-count">
+          <span class="status-count-label">{t($locale, 'flow.status.edges')}</span>
+          <span class="status-count-value">{edges.length}</span>
+        </span>
+        <span class="status-count">
+          <span class="status-count-label">{t($locale, 'flow.status.zoom')}</span>
+          <span class="status-count-value">{Math.round(zoom * 100)}%</span>
+        </span>
+      </div>
+    </footer>
   </section>
 
-  <aside class="props">
+  <!-- ─── Inspector ─────────────────────────────────────────────── -->
+  <aside class="inspector" aria-label={t($locale, 'flow.inspector.title')}>
     {#if !selected}
-      <p class="props-empty">{t($locale, 'flow.props.empty')}</p>
-    {:else}
-      <p class="section-heading mb-3">{selected.kind}</p>
-      <Input
-        bind:value={selected.label}
-        label={t($locale, 'flow.props.label')}
-      />
-      {#if selected.kind === 'source' || selected.kind === 'destination'}
-        <Select
-          bind:value={selected.connection_id}
-          options={connOptions}
-          label={t($locale, 'flow.props.connection')}
-        />
-      {:else if selected.kind === 'transform'}
-        <!--
-          A transform node is a position marker; the ops list lives at
-          pipeline scope, so the props panel edits the shared
-          `transforms` state rather than this node's config blob. The
-          StageConfigForm equivalent for `transform` only shows an
-          explanatory help block — we surface it inline above the
-          editor for context.
-        -->
-        <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />
-        <div class="mt-3">
-          <TransformListEditor bind:transforms compact />
-        </div>
-      {:else if selected.kind === 'route'}
-        <!--
-          Same pipeline-scope pattern as transform: rules live in shared
-          state, edited from this panel, persisted whole. Destination
-          nodes elsewhere on the canvas are visual only — the rule's
-          destination_id points at a connection, not a node id.
-        -->
-        <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />
-        <div class="mt-3">
-          <RoutingRuleListEditor bind:rules {connections} compact />
-        </div>
-      {:else}
-        <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />
-      {/if}
-      <div class="flex mt-3 justify-end">
-        <Button variant="outline" on:click={() => deleteNode(selected.id)}>
-          {t($locale, 'flow.props.delete')}
-        </Button>
+      <div class="inspector-empty">
+        <p class="inspector-empty-title">{t($locale, 'flow.inspector.title')}</p>
+        <p class="inspector-empty-body">{t($locale, 'flow.props.empty')}</p>
       </div>
+    {:else}
+      {@const SelIcon = iconFor(selected.kind)}
+      <header class="inspector-head" style:--tone={toneFor(selected.kind)}>
+        <span class="inspector-icon" aria-hidden="true">
+          <svelte:component this={SelIcon} size={16} strokeWidth={1.75} />
+        </span>
+        <div class="inspector-head-text">
+          <p class="inspector-head-kind">{kindLabel(selected.kind)}</p>
+          <p class="inspector-head-help">{kindHelp(selected.kind)}</p>
+        </div>
+      </header>
+
+      <div class="inspector-body">
+        <Input bind:value={selected.label} label={t($locale, 'flow.props.label')} />
+        {#if selected.kind === 'source' || selected.kind === 'destination'}
+          <Select
+            bind:value={selected.connection_id}
+            options={connOptions}
+            label={t($locale, 'flow.props.connection')}
+          />
+        {:else if selected.kind === 'transform'}
+          <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />
+          <div class="mt-3">
+            <TransformListEditor bind:transforms compact />
+          </div>
+        {:else if selected.kind === 'route'}
+          <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />
+          <div class="mt-3">
+            <RoutingRuleListEditor bind:rules {connections} compact />
+          </div>
+        {:else}
+          <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />
+        {/if}
+      </div>
+
+      <footer class="inspector-foot">
+        <Button variant="outline" on:click={() => deleteNode(selected.id)}>
+          <Trash2 size={14} strokeWidth={1.75} />
+          <span>{t($locale, 'flow.inspector.deleteNode')}</span>
+        </Button>
+      </footer>
     {/if}
   </aside>
 
   <!--
     Preview drawer — spans all 3 grid columns, lives in grid-row 2 when
-    open. Collapsed by default; runPreview() also opens it. The status
-    badge + close button stay on the right; the output fills the rest.
+    open. Collapsed by default; runPreview() also opens it.
   -->
   {#if previewOpen}
     <div class="flow-preview">
@@ -985,65 +1348,69 @@
   {/if}
 </div>
 
-<!-- ─── Header (above the shell) ────────────────────────────────── -->
-<div class="flow-header">
-  <div>
-    <h2 class="text-2xl font-semibold" style="color: var(--text)">
-      {#if pipelineId}
-        <span class="editing-tag">{t($locale, 'flow.editing')}</span>
-        {pipelineName || t($locale, 'flow.title')}
-      {:else}
-        {t($locale, 'flow.title')}
-      {/if}
-    </h2>
-    <p class="text-sm mt-1" style="color: var(--text-muted)">
-      {#if loadingPipeline}
-        {t($locale, 'flow.loading')}
-      {:else}
-        {t($locale, 'flow.help')}
-      {/if}
-    </p>
-  </div>
-  <div class="flex items-center gap-2">
-    <Input bind:value={pipelineName} label={t($locale, 'flow.props.name')} placeholder="flow-1" />
-    {#if pipelineId}
-      <Button variant="ghost" on:click={() => goto('/flow')}>
-        {t($locale, 'flow.actions.newFlow')}
-      </Button>
-    {/if}
-    <Button variant="ghost" on:click={clearAll}>{t($locale, 'flow.actions.clear')}</Button>
-    <Button variant="outline" on:click={runPreview} loading={previewing}>
-      {t($locale, 'preview.run')}
-    </Button>
-    <Button on:click={saveAndDeploy} loading={saving}>{t($locale, 'flow.actions.save')}</Button>
-  </div>
-</div>
-
-{#if error}
-  <div class="mt-2"><Alert variant="error">{error}</Alert></div>
-{/if}
-{#if savedMsg}
-  <div class="mt-2"><Alert variant="success">{savedMsg}</Alert></div>
-{/if}
+<Dialog
+  open={clearDialogOpen}
+  title={t($locale, 'flow.clear.title')}
+  confirmLabel={t($locale, 'flow.actions.clear')}
+  cancelLabel={t($locale, 'common.cancel')}
+  on:confirm={confirmClear}
+  on:cancel={cancelClear}
+>
+  <p>{t($locale, 'flow.clear.body')}</p>
+</Dialog>
 
 <style>
-  /* The flex header sits above the shell, which is a 3-column grid:
-     palette · canvas · props. */
-  :global(main:has(.flow-shell)) { padding: 0; }
+  /* The flow editor takes the full main-column width and height. The
+     parent <main> in +layout.svelte has its default padding zeroed for
+     pages that host .flow-shell so palette/canvas/inspector can hug
+     the chrome edges. */
+  :global(main:has(.flow-shell)) {
+    padding: 0;
+  }
 
+  /* ─── Header strip ────────────────────────────────────────────── */
   .flow-header {
-    display: flex; align-items: flex-end; justify-content: space-between;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
     gap: 16px;
+    padding: 14px 20px;
+    background: var(--surface);
+    border-block-end: 1px solid var(--border);
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 5;
+  }
+  .flow-header-title {
+    min-inline-size: 0;
+    flex: 1;
+  }
+  .flow-header-h {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+  .flow-header-sub {
+    margin-block-start: 2px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .flow-header-actions {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .flow-header-name {
+    inline-size: 220px;
   }
   /*
-   * Editing-mode prefix on the page title — small uppercase eyebrow
-   * inline with the pipeline name. Uses --section-header (gold on dark,
-   * dark-gold on light) so it reads as a Brand Guide §5.8 eyebrow, not
-   * a CTA. Maroon is reserved for actual destructive/primary actions
-   * per Rule 16 of brand-tokens.css.
+   * "Editing" eyebrow on the title. Uses --section-header (gold on
+   * dark, dark-gold on light) per Brand Guide §5.8. Maroon is reserved
+   * for primary/destructive CTAs.
    */
   .editing-tag {
     display: inline-block;
@@ -1055,28 +1422,31 @@
     color: var(--section-header);
     vertical-align: middle;
   }
+  .flow-banner {
+    padding: 8px 20px 0;
+  }
 
+  /* ─── Shell ───────────────────────────────────────────────────── */
+  /*
+   * 3-column grid: palette · canvas · inspector. The canvas grows to
+   * fill the available width; the side panels are fixed so the operator
+   * doesn't fight reflow as they drop nodes.
+   */
   .flow-shell {
     display: grid;
-    grid-template-columns: 240px 1fr 300px;
+    grid-template-columns: 260px 1fr 320px;
     grid-template-rows: 1fr;
-    height: calc(100vh - 140px);
-    min-height: 480px;
+    block-size: calc(100vh - 96px);
+    min-block-size: 520px;
     background: var(--bg);
   }
-  /*
-   * When the preview drawer is open we split the shell into two rows so
-   * the existing 3-col layout shrinks vertically and the drawer spans
-   * the full width below it. The drawer height (260dp) is fixed so the
-   * canvas keeps a predictable working area.
-   */
   .flow-shell.preview-open {
     grid-template-rows: 1fr 260px;
   }
   .flow-preview {
     grid-column: 1 / -1;
     grid-row: 2;
-    border-top: 1px solid var(--border);
+    border-block-start: 1px solid var(--border);
     background: var(--surface);
     padding: 12px 16px;
     display: flex;
@@ -1092,7 +1462,7 @@
   }
   .flow-preview-output {
     flex: 1;
-    width: 100%;
+    inline-size: 100%;
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -1102,48 +1472,131 @@
     padding: 8px 10px;
     resize: none;
   }
-  .flow-preview-output:focus { outline: 2px solid var(--primary); }
+  .flow-preview-output:focus {
+    outline: 2px solid var(--primary);
+  }
+  .section-heading {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
 
-  .palette, .props {
+  /* ─── Palette ─────────────────────────────────────────────────── */
+  .palette {
     background: var(--surface);
     border-inline-end: 1px solid var(--border);
-    padding: 16px;
     overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
   }
-  .props { border-inline-end: none; border-inline-start: 1px solid var(--border); }
-  .palette-heading {
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
-    color: var(--text-muted); margin-bottom: 8px;
+  .palette-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
-  .palette-item, .palette-conn {
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 10px;
+  .palette-section-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .palette-section-icon {
+    color: var(--text-tertiary);
+    display: inline-flex;
+  }
+  .palette-section-title {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .palette-help {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+    margin: 0;
+  }
+
+  .palette-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .palette-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 8px 8px;
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--surface-2);
     color: var(--text);
     cursor: grab;
-    margin-bottom: 6px;
-    font-size: 13px;
-    width: 100%;
-    text-align: start;
+    user-select: none;
+    transition:
+      border-color 120ms,
+      background-color 120ms,
+      transform 80ms;
   }
-  .palette-item:hover, .palette-conn:hover { border-color: var(--accent); }
-  .palette-conn { cursor: pointer; }
-  .palette-help { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .palette-card:hover,
+  .palette-card:focus-visible {
+    border-color: var(--tone);
+    outline: none;
+  }
+  .palette-card:active {
+    cursor: grabbing;
+    transform: translateY(1px);
+  }
+  .palette-card-icon {
+    inline-size: 22px;
+    block-size: 22px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--tone) 18%, transparent);
+    color: var(--tone);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+  .palette-card-text {
+    min-inline-size: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .palette-card-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.1;
+  }
+  .palette-card-help {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
 
   .palette-file {
     display: block;
     color: var(--text-muted);
     font-size: 11px;
-    margin-bottom: 6px;
   }
   .palette-sample {
-    width: 100%;
+    inline-size: 100%;
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 10px;
     color: var(--text);
     padding: 6px 8px;
     font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
@@ -1151,21 +1604,27 @@
     resize: vertical;
   }
   .palette-paths {
-    margin-top: 8px;
-    display: flex; flex-wrap: wrap; gap: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
   }
   .path-chip {
     border: 1px solid var(--border);
-    border-radius: 12px; /* labeled chip — Brand Guide §5 / Rule 9 (pill is count-badge only) */
+    border-radius: 12px;
     padding: 3px 10px;
     font-size: 11px;
     color: var(--text);
     background: var(--surface);
     font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
     cursor: pointer;
-    transition: border-color 120ms, background-color 120ms, color 120ms;
+    transition:
+      border-color 120ms,
+      background-color 120ms,
+      color 120ms;
   }
-  .path-chip:hover { border-color: var(--accent); }
+  .path-chip:hover {
+    border-color: var(--accent);
+  }
   .path-chip.on {
     border-color: var(--accent);
     background: var(--accent);
@@ -1173,123 +1632,491 @@
     font-weight: 600;
   }
   .palette-use-all {
-    margin-top: 8px;
-    width: 100%;
+    inline-size: 100%;
     padding: 6px 8px;
     background: transparent;
     border: 1px solid var(--accent);
     color: var(--accent);
-    border-radius: 12px;
+    border-radius: 10px;
     cursor: pointer;
     font-size: 12px;
   }
-  .palette-use-all:hover { background: var(--accent); color: var(--bg); }
+  .palette-use-all:hover {
+    background: var(--accent);
+    color: var(--bg);
+  }
 
   .try-row {
-    display: flex; flex-wrap: wrap; align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 4px;
-    margin-bottom: 6px;
   }
-  .try-label { font-size: 11px; color: var(--text-muted); }
+  .try-label {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
   .try-btn {
     border: 1px solid var(--border);
-    border-radius: 12px; /* labeled chip — Brand Guide §5 / Rule 9 (pill is count-badge only) */
+    border-radius: 12px;
     padding: 2px 8px;
     font-size: 10px;
     background: var(--surface);
     color: var(--text);
     font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
     cursor: pointer;
-    transition: border-color 120ms, color 120ms;
+    transition:
+      border-color 120ms,
+      color 120ms;
   }
-  .try-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .try-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 
+  .palette-conn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    inline-size: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+    text-align: start;
+    transition: border-color 120ms;
+  }
+  .palette-conn:hover {
+    border-color: var(--secondary);
+  }
+  .palette-conn-dot {
+    inline-size: 8px;
+    block-size: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .palette-conn-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .palette-conn-type {
+    color: var(--text-tertiary);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* ─── Canvas ──────────────────────────────────────────────────── */
   .canvas-wrap {
     position: relative;
     overflow: auto;
+    background-color: var(--bg);
     background-image: radial-gradient(circle, var(--surface-2) 1px, transparent 1px);
     background-size: 20px 20px;
   }
+  .canvas-world {
+    position: relative;
+    inline-size: 4000px;
+    block-size: 2400px;
+    transform-origin: 0 0;
+  }
   .canvas-empty {
-    position: absolute; inset: 0;
-    display: flex; align-items: center; justify-content: center;
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     color: var(--text-muted);
+    pointer-events: none;
+    padding: 24px;
+    text-align: center;
+  }
+  .canvas-empty-icon {
+    inline-size: 56px;
+    block-size: 56px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    color: var(--secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  :global([data-theme='light']) .canvas-empty-icon {
+    color: var(--primary);
+  }
+  .canvas-empty-title {
     font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .canvas-empty-sub {
+    font-size: 12px;
+    color: var(--text-muted);
+    max-inline-size: 360px;
+    line-height: 1.5;
+  }
+
+  /* Floating zoom + help controls. Sits inset-block-start: 12px /
+     inset-inline-end: 12px so they hug the trailing edge in RTL too. */
+  .canvas-controls {
+    position: absolute;
+    inset-block-start: 12px;
+    inset-inline-end: 12px;
+    z-index: 3;
+    display: inline-flex;
+    background: var(--surface);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+    overflow: hidden;
+  }
+  .canvas-ctl {
+    inline-size: 30px;
+    block-size: 30px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-inline-end: 1px solid var(--divider);
+  }
+  .canvas-ctl:last-child {
+    border-inline-end: none;
+  }
+  .canvas-ctl:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+
+  .edges {
+    position: absolute;
+    inset: 0;
+    inline-size: 100%;
+    block-size: 100%;
     pointer-events: none;
   }
-  .edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-  .edge { stroke: var(--accent); stroke-width: 2; fill: none; }
-  .edge-drag { stroke-dasharray: 5 4; opacity: 0.7; }
+  .edge {
+    stroke: color-mix(in srgb, var(--secondary) 70%, transparent);
+    stroke-width: 2;
+    fill: none;
+  }
+  :global([data-theme='light']) .edge {
+    stroke: color-mix(in srgb, var(--primary) 60%, transparent);
+  }
+  .edge-drag {
+    stroke-dasharray: 5 4;
+    opacity: 0.7;
+  }
+  #edge-arrow path {
+    fill: color-mix(in srgb, var(--secondary) 70%, transparent);
+  }
+  :global([data-theme='light']) #edge-arrow path {
+    fill: color-mix(in srgb, var(--primary) 60%, transparent);
+  }
 
+  /* Status bar pinned to the bottom of the canvas viewport. position:
+     sticky keeps it visible even when the canvas world is scrolled. */
+  .canvas-status {
+    position: sticky;
+    inset-block-end: 0;
+    inset-inline: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 12px;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    border-block-start: 1px solid var(--divider);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    font-size: 11px;
+  }
+  .canvas-status-validity {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-inline-size: 0;
+  }
+  .canvas-status-counts {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-muted);
+  }
+  .status-count {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  .status-count-label {
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 9px;
+  }
+  .status-count-value {
+    color: var(--text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid transparent;
+  }
+  .status-pill-success {
+    color: var(--success-solid);
+    background: color-mix(in srgb, var(--success-solid) 12%, transparent);
+    border-color: color-mix(in srgb, var(--success-solid) 30%, transparent);
+  }
+  .status-pill-warning {
+    color: var(--warning);
+    background: color-mix(in srgb, var(--warning) 14%, transparent);
+    border-color: color-mix(in srgb, var(--warning) 32%, transparent);
+  }
+  .status-pill-neutral {
+    color: var(--text);
+    background: var(--surface-2);
+    border-color: var(--divider);
+  }
+  .status-pill-muted {
+    color: var(--text-tertiary);
+    background: transparent;
+    border-color: var(--divider);
+  }
+
+  /* ─── Flow node ───────────────────────────────────────────────── */
   .flow-node {
     position: absolute;
-    width: 180px; min-height: 56px;
+    inline-size: 190px;
+    min-block-size: 60px;
     background: var(--surface);
-    border: 2px solid var(--border);
+    border: 1px solid var(--card-border);
     border-radius: 12px;
     user-select: none;
     cursor: move;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16);
+    transition:
+      box-shadow 150ms,
+      border-color 150ms;
+  }
+  .flow-node:hover {
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  }
+  :global([data-theme='light']) .flow-node {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+  }
+  :global([data-theme='light']) .flow-node:hover {
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
   }
   .flow-node.selected {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+    border-color: var(--tone);
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--tone) 22%, transparent),
+      0 4px 14px rgba(0, 0, 0, 0.22);
   }
+  /* A small coloured spine on the inline-start edge encodes the kind at
+     a glance, even when the operator is panning fast. */
+  .flow-node::before {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    inline-size: 3px;
+    background: var(--tone);
+    border-start-start-radius: 12px;
+    border-end-start-radius: 12px;
+  }
+
   .flow-node-head {
-    display: flex; align-items: center; gap: 6px;
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px 8px 12px;
+    border-block-end: 1px solid var(--divider);
     color: var(--text);
+  }
+  .flow-node-icon {
+    inline-size: 22px;
+    block-size: 22px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--tone) 18%, transparent);
+    color: var(--tone);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
   }
   .flow-node-kind {
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    font-size: 11px;
+    letter-spacing: 0.02em;
+    font-size: 12px;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .flow-node-body {
-    padding: 8px 10px;
+    padding: 8px 10px 10px 12px;
     font-size: 12px;
     color: var(--text-muted);
   }
+  .flow-node-connection {
+    color: var(--text);
+    font-weight: 500;
+  }
+  .flow-node-missing {
+    color: var(--warning);
+    font-style: italic;
+  }
+
   .delete-btn {
+    inline-size: 20px;
+    block-size: 20px;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--divider);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     margin-inline-start: auto;
-    background: var(--danger); color: var(--danger-on);
-    border: none; cursor: pointer;
-    width: 18px; height: 18px;
-    border-radius: 50%;
-    font-size: 12px; line-height: 1;
+  }
+  .delete-btn:hover {
+    background: var(--danger);
+    color: var(--danger-on);
+    border-color: var(--danger);
   }
 
   .port {
     position: absolute;
-    top: 50%; transform: translateY(-50%);
-    width: 12px; height: 12px;
-    background: var(--accent);
+    inset-block-start: 50%;
+    transform: translateY(-50%);
+    inline-size: 12px;
+    block-size: 12px;
+    background: var(--tone);
     border: 2px solid var(--surface);
     border-radius: 50%;
     cursor: crosshair;
     z-index: 2;
+    transition: transform 120ms;
+  }
+  .port:hover {
+    transform: translateY(-50%) scale(1.2);
   }
   /*
-   * The ports live on the OUT (right) and IN (left) edges of every
-   * stage node. This is the canvas's spatial convention — message flow
-   * is source → destination, drawn left-to-right. We intentionally use
-   * physical left/right here (not inline-start/end) because the canvas
-   * stores absolute coordinates the operator dragged; flipping ports
-   * under [dir="rtl"] would break the visual mapping of every saved
-   * flow. Brand Guide §RTL applies to flowing content, not free-form
-   * spatial editors.
+   * Ports stay on physical right/left edges — the canvas stores absolute
+   * coordinates the operator dragged; flipping ports under [dir="rtl"]
+   * would break the visual mapping of every saved flow.
    */
-  .port-out { right: -7px; }
-  .port-in  { left:  -7px; }
+  .port-out {
+    right: -7px;
+  }
+  .port-in {
+    left: -7px;
+  }
 
-  .props-empty { color: var(--text-muted); font-size: 13px; }
-  .section-heading {
-    font-size: 12px; font-weight: 600;
-    color: var(--text);
+  /* ─── Inspector ───────────────────────────────────────────────── */
+  .inspector {
+    background: var(--surface);
+    border-inline-start: 1px solid var(--border);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .inspector-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: stretch;
+    padding: 20px;
+    gap: 4px;
+  }
+  .inspector-empty-title {
+    color: var(--text-tertiary);
+    font-size: 10px;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.08em;
+  }
+  .inspector-empty-body {
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .inspector-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-block-end: 1px solid var(--divider);
+  }
+  .inspector-icon {
+    inline-size: 32px;
+    block-size: 32px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--tone) 18%, transparent);
+    color: var(--tone);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+  .inspector-head-text {
+    min-inline-size: 0;
+  }
+  .inspector-head-kind {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: capitalize;
+  }
+  .inspector-head-help {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-block-start: 2px;
+    line-height: 1.35;
+  }
+  .inspector-body {
+    flex: 1;
+    padding: 14px 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .inspector-foot {
+    padding: 12px 16px;
+    border-block-start: 1px solid var(--divider);
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  /* ─── Responsive ──────────────────────────────────────────────── */
+  @media (max-width: 1080px) {
+    .flow-shell {
+      grid-template-columns: 220px 1fr 280px;
+    }
+    .palette-grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
