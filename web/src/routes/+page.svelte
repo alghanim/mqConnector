@@ -37,6 +37,8 @@
   import Sparkline from '$lib/components/Sparkline.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import StatChip from '$lib/components/StatChip.svelte';
+  import SystemPulse from '$lib/components/SystemPulse.svelte';
+  import { ArrowUpRight } from 'lucide-svelte';
 
   let health: Health | null = null;
   let pipelines: PipelineMetric[] = [];
@@ -226,6 +228,16 @@
     <Alert variant="error" dismissible on:dismiss={() => (error = '')}>{error}</Alert>
   {/if}
 
+  <!-- ─── Hero pulse ─────────────────────────────────────────────── -->
+  <SystemPulse
+    status={health?.status ?? 'unknown'}
+    activePipelines={activePipelines}
+    totalPipelines={totalPipelines}
+    deltas={aggregateDeltas}
+    failedTotal={totalFailed}
+    processedTotal={totalProcessed}
+  />
+
   <!-- ─── KPI row ───────────────────────────────────────────────── -->
   <section aria-label={t($locale, 'dash.title')} class="grid grid-cols-2 lg:grid-cols-4 gap-4">
     <Card strip>
@@ -330,7 +342,11 @@
     {:else}
       <div class="dash-pipelines">
         {#each pipelines as p (p.pipeline_id)}
-          <div class="dash-pipeline-card">
+          <a
+            class="dash-pipeline-card"
+            href="/metrics"
+            aria-label="{p.pipeline_id} — {t($locale, 'dash.pipelines.open')}"
+          >
             <div class="dash-pipeline-head">
               <div class="dash-pipeline-id">
                 <p class="dash-pipeline-name">{p.pipeline_id}</p>
@@ -365,7 +381,10 @@
                 label="{t($locale, 'dash.pipelines.trendLabel')} {p.pipeline_id}"
               />
             </div>
-          </div>
+            <span class="dash-pipeline-go" aria-hidden="true">
+              <ArrowUpRight size={14} strokeWidth={1.75} />
+            </span>
+          </a>
         {/each}
       </div>
     {/if}
@@ -554,10 +573,44 @@
     }
   }
   .dash-pipeline-card {
+    position: relative;
+    display: block;
     border: 1px solid var(--card-border);
     border-radius: 12px;
     padding: 14px;
     background: var(--surface);
+    color: inherit;
+    text-decoration: none;
+    transition:
+      border-color 150ms,
+      transform 150ms,
+      box-shadow 150ms;
+    cursor: pointer;
+  }
+  .dash-pipeline-card:hover,
+  .dash-pipeline-card:focus-visible {
+    border-color: var(--border-strong);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+  }
+  :global([data-theme='light']) .dash-pipeline-card:hover,
+  :global([data-theme='light']) .dash-pipeline-card:focus-visible {
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+  }
+  .dash-pipeline-card:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  .dash-pipeline-go {
+    position: absolute;
+    inset-block-start: 12px;
+    inset-inline-end: 12px;
+    color: var(--text-tertiary);
+    opacity: 0;
+    transition: opacity 150ms;
+  }
+  .dash-pipeline-card:hover .dash-pipeline-go,
+  .dash-pipeline-card:focus-visible .dash-pipeline-go {
+    opacity: 1;
   }
   .dash-pipeline-head {
     display: flex;

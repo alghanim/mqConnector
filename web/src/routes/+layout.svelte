@@ -42,6 +42,7 @@
   import SystemHealthPill from '$lib/components/SystemHealthPill.svelte';
   import Breadcrumbs from '$lib/components/Breadcrumbs.svelte';
   import CommandPalette from '$lib/components/CommandPalette.svelte';
+  import KeyboardShortcuts from '$lib/components/KeyboardShortcuts.svelte';
   import Toaster from '$lib/components/Toaster.svelte';
   import {
     LayoutDashboard,
@@ -59,6 +60,7 @@
   let dlqCount = 0;
   let dlqTimer: ReturnType<typeof setInterval> | undefined;
   let paletteOpen = false;
+  let shortcutsOpen = false;
 
   onMount(async () => {
     await auth.refresh();
@@ -95,8 +97,18 @@
     if (isCmdK || isSlash) {
       e.preventDefault();
       paletteOpen = true;
+      shortcutsOpen = false;
     }
-    if (e.key === 'Escape') paletteOpen = false;
+    // "?" → shortcut sheet (Shift+/ on US layouts). Outside text fields only.
+    if (e.key === '?' && !inEditable) {
+      e.preventDefault();
+      shortcutsOpen = !shortcutsOpen;
+      if (shortcutsOpen) paletteOpen = false;
+    }
+    if (e.key === 'Escape') {
+      paletteOpen = false;
+      shortcutsOpen = false;
+    }
   }
 
   async function refreshDlqBadge() {
@@ -194,7 +206,7 @@
         {/each}
       </nav>
 
-      <!-- Bottom: keyboard hint -->
+      <!-- Bottom: keyboard hints -->
       <div class="sidebar-foot">
         <button
           type="button"
@@ -204,6 +216,15 @@
         >
           <KeyRound size={14} aria-hidden="true" />
           <span>{t($locale, 'shell.cmdKHint')}</span>
+        </button>
+        <button
+          type="button"
+          class="kbd-hint-btn"
+          on:click={() => (shortcutsOpen = true)}
+          aria-label={t($locale, 'shortcuts.title')}
+          title={t($locale, 'shortcuts.title')}
+        >
+          ?
         </button>
       </div>
     </aside>
@@ -256,6 +277,7 @@
   </div>
 
   <CommandPalette bind:open={paletteOpen} {dlqCount} />
+  <KeyboardShortcuts open={shortcutsOpen} on:close={() => (shortcutsOpen = false)} />
   <Toaster />
 {:else}
   <slot />
@@ -413,6 +435,9 @@
 
   /* ─── Sidebar foot ─────────────────────────────────────────────── */
   .sidebar-foot {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     padding: 0.625rem;
     border-top: 1px solid var(--border);
   }
@@ -420,7 +445,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    width: 100%;
+    flex: 1;
     padding: 0.5rem 0.625rem;
     border-radius: 0.5rem;
     border: 1px dashed var(--border-strong);
@@ -434,6 +459,30 @@
       background-color 150ms;
   }
   .cmdk-hint:hover {
+    color: var(--text);
+    border-color: var(--text-tertiary);
+    background: var(--surface-2);
+  }
+  .kbd-hint-btn {
+    flex: 0 0 auto;
+    inline-size: 30px;
+    block-size: 30px;
+    border-radius: 6px;
+    border: 1px dashed var(--border-strong);
+    background: transparent;
+    color: var(--text-muted);
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 0.875rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      color 150ms,
+      border-color 150ms,
+      background-color 150ms;
+  }
+  .kbd-hint-btn:hover {
     color: var(--text);
     border-color: var(--text-tertiary);
     background: var(--surface-2);
