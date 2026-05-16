@@ -375,6 +375,29 @@
     return n ? new Set(readNodePaths(n)) : new Set<string>();
   })();
 
+  // ─── World coordinate helper ─────────────────────────────────────
+  // After Phase 5 the canvas sits inside a zoomable + scrollable
+  // `.canvas-world` div. Mouse events arrive in viewport coordinates,
+  // but every interaction (drop / drag / connect-line) needs to land
+  // in *world* coordinates — the same space `n.x` / `n.y` live in —
+  // otherwise the visual drag line and drop position drift the moment
+  // the operator scrolls or zooms even a little.
+  //
+  // Formula:
+  //   worldX = (e.clientX - canvasViewport.left + canvasViewport.scrollLeft) / zoom
+  //   worldY = (e.clientY - canvasViewport.top  + canvasViewport.scrollTop ) / zoom
+  //
+  // Returns NaN if the canvas ref isn't bound yet — callers must
+  // short-circuit on that.
+  function worldCoords(e: { clientX: number; clientY: number }): { x: number; y: number } {
+    if (!canvasEl) return { x: NaN, y: NaN };
+    const rect = canvasEl.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left + canvasEl.scrollLeft) / zoom,
+      y: (e.clientY - rect.top + canvasEl.scrollTop) / zoom
+    };
+  }
+
   // ─── Palette drag → drop ─────────────────────────────────────────
   function onPaletteDragStart(e: DragEvent, kind: NodeKind) {
     e.dataTransfer?.setData('mqc/node-kind', kind);
@@ -386,12 +409,13 @@
     e.preventDefault();
     const kind = e.dataTransfer?.getData('mqc/node-kind') as NodeKind | null;
     if (!kind || !canvasEl) return;
-    const rect = canvasEl.getBoundingClientRect();
+    const w = worldCoords(e);
     const node: FlowNode = {
       id: newNodeId(),
       kind,
-      x: Math.max(8, e.clientX - rect.left - 90),
-      y: Math.max(8, e.clientY - rect.top - 24),
+      // Centre the dropped node on the cursor (NODE_W/2 = 90, head/2 ~= 24).
+      x: Math.max(8, w.x - 90),
+      y: Math.max(8, w.y - 24),
       label: kind,
       connection_id: '',
       config: defaultConfig(kind)
@@ -408,27 +432,28 @@
     }
     e.preventDefault();
     selectedId = node.id;
-    const rect = canvasEl!.getBoundingClientRect();
+    const w = worldCoords(e);
     dragging = {
       id: node.id,
-      offsetX: e.clientX - rect.left - node.x,
-      offsetY: e.clientY - rect.top - node.y
+      offsetX: w.x - node.x,
+      offsetY: w.y - node.y
     };
   }
 
   function onCanvasMouseMove(e: MouseEvent) {
-    const rect = canvasEl?.getBoundingClientRect();
-    if (!rect) return;
+    if (!canvasEl) return;
     if (dragging) {
+      const w = worldCoords(e);
       const id = dragging.id;
-      const x = Math.max(0, e.clientX - rect.left - dragging.offsetX);
-      const y = Math.max(0, e.clientY - rect.top - dragging.offsetY);
+      const x = Math.max(0, w.x - dragging.offsetX);
+      const y = Math.max(0, w.y - dragging.offsetY);
       nodes = nodes.map((n) => (n.id === id ? { ...n, x, y } : n));
     } else if (connecting) {
+      const w = worldCoords(e);
       connecting = {
         ...connecting,
-        cursorX: e.clientX - rect.left,
-        cursorY: e.clientY - rect.top
+        cursorX: w.x,
+        cursorY: w.y
       };
     }
   }
@@ -444,11 +469,11 @@
     if (node.kind === 'destination') return;
     e.preventDefault();
     e.stopPropagation();
-    const rect = canvasEl!.getBoundingClientRect();
+    const w = worldCoords(e);
     connecting = {
       fromId: node.id,
-      cursorX: e.clientX - rect.left,
-      cursorY: e.clientY - rect.top
+      cursorX: w.x,
+      cursorY: w.y
     };
   }
   function onPortInMouseUp(e: MouseEvent, node: FlowNode) {
@@ -2017,6 +2042,18 @@
     cursor: crosshair;
     z-index: 2;
     transition: transform 120ms;
+  }
+  /*
+   * Invisible expanded hit-target. 12px ports were too small to grab
+   * reliably — the visible dot stays the same size, but the actual
+   * clickable area is 28×28 so the operator doesn't have to nail
+   * pixel-perfect drops to make a connection.
+   */
+  .port::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+    border-radius: 50%;
   }
   .port:hover {
     transform: translateY(-50%) scale(1.2);
