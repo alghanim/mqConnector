@@ -21,6 +21,11 @@
   import Badge from '$lib/components/Badge.svelte';
   import Alert from '$lib/components/Alert.svelte';
   import Dialog from '$lib/components/Dialog.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import StatChip from '$lib/components/StatChip.svelte';
+  import Avatar from '$lib/components/Avatar.svelte';
+  import { Plus, ChevronDown, ChevronRight } from 'lucide-svelte';
 
   let error = '';
   let creating: { slug: string; name: string } | null = null;
@@ -138,14 +143,38 @@
 </script>
 
 <div class="space-y-6 max-w-5xl">
-  <div class="flex items-baseline justify-between">
-    <h2 class="text-2xl font-semibold" style="color: var(--text)">
-      {t($locale, 'tenants.title')}
-    </h2>
-    {#if isSystemAdmin}
-      <Button on:click={startCreate}>{t($locale, 'tenants.add')}</Button>
-    {/if}
-  </div>
+  <PageHeader
+    title={t($locale, 'tenants.title')}
+    subtitle={t($locale, 'tenants.pageSubtitle')}
+    count={$tenants.memberships.length}
+  >
+    <svelte:fragment slot="primary">
+      {#if isSystemAdmin}
+        <Button on:click={startCreate}>
+          <Plus size={14} aria-hidden="true" />
+          <span class="ms-1">{t($locale, 'tenants.add')}</span>
+        </Button>
+      {/if}
+    </svelte:fragment>
+    <svelte:fragment slot="stats">
+      <StatChip
+        label={t($locale, 'tenants.role.owner')}
+        value={$tenants.memberships.filter((m) => m.role === 'owner').length}
+      />
+      <StatChip
+        label={t($locale, 'tenants.role.admin')}
+        value={$tenants.memberships.filter((m) => m.role === 'admin').length}
+      />
+      <StatChip
+        label={t($locale, 'tenants.role.operator')}
+        value={$tenants.memberships.filter((m) => m.role === 'operator').length}
+      />
+      <StatChip
+        label={t($locale, 'tenants.role.viewer')}
+        value={$tenants.memberships.filter((m) => m.role === 'viewer').length}
+      />
+    </svelte:fragment>
+  </PageHeader>
 
   {#if error}
     <Alert variant="error" dismissible on:dismiss={() => (error = '')}>{error}</Alert>
@@ -166,6 +195,24 @@
   {/if}
 
   <div class="space-y-3">
+    {#if $tenants.initialised && $tenants.memberships.length === 0}
+      <Card>
+        <EmptyState
+          illustration="tenants"
+          title={t($locale, 'empty.tenants.title')}
+          body={t($locale, 'empty.tenants.body')}
+        >
+          <svelte:fragment slot="action">
+            {#if isSystemAdmin}
+              <Button on:click={startCreate}>
+                <Plus size={14} aria-hidden="true" />
+                <span class="ms-1">{t($locale, 'tenants.add')}</span>
+              </Button>
+            {/if}
+          </svelte:fragment>
+        </EmptyState>
+      </Card>
+    {/if}
     {#each $tenants.memberships as m (m.tenant.id)}
       <Card>
         <div class="flex items-center justify-between gap-3">
@@ -214,7 +261,12 @@
                 <tbody>
                   {#each memberLists[m.tenant.id] ?? [] as mem (mem.user_sub)}
                     <tr>
-                      <td style="color: var(--text)">{mem.username || '—'}</td>
+                      <td>
+                        <div class="member-cell">
+                          <Avatar name={mem.username} sub={mem.user_sub} size="sm" />
+                          <span>{mem.username || '—'}</span>
+                        </div>
+                      </td>
                       <td style="color: var(--text-muted)">
                         <code class="text-xs">{mem.user_sub}</code>
                       </td>
@@ -276,5 +328,11 @@
 <style>
   td:last-child {
     text-align: end;
+  }
+  .member-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text);
   }
 </style>

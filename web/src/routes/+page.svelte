@@ -35,6 +35,8 @@
   import Badge from '$lib/components/Badge.svelte';
   import Alert from '$lib/components/Alert.svelte';
   import Sparkline from '$lib/components/Sparkline.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import StatChip from '$lib/components/StatChip.svelte';
 
   let health: Health | null = null;
   let pipelines: PipelineMetric[] = [];
@@ -203,21 +205,22 @@
 </script>
 
 <div class="space-y-6 max-w-6xl">
-  <!-- ─── Header ────────────────────────────────────────────────── -->
-  <div class="flex items-baseline justify-between flex-wrap gap-3">
-    <h2 class="text-2xl font-semibold" style="color: var(--text)">
-      {t($locale, 'dash.title')}
-    </h2>
-    <div class="dash-meta">
+  <PageHeader title={t($locale, 'dash.title')} subtitle={t($locale, 'dash.pageSubtitle')}>
+    <svelte:fragment slot="stats">
       {#if health}
-        <Badge variant={variantFor(health.status)}>{health.status}</Badge>
-        <span>v{health.version} · {t($locale, 'metrics.uptime')} {health.uptime}</span>
+        <StatChip
+          label={t($locale, 'health.label')}
+          value={health.status}
+          tone={health.status === 'healthy' ? 'success' : health.status === 'degraded' ? 'warning' : 'danger'}
+        />
+        <StatChip label={t($locale, 'metrics.uptime')} value={health.uptime} />
+        <StatChip label="v" value={health.version} />
       {/if}
       {#if lastRefreshed}
-        <span>{t($locale, 'dash.refreshed')} {lastRefreshed}</span>
+        <StatChip label={t($locale, 'dash.refreshed')} value={lastRefreshed} />
       {/if}
-    </div>
-  </div>
+    </svelte:fragment>
+  </PageHeader>
 
   {#if error}
     <Alert variant="error" dismissible on:dismiss={() => (error = '')}>{error}</Alert>
@@ -439,15 +442,7 @@
 </div>
 
 <style>
-  /* ─── Header meta line ────────────────────────────────────────── */
-  .dash-meta {
-    display: inline-flex;
-    align-items: center;
-    gap: 12px;
-    color: var(--text-muted);
-    font-size: 12px;
-    flex-wrap: wrap;
-  }
+  /* (header meta is now rendered by PageHeader+StatChip) */
 
   /* ─── KPI cards ───────────────────────────────────────────────── */
   .dash-kpi {

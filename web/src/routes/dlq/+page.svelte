@@ -24,6 +24,10 @@
   import Dialog from '$lib/components/Dialog.svelte';
   import Input from '$lib/components/Input.svelte';
   import Select from '$lib/components/Select.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import StatChip from '$lib/components/StatChip.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import { RotateCw, Plus } from 'lucide-svelte';
 
   // ─── List state ─────────────────────────────────────────────────
   let entries: DLQEntry[] = [];
@@ -361,12 +365,33 @@
 </script>
 
 <div class="space-y-6 max-w-6xl">
-  <div class="flex items-baseline justify-between">
-    <h2 class="text-2xl font-semibold" style="color: var(--text)">{t($locale, 'dlq.title')}</h2>
-    <Button variant="ghost" on:click={refresh} loading={busy}>
-      {t($locale, 'common.refresh')}
-    </Button>
-  </div>
+  <PageHeader
+    title={t($locale, 'dlq.title')}
+    subtitle={t($locale, 'dlq.pageSubtitle')}
+    count={total}
+  >
+    <svelte:fragment slot="primary">
+      <Button variant="ghost" on:click={refresh} loading={busy}>
+        <RotateCw size={14} aria-hidden="true" />
+        <span class="ms-1">{t($locale, 'common.refresh')}</span>
+      </Button>
+    </svelte:fragment>
+
+    <svelte:fragment slot="stats">
+      <StatChip
+        label={t($locale, 'common.total')}
+        value={total}
+        tone={total > 0 ? 'danger' : 'default'}
+      />
+      {#if entries.length > 0}
+        <StatChip
+          label={t($locale, 'dlq.retries')}
+          value={entries.filter((e) => e.retry_count > 0).length}
+          tone="warning"
+        />
+      {/if}
+    </svelte:fragment>
+  </PageHeader>
 
   {#if error}
     <Alert variant="error" dismissible on:dismiss={() => (error = '')}>{error}</Alert>
@@ -429,7 +454,11 @@
 
   <Card>
     {#if entries.length === 0}
-      <p style="color: var(--text-muted)">{t($locale, 'dlq.empty')}</p>
+      <EmptyState
+        illustration="dlq"
+        title={t($locale, 'empty.dlq.title')}
+        body={t($locale, 'empty.dlq.body')}
+      />
     {:else if filtered.length === 0}
       <p style="color: var(--text-muted)">{t($locale, 'dlq.emptyFiltered')}</p>
     {:else}
