@@ -1,5 +1,5 @@
 <!--
-  ProgressBar — Brand Guide §5.17.
+  ProgressBar — Design system §5.17.
 
   Determinate when `value` is provided (0–100). Indeterminate sliding
   bar when `value` is `null` / undefined, useful for "we're working on

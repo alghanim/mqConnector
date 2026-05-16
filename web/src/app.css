@@ -61,7 +61,6 @@
 
 /*
  * Component primitives, all wired against brand-tokens.css.
- * Specs reference Brand & Design System v1.0 (March 2026).
  *
  * Buttons (§5.4):
  *   primary    — main CTA: bg --accent (maroon), text --accent-on
@@ -110,9 +109,8 @@ body {
 
 @layer components {
   /* ──────────────────────────────────────────────────────────────
-   * §6.1 Typography hierarchy — sizes + weights + per-theme colour
-   * sp from the brand guide → px on web at 1 sp = 1 px (Inter is
-   * tuned for that mapping).
+   * §6.1 Typography hierarchy — sizes + weights + per-theme colour.
+   * Spec sizes given in sp map 1:1 to web px (Inter is tuned for it).
    * ────────────────────────────────────────────────────────────── */
   .text-h1 {
     color: var(--text);                /* dark: #F2EFEC, light: #1A1F24 */
@@ -213,8 +211,8 @@ body {
     background: var(--primary);
     color: var(--primary-on);
   }
-  .btn-secondary:hover  { background: var(--qb-copper); }
-  .btn-secondary:active { background: var(--qb-gold-muted); }
+  .btn-secondary:hover  { background: var(--palette-copper); }
+  .btn-secondary:active { background: var(--palette-gold-muted); }
   .btn-secondary:disabled {
     background: var(--btn-disabled-bg);
     color: var(--btn-disabled-text);
@@ -400,9 +398,9 @@ body {
 
   /* ──────────────────────────────────────────────────────────────
    * §5.8 Eyebrow / overline tag — the small 11sp uppercase label used
-   * as a section eyebrow ("STAGES", "TRANSFORMS"). The brand guide
-   * keeps section-header colour for headings, not eyebrows; eyebrows
-   * use tertiary text to avoid stealing the gold for an overline.
+   * as a section eyebrow ("STAGES", "TRANSFORMS"). Section-header
+   * colour is reserved for headings, not eyebrows; eyebrows use
+   * tertiary text to avoid stealing the gold for an overline.
    * ────────────────────────────────────────────────────────────── */
   .section-heading {
     color: var(--section-header);

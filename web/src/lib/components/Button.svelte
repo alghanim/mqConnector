@@ -1,6 +1,6 @@
 <script lang="ts">
   // Brand-compliant button. Variant maps to CSS classes defined in app.css —
-  // see Brand Guide §5.4 for spec.
+  // see design system §5.4 for spec.
   //
   // Event forwarding: a bare `on:click` on the inner <button> below tells
   // Svelte 4 to forward DOM click events from the component to whichever

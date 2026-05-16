@@ -1,5 +1,5 @@
 <!--
-  Alert — Brand Guide §5.10.
+  Alert — Design system §5.10.
 
   Brand-compliant info / success / warning / error banner. 12 dp radius,
   16 dp padding, leading icon (auto-flipped under RTL via logical CSS),

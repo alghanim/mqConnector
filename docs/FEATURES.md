@@ -192,7 +192,7 @@ Useful for: dev → staging promotion, disaster-recovery seeding, multi-tenant t
 
 - **SvelteKit + Tailwind**, fully embedded in the binary (no separate frontend deploy).
 - **Bilingual EN / AR** with full RTL — CSS logical properties throughout, gradient direction mirrors automatically.
-- **Dark + Light themes** — brand design system tokens. Brand-token-driven, no raw hex anywhere outside `brand-tokens.css`.
+- **Dark + Light themes** — token-driven design system. No raw hex anywhere outside `brand-tokens.css`.
 - **Pages**:
   - `/` — Operations overview: dense KPI strip, throughput chart (processed + failed series), pipeline health matrix, recent activity feed.
   - `/connections` — CRUD for broker connections, per-type form fields, "Test connection" probe.

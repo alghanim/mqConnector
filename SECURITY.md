@@ -127,7 +127,6 @@ External (post-release): see `SECURITY.md` of the deployed product for the conta
 ## 8. References
 
 - `COMPLIANCE.md` — coding-standard checklist
-- `BRAND-COMPLIANCE.md` — UI/branding alignment
 - `internal/secrets/secrets.go` — envelope encryption
 - `internal/storage/audit.go` — hash-chained audit log
 - `internal/storage/connections.go` — tenant scoping enforcement

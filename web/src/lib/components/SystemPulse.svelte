@@ -12,7 +12,7 @@
   actively producing throughput. Animation is paused under
   `prefers-reduced-motion`. The status colour is driven entirely
   by brand tokens — never a raw hex — so dark + light both inherit
-  brand palette mappings.
+  palette mappings.
 
   Inputs:
     status        overall health: healthy | degraded | unhealthy

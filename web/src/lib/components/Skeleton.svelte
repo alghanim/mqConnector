@@ -1,5 +1,5 @@
 <!--
-  Skeleton — Brand Guide §5.18.
+  Skeleton — Design system §5.18.
 
   Animated shimmer placeholder for async content. Token-driven base +
   highlight, 1.5s ease-in-out infinite per spec. The animation is

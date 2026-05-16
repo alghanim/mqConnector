@@ -141,7 +141,7 @@
   let connecting: { fromId: string; cursorX: number; cursorY: number } | null = null;
   let nextNodeIdCounter = 0;
 
-  // Per Brand Guide §5: the palette is closed. Stage tones come from
+  // Per design system §5: the palette is closed. Stage tones come from
   // CSS custom properties (set in brand-tokens.css) so both themes stay
   // on-brand. Source/Destination carry the only "warm" emphasis (gold +
   // copper); the six stage types use the slate + muted-neutral scale so
@@ -150,12 +150,12 @@
   const palette: { kind: NodeKind; label: string; tone: string }[] = [
     { kind: 'source',      label: 'S · source',      tone: 'var(--primary)'       },
     { kind: 'destination', label: 'D · destination', tone: 'var(--secondary)'     },
-    { kind: 'filter',      label: 'F · filter',      tone: 'var(--qb-slate-130)'  },
-    { kind: 'transform',   label: 'T · transform',   tone: 'var(--qb-olive-gold)' },
-    { kind: 'translate',   label: 'X · translate',   tone: 'var(--qb-sand)'       },
-    { kind: 'route',       label: 'R · route',       tone: 'var(--qb-slate-120)'  },
-    { kind: 'script',      label: 'JS · script',     tone: 'var(--qb-slate-110)'  },
-    { kind: 'validate',    label: 'V · validate',    tone: 'var(--qb-warm-gray)'  }
+    { kind: 'filter',      label: 'F · filter',      tone: 'var(--palette-slate-130)'  },
+    { kind: 'transform',   label: 'T · transform',   tone: 'var(--palette-olive-gold)' },
+    { kind: 'translate',   label: 'X · translate',   tone: 'var(--palette-sand)'       },
+    { kind: 'route',       label: 'R · route',       tone: 'var(--palette-slate-120)'  },
+    { kind: 'script',      label: 'JS · script',     tone: 'var(--palette-slate-110)'  },
+    { kind: 'validate',    label: 'V · validate',    tone: 'var(--palette-warm-gray)'  }
   ];
 
   $: selected = nodes.find((n) => n.id === selectedId) ?? null;
@@ -801,12 +801,12 @@
   const KIND_META: Record<NodeKind, { icon: typeof Plug; tone: string }> = {
     source: { icon: Plug, tone: 'var(--primary)' },
     destination: { icon: Send, tone: 'var(--secondary)' },
-    filter: { icon: FilterIcon, tone: 'var(--qb-slate-130)' },
-    transform: { icon: Shuffle, tone: 'var(--qb-olive-gold)' },
-    translate: { icon: Languages, tone: 'var(--qb-sand)' },
-    route: { icon: GitFork, tone: 'var(--qb-slate-120)' },
-    script: { icon: Code2, tone: 'var(--qb-slate-110)' },
-    validate: { icon: ShieldCheck, tone: 'var(--qb-warm-gray)' }
+    filter: { icon: FilterIcon, tone: 'var(--palette-slate-130)' },
+    transform: { icon: Shuffle, tone: 'var(--palette-olive-gold)' },
+    translate: { icon: Languages, tone: 'var(--palette-sand)' },
+    route: { icon: GitFork, tone: 'var(--palette-slate-120)' },
+    script: { icon: Code2, tone: 'var(--palette-slate-110)' },
+    validate: { icon: ShieldCheck, tone: 'var(--palette-warm-gray)' }
   };
   function iconFor(kind: NodeKind) {
     return KIND_META[kind]?.icon ?? Plug;
@@ -1449,7 +1449,7 @@
   }
   /*
    * "Editing" eyebrow on the title. Uses --section-header (gold on
-   * dark, dark-gold on light) per Brand Guide §5.8. Maroon is reserved
+   * dark, dark-gold on light) per design system §5.8. Maroon is reserved
    * for primary/destructive CTAs.
    */
   .editing-tag {

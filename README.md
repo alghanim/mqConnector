@@ -27,7 +27,6 @@ A single-binary message-queue bridge and pipeline runner. Consume from one MQ, a
 - [API request lifecycle →](docs/API_FLOW.md) — middleware chain, auth, audit, response
 - [Operations runbook →](docs/OPERATIONS.md) — backups, restore, rotation, incidents
 - [Compliance →](COMPLIANCE.md) — coding-standard checklist
-- [Brand compliance →](BRAND-COMPLIANCE.md) — UI design-system audit
 
 ---
 

@@ -1,5 +1,5 @@
 <!--
-  Dialog — Brand Guide §5.14.
+  Dialog — Design system §5.14.
 
   Modal that replaces `window.confirm()` for destructive admin actions.
   Renders into `document.body` to escape any positioned ancestor, traps

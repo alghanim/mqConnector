@@ -330,7 +330,7 @@
     font-weight: 500;
   }
   .tokens-prefix {
-    /* Labeled chip per brand guide §5.5 / §7 rule 10 → 12dp. The
+    /* Labeled chip per design system §5.5 / §7 rule 10 → 12dp. The
        prefix string is a stable visual identifier; treat as a
        category chip rather than a free-form code span. */
     font-family: 'SFMono-Regular', Menlo, Consolas, monospace;

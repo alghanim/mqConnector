@@ -528,7 +528,7 @@
   }
   .path-chip {
     border: 1px solid var(--border);
-    border-radius: 12px; /* labeled chip — Brand Guide §5 / Rule 9 (pill is count-badge only) */
+    border-radius: 12px; /* labeled chip — design system §5 / Rule 9 (pill is count-badge only) */
     padding: 4px 12px;
     font-size: 12px;
     color: var(--text);
@@ -563,7 +563,7 @@
   }
   .try-btn {
     border: 1px solid var(--border);
-    border-radius: 12px; /* labeled chip — Brand Guide §5 / Rule 9 (pill is count-badge only) */
+    border-radius: 12px; /* labeled chip — design system §5 / Rule 9 (pill is count-badge only) */
     padding: 2px 10px;
     font-size: 11px;
     background: var(--surface);
@@ -602,6 +602,6 @@
     text-decoration: none;
     transition: background-color 200ms;
   }
-  .btn-visual-link:hover { background: var(--qb-copper); }
-  .btn-visual-link:active { background: var(--qb-gold-muted); }
+  .btn-visual-link:hover { background: var(--palette-copper); }
+  .btn-visual-link:active { background: var(--palette-gold-muted); }
 </style>

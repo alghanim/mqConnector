@@ -1,120 +1,118 @@
 /*
- * Brand & Design System — CSS custom properties.
+ * Design system — CSS custom properties.
  *
  * THIS FILE IS THE SOLE SOURCE OF TRUTH FOR COLOR.
  * Components must NEVER hardcode a hex value. Always use var(--token).
- * Every hex here is copied verbatim from references/brand-guide.md v1.0
- * (March 2026). Do not improvise, do not approximate, do not invent new
- * colors. If a value you want isn't in this file, you are wrong about
- * wanting it — re-check the brand guide.
+ * The palette is closed — if a value you want isn't in this file, add
+ * it here first, don't sprinkle hexes through component CSS.
  *
  * ── Layout of this file ───────────────────────────────────────────────
- *   §1  Raw brand palette          (qb-*)
- *   §2  Derived scales              (qb-slate-*, qb-warm-gray-*, etc.)
- *   §3  Brand gradient
+ *   §1  Raw palette                 (palette-*)
+ *   §2  Derived scales              (palette-slate-*, palette-warm-gray-*, …)
+ *   §3  Decorative gradient
  *   §4  Dark theme semantic tokens  (Material 3 + project-specific)
  *   §5  Light theme semantic tokens
  *   §6  RTL gradient mirror
  *
- * ── Non-negotiables ──────────────────────────────────────────────────
+ * ── Rules of thumb ───────────────────────────────────────────────────
  *   - Maroon #8B153D is ACCENT ONLY (primary CTAs, count badges,
  *     destructive actions). Never a card/screen/nav background.
  *   - Dark theme background is Dark Slate #222A31, NOT #000000.
  *   - Light theme background is Warm Gray #F7F5F3, NOT #FFFFFF.
- *   - Brand gradient is gold-only: #F8E08E → #A59F8A → #8F6A2A.
+ *   - Decorative gradient is gold-only: #F8E08E → #A59F8A → #8F6A2A.
  *     No maroon in the gradient. Decorative strips/shimmer only.
  *   - Corner radii: 12 px interactive, 16 px containers, 999 px for
  *     count badges only.
  */
 
-/* ─── §1 Raw brand palette (theme-invariant) ─────────────────────── */
+/* ─── §1 Raw palette (theme-invariant) ────────────────────────── */
 :root {
-  --qb-dark-slate:    #333F48; /* Pantone 432C  — primary neutral */
-  --qb-black:         #000000; /* Pantone Black 6C */
-  --qb-qatar-maroon:  #8B153D; /* Pantone 1955C — ACCENT ONLY */
-  --qb-dark-gold:     #8F6A2A; /* Pantone 7559C — secondary */
-  --qb-copper:        #B87132; /* Pantone 7572C — warm accent */
-  --qb-light-gold:    #F8E08E; /* Pantone 1205C — highlight */
-  --qb-olive-gold:    #A59F8A; /* Pantone 7536C — muted neutral */
-  --qb-warm-gray:     #D6D1CA; /* Pantone WG 1C — light neutral */
-  --qb-sand:          #C1A18D; /* Pantone 4044C — warm surface */
-  --qb-white:         #FFFFFF;
+  --palette-dark-slate:    #333F48;  /* primary neutral */
+  --palette-black:         #000000; /* black */
+  --palette-maroon:  #8B153D;  /* ACCENT ONLY */
+  --palette-dark-gold:     #8F6A2A;  /* secondary */
+  --palette-copper:        #B87132;  /* warm accent */
+  --palette-light-gold:    #F8E08E;  /* highlight */
+  --palette-olive-gold:    #A59F8A;  /* muted neutral */
+  --palette-warm-gray:     #D6D1CA;  /* light neutral */
+  --palette-sand:          #C1A18D;  /* warm surface */
+  --palette-white:         #FFFFFF;
 
   /* ─── §2 Derived scales ──────────────────────────────────────────── */
   /* Dark Slate scale */
-  --qb-slate-80:  #222A31; /* dark theme true background */
-  --qb-slate-85:  #1E262D; /* surfaceContainerLowest dark */
-  --qb-slate-87:  #262F37; /* surfaceContainerLow dark */
-  --qb-slate-90:  #2A333B; /* surface dark */
-  --qb-slate-93:  #2E3840; /* surfaceContainer dark / card bg */
-  --qb-slate-110: #3D4A54; /* surfaceContainerHighest dark */
-  --qb-slate-120: #475560; /* surfaceBright / elevated dark */
-  --qb-slate-130: #52616C; /* highest elevation dark */
-  --qb-slate-dim: #1A2128; /* surfaceDim dark — §2.1 */
+  --palette-slate-80:  #222A31; /* dark theme true background */
+  --palette-slate-85:  #1E262D; /* surfaceContainerLowest dark */
+  --palette-slate-87:  #262F37; /* surfaceContainerLow dark */
+  --palette-slate-90:  #2A333B; /* surface dark */
+  --palette-slate-93:  #2E3840; /* surfaceContainer dark / card bg */
+  --palette-slate-110: #3D4A54; /* surfaceContainerHighest dark */
+  --palette-slate-120: #475560; /* surfaceBright / elevated dark */
+  --palette-slate-130: #52616C; /* highest elevation dark */
+  --palette-slate-dim: #1A2128; /* surfaceDim dark — §2.1 */
 
   /* Warm Gray scale */
-  --qb-warm-95: #E8E4DF; /* light surfaceContainerHigh */
-  --qb-warm-90: #F2EFEC; /* light surface */
-  --qb-warm-85: #F7F5F3; /* light background */
-  --qb-warm-80: #FAFAF9; /* light surfaceContainerLowest equivalent */
+  --palette-warm-95: #E8E4DF; /* light surfaceContainerHigh */
+  --palette-warm-90: #F2EFEC; /* light surface */
+  --palette-warm-85: #F7F5F3; /* light background */
+  --palette-warm-80: #FAFAF9; /* light surfaceContainerLowest equivalent */
 
   /* Maroon scale */
-  --qb-maroon-light:        #A42D55; /* hover/pressed on dark */
-  --qb-maroon-dark:         #6E1030; /* pressed on light */
-  --qb-maroon-surface:      #3D0A1A; /* tertiary container dark */
-  --qb-maroon-surface-light:#F8E8ED; /* tertiary container light */
+  --palette-maroon-light:        #A42D55; /* hover/pressed on dark */
+  --palette-maroon-dark:         #6E1030; /* pressed on light */
+  --palette-maroon-surface:      #3D0A1A; /* tertiary container dark */
+  --palette-maroon-surface-light:#F8E8ED; /* tertiary container light */
 
   /* Gold scale */
-  --qb-gold-muted:           #6B5422; /* accessible gold on light bg */
-  --qb-gold-container-dark:  #3D2E12;
-  --qb-gold-container-light: #FDF6E8;
-  --qb-secondary-cont-dark:  #3D2812;
+  --palette-gold-muted:           #6B5422; /* accessible gold on light bg */
+  --palette-gold-container-dark:  #3D2E12;
+  --palette-gold-container-light: #FDF6E8;
+  --palette-secondary-cont-dark:  #3D2812;
 
   /* Text */
-  --qb-text-dark-primary:    #F2EFEC;
-  --qb-text-dark-secondary:  #B8B3AB;
-  --qb-text-dark-tertiary:   #8A857D;
-  --qb-text-light-primary:   #1A1F24;
-  --qb-text-light-secondary: #4A5560;
-  --qb-text-light-tertiary:  #7A8590;
+  --palette-text-dark-primary:    #F2EFEC;
+  --palette-text-dark-secondary:  #B8B3AB;
+  --palette-text-dark-tertiary:   #8A857D;
+  --palette-text-light-primary:   #1A1F24;
+  --palette-text-light-secondary: #4A5560;
+  --palette-text-light-tertiary:  #7A8590;
 
   /* Outline / dividers */
-  --qb-outline-dark:         #6B7780;
-  --qb-outline-variant-dark: #475560;
-  --qb-outline-light:        #8A8A82;
+  --palette-outline-dark:         #6B7780;
+  --palette-outline-variant-dark: #475560;
+  --palette-outline-light:        #8A8A82;
 
   /* Semantic */
-  --qb-success-dark:         #2E7D4F;
-  --qb-success-light:        #1B6E3D;
-  --qb-success-text-dark:    #4CAF6E;
-  --qb-success-surface-dark: #0D1F14;
-  --qb-success-surface-light:#E8F5ED;
+  --palette-success-dark:         #2E7D4F;
+  --palette-success-light:        #1B6E3D;
+  --palette-success-text-dark:    #4CAF6E;
+  --palette-success-surface-dark: #0D1F14;
+  --palette-success-surface-light:#E8F5ED;
 
-  --qb-error-dark:           #CF4455;
-  --qb-error-light:          #B71C3C;
-  --qb-error-surface-dark:   #1A0A10; /* §1.3 error surface dark / §5.10 alert bg */
-  --qb-error-surface-light:  #F8E8ED;
-  --qb-error-container-dark: #3D1420; /* §2.3 M3 errorContainer dark */
-  --qb-on-error-container-light: #5A0A1A; /* §3.3 onErrorContainer light */
+  --palette-error-dark:           #CF4455;
+  --palette-error-light:          #B71C3C;
+  --palette-error-surface-dark:   #1A0A10; /* §1.3 error surface dark / §5.10 alert bg */
+  --palette-error-surface-light:  #F8E8ED;
+  --palette-error-container-dark: #3D1420; /* §2.3 M3 errorContainer dark */
+  --palette-on-error-container-light: #5A0A1A; /* §3.3 onErrorContainer light */
 
-  --qb-warning-dark:         #E6A817;
-  --qb-warning-light:        #C4900A;
-  --qb-warning-surface-dark: #1A150A;
-  --qb-warning-surface-light:#FDF6E8;
+  --palette-warning-dark:         #E6A817;
+  --palette-warning-light:        #C4900A;
+  --palette-warning-surface-dark: #1A150A;
+  --palette-warning-surface-light:#FDF6E8;
 
-  --qb-info-dark:            #5A8FBA;
-  --qb-info-light:           #2E6B9E;
-  --qb-info-surface-dark:    #0D1520;
-  --qb-info-surface-light:   #E8F0F8;
+  --palette-info-dark:            #5A8FBA;
+  --palette-info-light:           #2E6B9E;
+  --palette-info-surface-dark:    #0D1520;
+  --palette-info-surface-light:   #E8F0F8;
 }
 
-/* ─── §3 Brand gradient — gold-only, NO maroon, decorative only ──── */
+/* ─── §3 Decorative gradient — gold-only, NO maroon ─────────────── */
 :root {
   --brand-gradient: linear-gradient(
     to right,
-    var(--qb-light-gold) 0%,
-    var(--qb-olive-gold) 50%,
-    var(--qb-dark-gold) 100%
+    var(--palette-light-gold) 0%,
+    var(--palette-olive-gold) 50%,
+    var(--palette-dark-gold) 100%
   );
 }
 
@@ -122,126 +120,126 @@
 :root,
 [data-theme='dark'] {
   /* Material 3 surface hierarchy */
-  --bg:                 var(--qb-slate-80);    /* #222A31 */
-  --surface:            var(--qb-slate-90);    /* #2A333B */
-  --surface-2:          var(--qb-slate-93);    /* #2E3840  — cards */
-  --surface-high:       var(--qb-dark-slate);  /* #333F48  — search bar / elevated */
-  --surface-highest:    var(--qb-slate-110);   /* #3D4A54  — dialogs */
-  --surface-bright:     var(--qb-slate-120);   /* #475560  — selected */
-  --surface-dim:        var(--qb-slate-dim);   /* #1A2128  — dimmed overlay bg §2.1 */
+  --bg:                 var(--palette-slate-80);    /* #222A31 */
+  --surface:            var(--palette-slate-90);    /* #2A333B */
+  --surface-2:          var(--palette-slate-93);    /* #2E3840  — cards */
+  --surface-high:       var(--palette-dark-slate);  /* #333F48  — search bar / elevated */
+  --surface-highest:    var(--palette-slate-110);   /* #3D4A54  — dialogs */
+  --surface-bright:     var(--palette-slate-120);   /* #475560  — selected */
+  --surface-dim:        var(--palette-slate-dim);   /* #1A2128  — dimmed overlay bg §2.1 */
 
   /* Borders / dividers */
-  --border:             var(--qb-outline-variant-dark); /* #475560 */
-  --border-strong:      var(--qb-outline-dark);         /* #6B7780 */
-  --divider:            var(--qb-slate-110);            /* #3D4A54 */
+  --border:             var(--palette-outline-variant-dark); /* #475560 */
+  --border-strong:      var(--palette-outline-dark);         /* #6B7780 */
+  --divider:            var(--palette-slate-110);            /* #3D4A54 */
 
   /* Text */
-  --text:               var(--qb-text-dark-primary);    /* #F2EFEC */
-  --text-muted:         var(--qb-text-dark-secondary);  /* #B8B3AB */
-  --text-tertiary:      var(--qb-text-dark-tertiary);   /* #8A857D */
-  --text-inverse:       var(--qb-text-light-primary);   /* #1A1F24 */
+  --text:               var(--palette-text-dark-primary);    /* #F2EFEC */
+  --text-muted:         var(--palette-text-dark-secondary);  /* #B8B3AB */
+  --text-tertiary:      var(--palette-text-dark-tertiary);   /* #8A857D */
+  --text-inverse:       var(--palette-text-light-primary);   /* #1A1F24 */
 
   /* Primary M3 = gold family (workhorse, focus rings, links) */
-  --primary:            var(--qb-dark-gold);            /* #8F6A2A */
-  --primary-on:         var(--qb-white);
-  --primary-container:  var(--qb-gold-container-dark);  /* #3D2E12 */
-  --on-primary-container: var(--qb-light-gold);         /* #F8E08E */
+  --primary:            var(--palette-dark-gold);            /* #8F6A2A */
+  --primary-on:         var(--palette-white);
+  --primary-container:  var(--palette-gold-container-dark);  /* #3D2E12 */
+  --on-primary-container: var(--palette-light-gold);         /* #F8E08E */
 
   /* Secondary = copper (hover/active variant of gold family, text buttons) */
-  --secondary:          var(--qb-copper);               /* #B87132 */
-  --secondary-on:       var(--qb-white);
+  --secondary:          var(--palette-copper);               /* #B87132 */
+  --secondary-on:       var(--palette-white);
 
   /* Section headers, dark-theme highlights */
-  --section-header:     var(--qb-light-gold);           /* #F8E08E */
+  --section-header:     var(--palette-light-gold);           /* #F8E08E */
 
   /* Accent = maroon. ACCENT ONLY: primary CTA, count badge, destructive */
-  --accent:             var(--qb-qatar-maroon);         /* #8B153D */
-  --accent-on:          var(--qb-white);
-  --accent-hover:       var(--qb-maroon-light);         /* #A42D55 */
-  --accent-container:   var(--qb-maroon-surface);       /* #3D0A1A */
+  --accent:             var(--palette-maroon);         /* #8B153D */
+  --accent-on:          var(--palette-white);
+  --accent-hover:       var(--palette-maroon-light);         /* #A42D55 */
+  --accent-container:   var(--palette-maroon-surface);       /* #3D0A1A */
 
   /* Semantic */
-  --success:            var(--qb-success-text-dark);    /* #4CAF6E (text) */
-  --success-bg:         var(--qb-success-surface-dark); /* #0D1F14 */
-  --success-solid:      var(--qb-success-dark);         /* #2E7D4F */
-  --success-on:         var(--qb-white);
+  --success:            var(--palette-success-text-dark);    /* #4CAF6E (text) */
+  --success-bg:         var(--palette-success-surface-dark); /* #0D1F14 */
+  --success-solid:      var(--palette-success-dark);         /* #2E7D4F */
+  --success-on:         var(--palette-white);
 
-  --warning:            var(--qb-warning-dark);         /* #E6A817 */
-  --warning-bg:         var(--qb-warning-surface-dark); /* #1A150A */
-  --warning-on:         var(--qb-black);
+  --warning:            var(--palette-warning-dark);         /* #E6A817 */
+  --warning-bg:         var(--palette-warning-surface-dark); /* #1A150A */
+  --warning-on:         var(--palette-black);
 
-  --danger:             var(--qb-error-dark);           /* #CF4455 */
-  --danger-bg:          var(--qb-error-surface-dark);   /* #1A0A10 */
-  --danger-on:          var(--qb-white);
+  --danger:             var(--palette-error-dark);           /* #CF4455 */
+  --danger-bg:          var(--palette-error-surface-dark);   /* #1A0A10 */
+  --danger-on:          var(--palette-white);
 
-  --info:               var(--qb-info-dark);            /* #5A8FBA */
-  --info-bg:            var(--qb-info-surface-dark);    /* #0D1520 */
-  --info-on:            var(--qb-white);
+  --info:               var(--palette-info-dark);            /* #5A8FBA */
+  --info-bg:            var(--palette-info-surface-dark);    /* #0D1520 */
+  --info-on:            var(--palette-white);
 
-  /* Component-specific (per Brand Guide §5) */
-  --input-bg:           var(--qb-slate-90);             /* §5.11 */
-  --input-border:       var(--qb-outline-variant-dark);
-  --input-border-focus: var(--qb-dark-gold);
-  --input-border-error: var(--qb-error-dark);
-  --input-text:         var(--qb-text-dark-primary);
-  --input-placeholder:  var(--qb-outline-dark);
-  --input-label:        var(--qb-text-dark-secondary);
-  --input-label-focused:var(--qb-dark-gold);
-  --input-helper:       var(--qb-text-dark-tertiary);
-  --input-error-text:   var(--qb-error-dark);
-  --input-icon:         var(--qb-text-dark-secondary);
+  /* Component-specific tokens */
+  --input-bg:           var(--palette-slate-90);             /* §5.11 */
+  --input-border:       var(--palette-outline-variant-dark);
+  --input-border-focus: var(--palette-dark-gold);
+  --input-border-error: var(--palette-error-dark);
+  --input-text:         var(--palette-text-dark-primary);
+  --input-placeholder:  var(--palette-outline-dark);
+  --input-label:        var(--palette-text-dark-secondary);
+  --input-label-focused:var(--palette-dark-gold);
+  --input-helper:       var(--palette-text-dark-tertiary);
+  --input-error-text:   var(--palette-error-dark);
+  --input-icon:         var(--palette-text-dark-secondary);
 
   /* §5.2 Cards — bg + border + theme-aware shadow + hover/press */
-  --card-bg:            var(--qb-slate-93);
+  --card-bg:            var(--palette-slate-93);
   --card-border:        rgba(71, 85, 96, 0.5);          /* #475560 at 50% per spec */
   --card-shadow:        0 4px 12px rgba(0, 0, 0, 0.20); /* dark: 4dp at 20% */
-  --card-hover-bg:      var(--qb-slate-110);            /* #3D4A54 */
+  --card-hover-bg:      var(--palette-slate-110);            /* #3D4A54 */
 
   /* §5.9 Divider variants */
-  --divider-subtle:     var(--qb-slate-110);            /* #3D4A54 dark */
-  --divider-section:    var(--qb-slate-80);             /* #222A31 thick 2dp */
+  --divider-subtle:     var(--palette-slate-110);            /* #3D4A54 dark */
+  --divider-section:    var(--palette-slate-80);             /* #222A31 thick 2dp */
 
   /* §5.4 Button disabled state */
-  --btn-disabled-bg:    var(--qb-outline-variant-dark); /* #475560 dark */
-  --btn-disabled-text:  var(--qb-outline-dark);         /* #6B7780 dark */
+  --btn-disabled-bg:    var(--palette-outline-variant-dark); /* #475560 dark */
+  --btn-disabled-text:  var(--palette-outline-dark);         /* #6B7780 dark */
 
   /* §5.5 Status badge dot indicators (solid form, not text form) */
-  --badge-success-dot:  var(--qb-success-dark);         /* #2E7D4F */
-  --badge-danger-dot:   var(--qb-error-dark);           /* #CF4455 */
+  --badge-success-dot:  var(--palette-success-dark);         /* #2E7D4F */
+  --badge-danger-dot:   var(--palette-error-dark);           /* #CF4455 */
 
-  --chip-info-bg:       var(--qb-gold-container-dark);  /* §5.5 nationality */
-  --chip-info-text:     var(--qb-light-gold);
-  --chip-info-border:   var(--qb-dark-gold);
+  --chip-info-bg:       var(--palette-gold-container-dark);  /* §5.5 nationality */
+  --chip-info-text:     var(--palette-light-gold);
+  --chip-info-border:   var(--palette-dark-gold);
 
-  --shimmer-base:       var(--qb-slate-93);
-  --shimmer-highlight:  var(--qb-slate-110);
+  --shimmer-base:       var(--palette-slate-93);
+  --shimmer-highlight:  var(--palette-slate-110);
 
   /* §5.13 Top app bar (scrolled = elevation overlay) */
-  --appbar-bg:          var(--qb-slate-80);
-  --appbar-bg-scrolled: var(--qb-slate-90);
+  --appbar-bg:          var(--palette-slate-80);
+  --appbar-bg-scrolled: var(--palette-slate-90);
 
   /* §5.6 Profile / hero header */
-  --hero-bg:            var(--qb-slate-90);
-  --hero-photo-border:  var(--qb-dark-gold);
+  --hero-bg:            var(--palette-slate-90);
+  --hero-photo-border:  var(--palette-dark-gold);
 
   /* §5.15 Tabs */
-  --tab-bg:             var(--qb-slate-90);
-  --tab-active-text:    var(--qb-light-gold);
-  --tab-active-bar:     var(--qb-dark-gold);
-  --tab-inactive-text:  var(--qb-outline-dark);
+  --tab-bg:             var(--palette-slate-90);
+  --tab-active-text:    var(--palette-light-gold);
+  --tab-active-bar:     var(--palette-dark-gold);
+  --tab-inactive-text:  var(--palette-outline-dark);
 
   /* §5.16 Switch / checkbox */
-  --switch-track-on:    var(--qb-dark-gold);
-  --switch-thumb-on:    var(--qb-light-gold);
-  --switch-track-off:   var(--qb-outline-variant-dark);
-  --switch-thumb-off:   var(--qb-outline-dark);
+  --switch-track-on:    var(--palette-dark-gold);
+  --switch-thumb-on:    var(--palette-light-gold);
+  --switch-track-off:   var(--palette-outline-variant-dark);
+  --switch-thumb-off:   var(--palette-outline-dark);
 
   /* §5.17 Progress */
-  --progress-track:     var(--qb-outline-variant-dark);
-  --progress-fill:      var(--qb-copper);
+  --progress-track:     var(--palette-outline-variant-dark);
+  --progress-fill:      var(--palette-copper);
 
   /* §5.14 Dialog */
-  --dialog-bg:          var(--qb-slate-93);
+  --dialog-bg:          var(--palette-slate-93);
   --dialog-scrim:       rgba(0, 0, 0, 0.6);             /* 60% on dark per §5.14 */
   /* §5.14 doesn't enumerate a dialog shadow explicitly. Follow §5.2
      (cards: 4dp at 20% dark / 2dp at 8% light) scaled up — dialogs sit
@@ -250,130 +248,130 @@
   --dialog-shadow:      0 12px 32px rgba(0, 0, 0, 0.20);
 
   /* Focus ring — Dark Gold 2dp per §9.5 */
-  --focus-ring:         0 0 0 2px var(--qb-dark-gold);
+  --focus-ring:         0 0 0 2px var(--palette-dark-gold);
 }
 
 /* ─── §5 Light theme semantic tokens ─────────────────────────────── */
 [data-theme='light'] {
-  --bg:                 var(--qb-warm-85);    /* #F7F5F3 */
-  --surface:            var(--qb-warm-90);    /* #F2EFEC */
-  --surface-2:          var(--qb-white);      /* #FFFFFF  — cards §5.2 */
-  --surface-high:       var(--qb-warm-95);    /* #E8E4DF  — search bar */
-  --surface-highest:    var(--qb-warm-gray);  /* #D6D1CA  — dialogs */
-  --surface-bright:     var(--qb-white);
-  --surface-dim:        var(--qb-warm-gray);  /* #D6D1CA  — dimmed overlay §3.1 */
+  --bg:                 var(--palette-warm-85);    /* #F7F5F3 */
+  --surface:            var(--palette-warm-90);    /* #F2EFEC */
+  --surface-2:          var(--palette-white);      /* #FFFFFF  — cards §5.2 */
+  --surface-high:       var(--palette-warm-95);    /* #E8E4DF  — search bar */
+  --surface-highest:    var(--palette-warm-gray);  /* #D6D1CA  — dialogs */
+  --surface-bright:     var(--palette-white);
+  --surface-dim:        var(--palette-warm-gray);  /* #D6D1CA  — dimmed overlay §3.1 */
 
-  --border:             var(--qb-sand);              /* #C1A18D §5.9 */
-  --border-strong:      var(--qb-outline-light);     /* #8A8A82 */
-  --divider:            var(--qb-warm-gray);         /* #D6D1CA */
+  --border:             var(--palette-sand);              /* #C1A18D §5.9 */
+  --border-strong:      var(--palette-outline-light);     /* #8A8A82 */
+  --divider:            var(--palette-warm-gray);         /* #D6D1CA */
 
-  --text:               var(--qb-text-light-primary);   /* #1A1F24 */
-  --text-muted:         var(--qb-text-light-secondary); /* #4A5560 */
-  --text-tertiary:      var(--qb-text-light-tertiary);  /* #7A8590 */
-  --text-inverse:       var(--qb-text-dark-primary);
+  --text:               var(--palette-text-light-primary);   /* #1A1F24 */
+  --text-muted:         var(--palette-text-light-secondary); /* #4A5560 */
+  --text-tertiary:      var(--palette-text-light-tertiary);  /* #7A8590 */
+  --text-inverse:       var(--palette-text-dark-primary);
 
-  --primary:            var(--qb-dark-gold);           /* #8F6A2A */
-  --primary-on:         var(--qb-white);
-  --primary-container:  var(--qb-gold-container-light); /* #FDF6E8 */
-  --on-primary-container: var(--qb-gold-container-dark);
+  --primary:            var(--palette-dark-gold);           /* #8F6A2A */
+  --primary-on:         var(--palette-white);
+  --primary-container:  var(--palette-gold-container-light); /* #FDF6E8 */
+  --on-primary-container: var(--palette-gold-container-dark);
 
   /* Light theme: muted gold (#6B5422) is accessible for text;
      Light Gold #F8E08E is INVISIBLE on light bg — never use it here. */
-  --secondary:          var(--qb-gold-muted);         /* #6B5422 */
-  --secondary-on:       var(--qb-white);
+  --secondary:          var(--palette-gold-muted);         /* #6B5422 */
+  --secondary-on:       var(--palette-white);
 
-  --section-header:     var(--qb-dark-gold);          /* #8F6A2A — §5.8 */
+  --section-header:     var(--palette-dark-gold);          /* #8F6A2A — §5.8 */
 
-  --accent:             var(--qb-qatar-maroon);       /* #8B153D */
-  --accent-on:          var(--qb-white);
-  --accent-hover:       var(--qb-maroon-dark);        /* #6E1030 */
-  --accent-container:   var(--qb-maroon-surface-light);/* #F8E8ED */
+  --accent:             var(--palette-maroon);       /* #8B153D */
+  --accent-on:          var(--palette-white);
+  --accent-hover:       var(--palette-maroon-dark);        /* #6E1030 */
+  --accent-container:   var(--palette-maroon-surface-light);/* #F8E8ED */
 
-  --success:            var(--qb-success-light);          /* #1B6E3D */
-  --success-bg:         var(--qb-success-surface-light);  /* #E8F5ED */
-  --success-solid:      var(--qb-success-light);
-  --success-on:         var(--qb-white);
+  --success:            var(--palette-success-light);          /* #1B6E3D */
+  --success-bg:         var(--palette-success-surface-light);  /* #E8F5ED */
+  --success-solid:      var(--palette-success-light);
+  --success-on:         var(--palette-white);
 
-  --warning:            var(--qb-warning-light);          /* #C4900A */
-  --warning-bg:         var(--qb-warning-surface-light);  /* #FDF6E8 */
-  --warning-on:         var(--qb-white);
+  --warning:            var(--palette-warning-light);          /* #C4900A */
+  --warning-bg:         var(--palette-warning-surface-light);  /* #FDF6E8 */
+  --warning-on:         var(--palette-white);
 
-  --danger:             var(--qb-error-light);            /* #B71C3C */
-  --danger-bg:          var(--qb-error-surface-light);    /* #F8E8ED */
-  --danger-on:          var(--qb-white);
+  --danger:             var(--palette-error-light);            /* #B71C3C */
+  --danger-bg:          var(--palette-error-surface-light);    /* #F8E8ED */
+  --danger-on:          var(--palette-white);
 
-  --info:               var(--qb-info-light);             /* #2E6B9E */
-  --info-bg:            var(--qb-info-surface-light);     /* #E8F0F8 */
-  --info-on:            var(--qb-white);
+  --info:               var(--palette-info-light);             /* #2E6B9E */
+  --info-bg:            var(--palette-info-surface-light);     /* #E8F0F8 */
+  --info-on:            var(--palette-white);
 
-  --input-bg:           var(--qb-white);
-  --input-border:       var(--qb-sand);
-  --input-border-focus: var(--qb-dark-gold);
-  --input-border-error: var(--qb-error-light);
-  --input-text:         var(--qb-text-light-primary);
-  --input-placeholder:  var(--qb-olive-gold);
-  --input-label:        var(--qb-text-light-secondary);
-  --input-label-focused:var(--qb-dark-gold);
-  --input-helper:       var(--qb-text-light-tertiary);
-  --input-error-text:   var(--qb-error-light);
-  --input-icon:         var(--qb-text-light-secondary);
+  --input-bg:           var(--palette-white);
+  --input-border:       var(--palette-sand);
+  --input-border-focus: var(--palette-dark-gold);
+  --input-border-error: var(--palette-error-light);
+  --input-text:         var(--palette-text-light-primary);
+  --input-placeholder:  var(--palette-olive-gold);
+  --input-label:        var(--palette-text-light-secondary);
+  --input-label-focused:var(--palette-dark-gold);
+  --input-helper:       var(--palette-text-light-tertiary);
+  --input-error-text:   var(--palette-error-light);
+  --input-icon:         var(--palette-text-light-secondary);
 
-  --card-bg:            var(--qb-white);
-  --card-border:        var(--qb-warm-gray);
+  --card-bg:            var(--palette-white);
+  --card-border:        var(--palette-warm-gray);
   --card-shadow:        0 2px 6px rgba(51, 63, 72, 0.08); /* #333F48 at 8%, 2dp */
-  --card-hover-bg:      var(--qb-warm-90);              /* #F2EFEC */
+  --card-hover-bg:      var(--palette-warm-90);              /* #F2EFEC */
 
-  --divider-subtle:     var(--qb-warm-95);              /* #E8E4DF */
-  --divider-section:    var(--qb-warm-95);              /* §5.9 light: same */
+  --divider-subtle:     var(--palette-warm-95);              /* #E8E4DF */
+  --divider-section:    var(--palette-warm-95);              /* §5.9 light: same */
 
-  --btn-disabled-bg:    var(--qb-warm-gray);            /* #D6D1CA */
-  --btn-disabled-text:  var(--qb-olive-gold);           /* #A59F8A */
+  --btn-disabled-bg:    var(--palette-warm-gray);            /* #D6D1CA */
+  --btn-disabled-text:  var(--palette-olive-gold);           /* #A59F8A */
 
-  --badge-success-dot:  var(--qb-success-light);
-  --badge-danger-dot:   var(--qb-error-light);
+  --badge-success-dot:  var(--palette-success-light);
+  --badge-danger-dot:   var(--palette-error-light);
 
-  --chip-info-bg:       var(--qb-gold-container-light);
-  --chip-info-text:     var(--qb-gold-muted);
-  --chip-info-border:   var(--qb-dark-gold);
+  --chip-info-bg:       var(--palette-gold-container-light);
+  --chip-info-text:     var(--palette-gold-muted);
+  --chip-info-border:   var(--palette-dark-gold);
 
-  --shimmer-base:       var(--qb-warm-95);
-  --shimmer-highlight:  var(--qb-warm-90);
+  --shimmer-base:       var(--palette-warm-95);
+  --shimmer-highlight:  var(--palette-warm-90);
 
-  --appbar-bg:          var(--qb-warm-85);
-  --appbar-bg-scrolled: var(--qb-warm-90);
+  --appbar-bg:          var(--palette-warm-85);
+  --appbar-bg-scrolled: var(--palette-warm-90);
 
-  --hero-bg:            var(--qb-warm-95);
-  --hero-photo-border:  var(--qb-dark-gold);
+  --hero-bg:            var(--palette-warm-95);
+  --hero-photo-border:  var(--palette-dark-gold);
 
-  --tab-bg:             var(--qb-warm-90);
-  --tab-active-text:    var(--qb-dark-gold);
-  --tab-active-bar:     var(--qb-dark-gold);
-  --tab-inactive-text:  var(--qb-olive-gold);
+  --tab-bg:             var(--palette-warm-90);
+  --tab-active-text:    var(--palette-dark-gold);
+  --tab-active-bar:     var(--palette-dark-gold);
+  --tab-inactive-text:  var(--palette-olive-gold);
 
-  --switch-track-on:    var(--qb-dark-gold);
-  --switch-thumb-on:    var(--qb-white);
-  --switch-track-off:   var(--qb-warm-gray);
-  --switch-thumb-off:   var(--qb-warm-85);
+  --switch-track-on:    var(--palette-dark-gold);
+  --switch-thumb-on:    var(--palette-white);
+  --switch-track-off:   var(--palette-warm-gray);
+  --switch-thumb-off:   var(--palette-warm-85);
 
-  --progress-track:     var(--qb-warm-gray);
-  --progress-fill:      var(--qb-dark-gold);
+  --progress-track:     var(--palette-warm-gray);
+  --progress-fill:      var(--palette-dark-gold);
 
-  --dialog-bg:          var(--qb-white);
+  --dialog-bg:          var(--palette-white);
   --dialog-scrim:       rgba(0, 0, 0, 0.4);             /* 40% on light per §5.14 */
   /* Same elevation-step logic as dark theme, but at the §5.2 light
      shadow opacity (#333F48 at 8%) — keeps shadows readable on cream
      surfaces without darkening the visual weight. */
   --dialog-shadow:      0 12px 32px rgba(51, 63, 72, 0.10);
 
-  --focus-ring:         0 0 0 2px var(--qb-dark-gold);
+  --focus-ring:         0 0 0 2px var(--palette-dark-gold);
 }
 
-/* ─── §6 RTL gradient mirror (Brand Guide §4.4) ──────────────────── */
+/* ─── §6 RTL gradient mirror ──────────────────────────────────── */
 [dir='rtl'] {
   --brand-gradient: linear-gradient(
     to left,
-    var(--qb-light-gold) 0%,
-    var(--qb-olive-gold) 50%,
-    var(--qb-dark-gold) 100%
+    var(--palette-light-gold) 0%,
+    var(--palette-olive-gold) 50%,
+    var(--palette-dark-gold) 100%
   );
 }

@@ -18,7 +18,6 @@ This document is the explicit checklist of compliance against the Department Cod
 | `README.md` with purpose, build, deploy, config reference | ✅ | |
 | `CLAUDE.md` with AI-agent context | ✅ | |
 | `COMPLIANCE.md` | ✅ | This file |
-| `BRAND-COMPLIANCE.md` | ✅ | See `BRAND-COMPLIANCE.md` |
 
 ## Backend (Go)
 
@@ -56,7 +55,7 @@ This document is the explicit checklist of compliance against the Department Cod
 | Per-request timeout | ✅ | `RequestContextTimeout` middleware applies `server.write_timeout` as a hard ceiling on handler ctx |
 | SQL parameter binding (no string concat) | ✅ | `database/sql` `?` placeholders only |
 | Password storage (SimpleAuth handles hashing) | ✅ | bcrypt via SimpleAuth; mqConnector itself never persists user passwords |
-| Connection password storage | ⚠️ | MQ connection passwords are stored plaintext in `storage.connections.password` so the bridge can dial brokers. SQLite file should be set to mode `0640` and live on an encrypted filesystem. Envelope encryption with a KMS master key is a planned follow-up (tracked in `BRAND-COMPLIANCE.md` deviations section if/when graduated to roadmap). |
+| Connection password storage | ✅ | AES-256-GCM envelope encryption with versioned keys (`internal/secrets`); rotation online via `POST /api/v1/secrets/rotate`. |
 | Security headers | ✅ | X-Content-Type-Options, X-Frame-Options=DENY, Referrer-Policy, HSTS, Content-Security-Policy (locked-down: no inline scripts, no external origins, no framing), Permissions-Policy denies geolocation/microphone/camera |
 | HttpOnly + SameSite=Strict session cookie | ✅ | `internal/auth.SetCookie` |
 | Request ID in every log line | ✅ | `RequestID` middleware sets `X-Request-Id`, propagates through ctx |
@@ -89,7 +88,7 @@ This document is the explicit checklist of compliance against the Department Cod
 | README build/run/deploy | ✅ | |
 | Inline package-level comments where non-obvious | ✅ | |
 | Config reference (`config.example.yaml`) | ✅ | |
-| Compliance docs | ✅ | This file + `BRAND-COMPLIANCE.md` |
+| Compliance docs | ✅ | This file |
 | API documentation (OpenAPI 3.0) | ✅ | `internal/server/openapi.yaml`, served at `/api/openapi.yaml`, embedded via `go:embed` |
 | Real-broker integration coverage | ✅ | `internal/pipeline/integration_rabbit_test.go` — `//go:build integration`, drives a live RabbitMQ end-to-end. IBM MQ counterpart: `integration_ibmmq_test.go` (`//go:build integration && ibmmq`). |
 | IBM MQ build variant | ✅ | `Dockerfile.ibmmq` produces a CGO-linked image with `-tags ibmmq` against the bundled IBM client |

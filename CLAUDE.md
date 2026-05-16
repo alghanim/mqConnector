@@ -56,7 +56,7 @@ cd web && npm run build            # frontend only
 - Committing or pushing
 - Deleting any files
 - Installing new dependencies (`go get` or `npm install <new>`)
-- Editing `COMPLIANCE.md` or `BRAND-COMPLIANCE.md`
+- Editing `COMPLIANCE.md`
 - Running `git reset --hard`, force pushes, or anything else destructive
 
 ## Things to always do
@@ -85,6 +85,6 @@ This codebase was rewritten from a PocketBase-based prototype. None of the old c
 ## Reference documents
 
 - `COMPLIANCE.md` — full coding-standard checklist
-- `BRAND-COMPLIANCE.md` — branding-guide compliance
 - `README.md` — user-facing build/deploy/run
+- `docs/FEATURES.md`, `docs/DEPENDENCIES.md`, `docs/REQUEST_FLOW.md`, `docs/API_FLOW.md` — long-form architecture
 - `config.example.yaml` — full config reference

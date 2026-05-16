@@ -1,5 +1,5 @@
 <!--
-  Switch — Brand Guide §5.16.
+  Switch — Design system §5.16.
 
   Two-way bound on/off toggle replacing native `<input type="checkbox">`
   where the operator is choosing an enabled/disabled state, not "tick to
@@ -117,6 +117,6 @@
      :global(input:focus-visible) sibling rule — Svelte rejects :global
      sandwiched between scoped selectors. */
   .switch:focus-within .switch-thumb {
-    box-shadow: 0 0 0 2px var(--qb-dark-gold);
+    box-shadow: 0 0 0 2px var(--palette-dark-gold);
   }
 </style>
