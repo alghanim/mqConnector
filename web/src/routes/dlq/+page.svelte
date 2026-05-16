@@ -14,7 +14,7 @@
   Phase 6 to avoid backend changes.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { api, type DLQEntry } from '$lib/api';
   import { locale, t } from '$lib/stores/locale';
   import Card from '$lib/components/Card.svelte';
@@ -189,18 +189,86 @@
   }
 
   // ─── Detail drawer ──────────────────────────────────────────────
+  // The drawer is a side-anchored modal. We can't reuse the centred
+  // Dialog primitive, so we replicate its a11y machinery here:
+  //   - role="dialog" + aria-modal + aria-labelledby
+  //   - Tab / Shift+Tab trap inside the drawer
+  //   - Escape closes (unless a confirm Dialog is open on top)
+  //   - Initial focus on the close button
+  //   - Focus restored to the row trigger on close
+  //   - <html> overflow locked while open so the page behind doesn't
+  //     scroll under the drawer
   let viewing: DLQEntry | null = null;
   let copied = false;
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  let drawerEl: HTMLDivElement | null = null;
+  let lastFocused: Element | null = null;
+
+  function focusables(): HTMLElement[] {
+    if (!drawerEl) return [];
+    return Array.from(
+      drawerEl.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    );
+  }
 
   function openDetail(e: DLQEntry) {
+    lastFocused = typeof document !== 'undefined' ? document.activeElement : null;
     viewing = e;
     copied = false;
+    // First focusable in the drawer is the Close button.
+    tick().then(() => focusables()[0]?.focus());
   }
   function closeDetail() {
     viewing = null;
     if (copiedTimer) clearTimeout(copiedTimer);
+    if (lastFocused instanceof HTMLElement) {
+      lastFocused.focus({ preventScroll: true });
+    }
+    lastFocused = null;
   }
+
+  function onDrawerKey(e: KeyboardEvent) {
+    if (!viewing) return;
+    // Defer to a confirm Dialog when one is layered over the drawer —
+    // its Escape handler should fire instead of ours.
+    if (pendingDeleteId !== null || bulkAction !== null) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeDetail();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const items = focusables();
+    if (items.length === 0) {
+      e.preventDefault();
+      return;
+    }
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  // Lock background scroll while the drawer is open.
+  $: if (typeof document !== 'undefined') {
+    if (viewing) {
+      document.documentElement.style.overflow = 'hidden';
+    } else {
+      document.documentElement.style.overflow = '';
+    }
+  }
+
+  onDestroy(() => {
+    if (typeof document !== 'undefined') document.documentElement.style.overflow = '';
+    if (copiedTimer) clearTimeout(copiedTimer);
+  });
 
   /**
    * Decode the base64 payload to UTF-8. Falls back to a hex/byte
@@ -267,43 +335,45 @@
   {/if}
 
   <!-- ─── Filters ───────────────────────────────────────────────── -->
-  <Card>
-    <div class="dlq-filters">
-      <div class="dlq-filter-field">
-        <Select
-          bind:value={filterPipeline}
-          options={pipelineOptions}
-          label={t($locale, 'dlq.filter.pipeline')}
-        />
-      </div>
-      <div class="dlq-filter-field">
-        <Input
-          bind:value={filterError}
-          label={t($locale, 'dlq.filter.error')}
-          placeholder={t($locale, 'dlq.filter.errorPlaceholder')}
-        />
-      </div>
-      <div class="dlq-filter-field">
-        <Select
-          bind:value={filterWindow}
-          options={windowOptions}
-          label={t($locale, 'dlq.filter.window')}
-        />
-      </div>
-      {#if anyFilter}
-        <div class="dlq-filter-field dlq-filter-clear">
-          <Button variant="ghost" on:click={clearFilters}>
-            {t($locale, 'dlq.filter.clear')}
-          </Button>
+  <section aria-label={t($locale, 'dlq.filters')}>
+    <Card>
+      <div class="dlq-filters">
+        <div class="dlq-filter-field">
+          <Select
+            bind:value={filterPipeline}
+            options={pipelineOptions}
+            label={t($locale, 'dlq.filter.pipeline')}
+          />
         </div>
-      {/if}
-    </div>
-  </Card>
+        <div class="dlq-filter-field">
+          <Input
+            bind:value={filterError}
+            label={t($locale, 'dlq.filter.error')}
+            placeholder={t($locale, 'dlq.filter.errorPlaceholder')}
+          />
+        </div>
+        <div class="dlq-filter-field">
+          <Select
+            bind:value={filterWindow}
+            options={windowOptions}
+            label={t($locale, 'dlq.filter.window')}
+          />
+        </div>
+        {#if anyFilter}
+          <div class="dlq-filter-field dlq-filter-clear">
+            <Button variant="ghost" on:click={clearFilters}>
+              {t($locale, 'dlq.filter.clear')}
+            </Button>
+          </div>
+        {/if}
+      </div>
+    </Card>
+  </section>
 
   <!-- ─── Bulk action bar ───────────────────────────────────────── -->
   {#if selected.size > 0}
-    <div class="dlq-bulk-bar">
-      <span class="dlq-bulk-count">
+    <section class="dlq-bulk-bar" aria-label={t($locale, 'dlq.bulk.region')}>
+      <span class="dlq-bulk-count" aria-live="polite">
         <Badge variant="neutral">{selected.size}</Badge>
         {t($locale, 'dlq.bulk.selected')}
       </span>
@@ -316,7 +386,7 @@
         </Button>
         <Button on:click={askBulkRetry}>{t($locale, 'dlq.bulk.retryAll')}</Button>
       </div>
-    </div>
+    </section>
   {/if}
 
   <Card>
@@ -325,7 +395,7 @@
     {:else if filtered.length === 0}
       <p style="color: var(--text-muted)">{t($locale, 'dlq.emptyFiltered')}</p>
     {:else}
-      <table class="table dlq-table">
+      <table class="table dlq-table" aria-label={t($locale, 'dlq.title')}>
         <thead>
           <tr>
             <th class="dlq-checkbox-cell">
@@ -334,7 +404,12 @@
                 checked={allVisibleSelected}
                 indeterminate={someVisibleSelected}
                 on:change={toggleAllVisible}
-                aria-label="Select all visible"
+                aria-checked={someVisibleSelected
+                  ? 'mixed'
+                  : allVisibleSelected
+                    ? 'true'
+                    : 'false'}
+                aria-label={t($locale, 'dlq.selectAll')}
               />
             </th>
             <th>{t($locale, 'common.when')}</th>
@@ -342,37 +417,42 @@
             <th>{t($locale, 'dlq.sourceQueue')}</th>
             <th>{t($locale, 'common.reason')}</th>
             <th>{t($locale, 'dlq.retries')}</th>
-            <th></th>
+            <th><span class="sr-only">{t($locale, 'common.actions')}</span></th>
           </tr>
         </thead>
         <tbody>
           {#each filtered as e (e.id)}
-            <tr class:dlq-selected={selected.has(e.id)}>
+            <tr class:dlq-selected={selected.has(e.id)} aria-selected={selected.has(e.id)}>
               <td class="dlq-checkbox-cell">
                 <input
                   type="checkbox"
                   checked={selected.has(e.id)}
                   on:change={() => toggleOne(e.id)}
                   on:click|stopPropagation
-                  aria-label="Select message {e.id}"
+                  aria-label="{t($locale, 'dlq.selectRow')} {e.id}"
                 />
               </td>
+              <!--
+                Single row-trigger button: it owns the row's "open detail"
+                affordance for both mouse and keyboard. Its accessible
+                name folds in pipeline + reason so a screen-reader user
+                hears the row context in one announcement instead of
+                tabbing through three redundant buttons.
+              -->
               <td style="color: var(--text-muted)">
-                <button class="dlq-row-button" type="button" on:click={() => openDetail(e)}>
-                  {e.created_at}
+                <button
+                  class="dlq-row-button"
+                  type="button"
+                  on:click={() => openDetail(e)}
+                  aria-label="{t($locale, 'dlq.detail.viewRow')} — {e.pipeline_id ||
+                    '—'}, {e.created_at}, {e.error_reason}"
+                >
+                  <time datetime={e.created_at}>{e.created_at}</time>
                 </button>
               </td>
-              <td style="color: var(--text)">
-                <button class="dlq-row-button" type="button" on:click={() => openDetail(e)}>
-                  {e.pipeline_id || '—'}
-                </button>
-              </td>
+              <td style="color: var(--text)">{e.pipeline_id || '—'}</td>
               <td style="color: var(--text-muted)">{e.source_queue || '—'}</td>
-              <td style="color: var(--text)">
-                <button class="dlq-row-button" type="button" on:click={() => openDetail(e)}>
-                  {e.error_reason}
-                </button>
-              </td>
+              <td style="color: var(--text)">{e.error_reason}</td>
               <td>
                 <Badge variant={e.retry_count > 0 ? 'warning' : 'neutral'}>
                   {e.retry_count}
@@ -462,24 +542,38 @@
 </Dialog>
 
 <!-- ─── Detail drawer ───────────────────────────────────────────── -->
+<!--
+  Escape + Tab trap live on a single window listener so the handler
+  fires regardless of which element inside the drawer has focus.
+  Guarded by `viewing` inside onDrawerKey.
+-->
+<svelte:window on:keydown={onDrawerKey} />
+
 {#if viewing}
   {@const decoded = decodePayload(viewing.original_msg)}
   {@const viewingId = viewing.id}
+  <!-- Scrim — visual-only, click closes. aria-hidden because the
+       dialog itself carries all semantics. -->
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <div class="dlq-scrim" aria-hidden="true" on:click={closeDetail}></div>
   <div
-    class="dlq-scrim"
-    role="presentation"
-    on:click={closeDetail}
-    on:keydown={(e) => e.key === 'Escape' && closeDetail()}
-  ></div>
-  <aside class="dlq-drawer" aria-label={t($locale, 'dlq.detail.title')}>
+    bind:this={drawerEl}
+    class="dlq-drawer"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="dlq-detail-title"
+  >
     <div class="dlq-drawer-head">
       <div>
-        <p class="section-heading">{t($locale, 'dlq.detail.title')}</p>
+        <p id="dlq-detail-title" class="section-heading">{t($locale, 'dlq.detail.title')}</p>
         <p class="text-xs mt-1" style="color: var(--text-muted)">
           {viewing.pipeline_id || '—'} · {viewing.source_queue || '—'}
         </p>
       </div>
-      <Button variant="ghost" on:click={closeDetail}>{t($locale, 'dlq.detail.close')}</Button>
+      <Button variant="ghost" on:click={closeDetail}>
+        {t($locale, 'dlq.detail.close')}
+      </Button>
     </div>
 
     <div class="dlq-drawer-body">
@@ -490,12 +584,14 @@
         </div>
         <div class="dlq-meta-row">
           <span class="dlq-meta-label">{t($locale, 'dlq.detail.created')}</span>
-          <span class="dlq-meta-value">{viewing.created_at}</span>
+          <time class="dlq-meta-value" datetime={viewing.created_at}>{viewing.created_at}</time>
         </div>
         {#if viewing.last_retry_at}
           <div class="dlq-meta-row">
             <span class="dlq-meta-label">{t($locale, 'dlq.detail.lastRetry')}</span>
-            <span class="dlq-meta-value">{viewing.last_retry_at}</span>
+            <time class="dlq-meta-value" datetime={viewing.last_retry_at}
+              >{viewing.last_retry_at}</time
+            >
           </div>
         {/if}
         <div class="dlq-meta-row">
@@ -528,12 +624,29 @@
             </Button>
           </div>
         </div>
+        <!-- aria-live region for the copy confirmation. Visual badge
+             above is for sighted users; this is the SR equivalent. -->
+        <span class="sr-only" aria-live="polite">
+          {copied ? t($locale, 'dlq.detail.copied') : ''}
+        </span>
         {#if decoded.binary}
           <p class="text-xs mt-1" style="color: var(--text-muted)">
             {t($locale, 'dlq.detail.binary')}
           </p>
         {/if}
-        <pre class="dlq-payload" class:dlq-payload-binary={decoded.binary}>{decoded.text}</pre>
+        <!-- role="region" + tabindex="0" gives keyboard users a focus
+             stop so they can scroll the payload with arrow keys / Page
+             Up/Down; SRs announce it as a labelled landmark. The lint
+             rule fires on the <pre> element type regardless of the
+             explicit role — a scrollable labelled region is a valid
+             tab stop per WAI-ARIA APG. -->
+        <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+        <pre
+          class="dlq-payload"
+          class:dlq-payload-binary={decoded.binary}
+          role="region"
+          aria-label={t($locale, 'dlq.payload')}
+          tabindex="0">{decoded.text}</pre>
       </div>
     </div>
 
@@ -543,7 +656,7 @@
       </Button>
       <Button on:click={() => retry(viewingId)}>{t($locale, 'common.retry')}</Button>
     </div>
-  </aside>
+  </div>
 {/if}
 
 <style>
@@ -598,8 +711,20 @@
     accent-color: var(--primary);
     cursor: pointer;
   }
+  /*
+   * Selected-row indicator: 14% gold tint gets us above the 3:1 non-text
+   * contrast threshold vs. the unselected row; the inset stripe is a
+   * second, redundant cue for low-vision users. Logical inset so the
+   * stripe flips to the trailing edge under RTL.
+   */
   .dlq-selected {
-    background: color-mix(in srgb, var(--primary) 5%, transparent);
+    background: color-mix(in srgb, var(--primary) 14%, transparent);
+    box-shadow: inset 3px 0 0 var(--primary);
+  }
+  /* :global is required: [dir] is on <html>, outside this component's
+     scope, so Svelte's scoped CSS otherwise drops the rule. */
+  :global([dir='rtl']) .dlq-selected {
+    box-shadow: inset -3px 0 0 var(--primary);
   }
   /*
    * Make the timestamp / pipeline / reason cells act as the row-detail
