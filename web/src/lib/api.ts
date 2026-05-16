@@ -210,3 +210,15 @@ export interface Me {
   email?: string;
   roles?: string[];
 }
+
+export interface AuditEntry {
+  id: string;
+  at: string;
+  actor: string;
+  actor_sub: string;
+  action: string;
+  resource: string;
+  status: number;
+  request_id: string;
+  remote_ip: string;
+}
