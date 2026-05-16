@@ -32,14 +32,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Replace the local replace-directive in go.mod with a fetchable
-      # module path so the CI runner doesn't need a sibling checkout of
-      # SimpleAuth. In a future improvement, tag the SDK and consume by
-      # version directly.
-      - name: Drop SimpleAuth local replace
+      # The replace directive in go.mod points at a sibling SimpleAuth
+      # checkout that only exists on dev machines. Clone the public
+      # mirror to a known path and rewrite the replace target to that
+      # path so go mod can resolve simpleauth-go without hitting the
+      # module proxy (which doesn't host this SDK — it lives in a
+      # subdirectory of a larger repo).
+      - name: Provide SimpleAuth SDK
         run: |
-          sed -i '/^replace.*simpleauth-go/d' go.mod
-          go mod tidy
+          git clone --depth 1 https://github.com/bodaay/SimpleAuth.git /tmp/SimpleAuth
+          sed -i 's|=> ../SimpleAuth/sdk/go|=> /tmp/SimpleAuth/sdk/go|' go.mod
+          go mod download
 
       - run: go vet ./...
 
