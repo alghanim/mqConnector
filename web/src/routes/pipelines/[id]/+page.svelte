@@ -8,7 +8,6 @@
     type Stage,
     type StageType,
     type Transform,
-    type TransformType,
     type RoutingRule,
     type RoutingOperator,
     type Schema
@@ -20,6 +19,7 @@
   import Select from '$lib/components/Select.svelte';
   import Badge from '$lib/components/Badge.svelte';
   import StageConfigForm from '$lib/components/StageConfigForm.svelte';
+  import TransformListEditor from '$lib/components/TransformListEditor.svelte';
   import Alert from '$lib/components/Alert.svelte';
   import { SAMPLE_FIXTURES } from '$lib/sample-fixtures';
 
@@ -37,9 +37,6 @@
 
   $: stageTypeOptions = (
     ['filter', 'transform', 'translate', 'route', 'script', 'validate'] as StageType[]
-  ).map((v) => ({ value: v, label: v }));
-  $: transformTypeOptions = (
-    ['rename', 'mask', 'move', 'set', 'delete'] as TransformType[]
   ).map((v) => ({ value: v, label: v }));
   $: routingOpOptions = (
     ['eq', 'neq', 'contains', 'regex', 'gt', 'lt', 'exists'] as RoutingOperator[]
@@ -95,27 +92,6 @@
     const copy = stages.slice();
     [copy[i], copy[j]] = [copy[j], copy[i]];
     stages = copy.map((s, idx) => ({ ...s, stage_order: idx + 1 }));
-  }
-
-  // ---------- transforms ----------
-  function addTransform() {
-    transforms = [
-      ...transforms,
-      {
-        transform_type: 'rename',
-        source_path: '',
-        target_path: '',
-        mask_pattern: '',
-        mask_replace: '',
-        set_value: '',
-        order: transforms.length + 1
-      }
-    ];
-  }
-  function removeTransform(i: number) {
-    transforms = transforms
-      .filter((_, idx) => idx !== i)
-      .map((tr, idx) => ({ ...tr, order: idx + 1 }));
   }
 
   // ---------- routing ----------
@@ -404,42 +380,7 @@
 
   <!-- ─── Transforms ────────────────────────────────────────────────── -->
   <Card>
-    <div class="flex items-center justify-between mb-3">
-      <p class="section-heading">{t($locale, 'pipelines.transforms')}</p>
-      <Button variant="ghost" on:click={addTransform}>{t($locale, 'pipelines.transforms.add')}</Button>
-    </div>
-    {#if transforms.length === 0}
-      <p style="color: var(--text-muted)">{t($locale, 'pipelines.transforms.empty')}</p>
-    {:else}
-      <div class="space-y-3">
-        {#each transforms as tr, i (i)}
-          <div class="stage-row">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Select
-                bind:value={tr.transform_type}
-                options={transformTypeOptions}
-                label={t($locale, 'pipelines.transforms.type')}
-              />
-              <Input bind:value={tr.source_path} label={t($locale, 'pipelines.transforms.sourcePath')} />
-              {#if tr.transform_type === 'rename' || tr.transform_type === 'move'}
-                <Input bind:value={tr.target_path} label={t($locale, 'pipelines.transforms.targetPath')} />
-              {/if}
-              {#if tr.transform_type === 'mask'}
-                <Input bind:value={tr.mask_pattern} label={t($locale, 'pipelines.transforms.maskPattern')} />
-                <Input bind:value={tr.mask_replace} label={t($locale, 'pipelines.transforms.maskReplace')} />
-              {/if}
-              {#if tr.transform_type === 'set'}
-                <Input bind:value={tr.set_value} label={t($locale, 'pipelines.transforms.setValue')} />
-              {/if}
-            </div>
-            <div class="flex justify-end mt-2">
-              <Button variant="outline" on:click={() => removeTransform(i)}
-                >{t($locale, 'common.delete')}</Button>
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
+    <TransformListEditor bind:transforms />
   </Card>
 
   <!-- ─── Routing rules ─────────────────────────────────────────────── -->

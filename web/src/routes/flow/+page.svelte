@@ -28,7 +28,8 @@
     type RoutingRule,
     type Schema,
     type Stage,
-    type StageType
+    type StageType,
+    type Transform
   } from '$lib/api';
   import {
     topoFromSource as topoFromSourceCore,
@@ -42,6 +43,7 @@
   import Badge from '$lib/components/Badge.svelte';
   import Alert from '$lib/components/Alert.svelte';
   import StageConfigForm from '$lib/components/StageConfigForm.svelte';
+  import TransformListEditor from '$lib/components/TransformListEditor.svelte';
   import { SAMPLE_FIXTURES } from '$lib/sample-fixtures';
 
   // ─── Types ────────────────────────────────────────────────────────
@@ -88,6 +90,11 @@
   // create-save. `null` means "draw a new pipeline" (legacy behaviour).
   let pipelineId: string | null = null;
   let loadingPipeline = false;
+  // Pipeline-level transforms list (rename/mask/move/set/delete ops).
+  // Lives at pipeline scope, not per-node — every `transform` stage in
+  // the chain consumes the same list. Edited from the props panel when
+  // a transform node is selected, persisted on Save & Deploy.
+  let transforms: Transform[] = [];
 
   let canvasEl: HTMLElement | null = null;
   let svgEl: SVGSVGElement | null = null;
@@ -174,10 +181,11 @@
     loadingPipeline = true;
     error = '';
     try {
-      const [pipe, stages, loadedRules] = await Promise.all([
+      const [pipe, stages, loadedRules, txs] = await Promise.all([
         api.get<Pipeline>(`/v1/pipelines/${id}`),
         api.get<Stage[]>(`/v1/pipelines/${id}/stages`).then((v) => v ?? []),
-        api.get<RoutingRule[]>(`/v1/pipelines/${id}/routing-rules`).then((v) => v ?? [])
+        api.get<RoutingRule[]>(`/v1/pipelines/${id}/routing-rules`).then((v) => v ?? []),
+        api.get<Transform[]>(`/v1/pipelines/${id}/transforms`).then((v) => v ?? [])
       ]);
       const recon = pipelineToFlow(
         { source_id: pipe.source_id, destination_id: pipe.destination_id },
@@ -193,6 +201,7 @@
       pipelineName = pipe.name;
       nodes = recon.nodes;
       edges = recon.edges;
+      transforms = [...txs].sort((a, b) => a.order - b.order);
       // Seed the local id counter past whatever the reconstruction
       // produced, otherwise a palette drop could collide with 'n3'.
       nextNodeIdCounter = recon.nextIdCounter;
@@ -429,6 +438,7 @@
     selectedId = null;
     error = '';
     savedMsg = '';
+    transforms = [];
     // Clearing the canvas also drops the pipeline binding — otherwise
     // hitting Save would silently empty the loaded pipeline's stages.
     pipelineId = null;
@@ -558,6 +568,16 @@
           enabled: true
         }));
       await api.put(`/v1/pipelines/${pipe.id}/stages`, stages);
+
+      // 2b. Pipeline-level transforms. Only persist when there's at
+      // least one `transform` stage in the chain — otherwise the list
+      // is unreachable and we leave it empty rather than carry stale
+      // data. Re-number `order` so it matches the editor's view.
+      const hasTransformStage = stageNodes.some((n) => n.kind === 'transform');
+      const txsToPersist = hasTransformStage
+        ? transforms.map((tr, i) => ({ ...tr, order: i + 1 }))
+        : [];
+      await api.put(`/v1/pipelines/${pipe.id}/transforms`, txsToPersist);
 
       // 3. Routing rules — only if there's a route node. The rule list
       // comes from each outgoing edge of the route node to a destination
@@ -808,6 +828,19 @@
           options={connOptions}
           label={t($locale, 'flow.props.connection')}
         />
+      {:else if selected.kind === 'transform'}
+        <!--
+          A transform node is a position marker; the ops list lives at
+          pipeline scope, so the props panel edits the shared
+          `transforms` state rather than this node's config blob. The
+          StageConfigForm equivalent for `transform` only shows an
+          explanatory help block — we surface it inline above the
+          editor for context.
+        -->
+        <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />
+        <div class="mt-3">
+          <TransformListEditor bind:transforms compact />
+        </div>
       {:else}
         <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />
       {/if}
