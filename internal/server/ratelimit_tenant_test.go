@@ -23,8 +23,13 @@ func TestTenantLimiter_DefaultCap(t *testing.T) {
 // through its budget doesn't affect another.
 func TestTenantLimiter_PerTenantIsolation(t *testing.T) {
 	l := newTenantLimiter(2, time.Minute, nil)
-	if !l.allow("a") || !l.allow("a") {
-		t.Fatal("tenant a should have a 2-budget")
+	// Two distinct calls — using `||` would short-circuit and never
+	// exercise the second token, hiding a regression that wedges the
+	// budget after the first allow().
+	first := l.allow("a")
+	second := l.allow("a")
+	if !first || !second {
+		t.Fatalf("tenant a should have a 2-budget; first=%v second=%v", first, second)
 	}
 	if l.allow("a") {
 		t.Fatal("tenant a should be rejected past 2")

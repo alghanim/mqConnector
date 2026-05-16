@@ -52,8 +52,8 @@ func TestDLQ_ListFiltered_ErrorContainsCaseInsensitive(t *testing.T) {
 	}
 
 	list, total, _ = s.DLQ.ListFiltered(ctx, DefaultTenantID, DLQFilter{Error: "FAILED"}, 1, 10)
-	if total != 1 {
-		t.Errorf("expected 1 match for FAILED, got %d", total)
+	if total != 1 || len(list) != 1 || list[0].ErrorReason != "validation failed" {
+		t.Errorf("expected 1 match for FAILED (validation failed); total=%d items=%+v", total, list)
 	}
 }
 

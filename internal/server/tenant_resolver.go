@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -134,21 +133,3 @@ func pickMembership(ms []*storage.Membership, requested string) *storage.Members
 	return ms[0]
 }
 
-// withMembershipPromotion promotes a bootstrap:<username> membership
-// row to the user's real sub on first successful login. Safe to call
-// every login; subsequent calls are no-ops.
-func (tr *tenantResolver) withMembershipPromotion(ctx context.Context, user *simpleauth.User) {
-	if user == nil || user.Sub == "" {
-		return
-	}
-	username := user.PreferredUsername
-	if username == "" {
-		username = user.Name
-	}
-	if username == "" {
-		return
-	}
-	// ListByUser already triggers adoption when no rows match the sub.
-	// We don't care about the result, just the side effect.
-	_, _ = tr.store.Memberships.ListByUser(ctx, user.Sub, strings.ToLower(username))
-}
