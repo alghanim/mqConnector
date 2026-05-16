@@ -68,11 +68,41 @@ func (tr *tenantResolver) Resolve(r *http.Request, userIface any) (auth.TenantCl
 	}
 
 	requested := requestedTenant(r)
+
+	// System-admin escalation: a user with the owner role on the
+	// default tenant gets implicit owner on any tenant they explicitly
+	// request. Lets the on-prem operator manage every tenant from one
+	// account without adding themselves as owner to each one.
+	if requested != "" && isDefaultOwner(memberships) {
+		// Prefer a real membership when it exists.
+		for _, m := range memberships {
+			if m.TenantID == requested {
+				return auth.TenantClaim{TenantID: m.TenantID, Role: string(m.Role)}, true
+			}
+		}
+		// Verify the tenant actually exists before granting — refuse
+		// to synthesize a role for a typo.
+		if _, err := tr.store.Tenants.Get(ctx, requested); err == nil {
+			return auth.TenantClaim{TenantID: requested, Role: string(storage.RoleOwner)}, true
+		}
+	}
+
 	chosen := pickMembership(memberships, requested)
 	return auth.TenantClaim{
 		TenantID: chosen.TenantID,
 		Role:     string(chosen.Role),
 	}, true
+}
+
+// isDefaultOwner returns true when the user holds the owner role on the
+// seeded default tenant — i.e. they are the on-prem system administrator.
+func isDefaultOwner(ms []*storage.Membership) bool {
+	for _, m := range ms {
+		if m.TenantID == storage.DefaultTenantID && m.Role == storage.RoleOwner {
+			return true
+		}
+	}
+	return false
 }
 
 // requestedTenant returns the tenant the caller explicitly asked for,

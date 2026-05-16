@@ -4,18 +4,25 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth';
+  import { tenants } from '$lib/stores/tenants';
   import { locale, t } from '$lib/stores/locale';
   import ThemeToggle from '$lib/components/ThemeToggle.svelte';
   import LocaleToggle from '$lib/components/LocaleToggle.svelte';
+  import TenantSwitcher from '$lib/components/TenantSwitcher.svelte';
 
   onMount(async () => {
     await auth.refresh();
     if (!$auth.user && $page.url.pathname !== '/login') {
       goto('/login');
+      return;
+    }
+    if ($auth.user) {
+      await tenants.refresh();
     }
   });
 
   async function logout() {
+    tenants.reset();
     await auth.logout();
     goto('/login');
   }
@@ -27,7 +34,8 @@
     { href: '/pipelines', label: t($locale, 'nav.pipelines') },
     { href: '/flow', label: t($locale, 'nav.flow') },
     { href: '/dlq', label: t($locale, 'nav.dlq') },
-    { href: '/metrics', label: t($locale, 'nav.metrics') }
+    { href: '/metrics', label: t($locale, 'nav.metrics') },
+    { href: '/tenants', label: t($locale, 'nav.tenants') }
   ];
 </script>
 
@@ -91,6 +99,7 @@
           {/if}
         </div>
         <div class="flex items-center gap-2">
+          <TenantSwitcher />
           <LocaleToggle />
           <ThemeToggle />
         </div>

@@ -213,6 +213,7 @@ export interface Me {
 
 export interface AuditEntry {
   id: string;
+  tenant_id: string;
   at: string;
   actor: string;
   actor_sub: string;
@@ -221,4 +222,37 @@ export interface AuditEntry {
   status: number;
   request_id: string;
   remote_ip: string;
+}
+
+// ─── tenants ─────────────────────────────────────────────────────
+
+export type TenantStatus = 'active' | 'suspended' | 'disabled';
+export type Role = 'viewer' | 'operator' | 'admin' | 'owner';
+
+export interface Tenant {
+  id: string;
+  slug: string;
+  name: string;
+  status: TenantStatus;
+  max_pipelines: number;
+  max_msgs_per_minute: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Membership {
+  tenant_id: string;
+  user_sub: string;
+  username: string;
+  role: Role;
+  created_at: string;
+  updated_at: string;
+}
+
+// Returned by GET /api/v1/tenants — each row pairs a Tenant with the
+// caller's role in it and a flag marking the active tenant.
+export interface TenantMembership {
+  tenant: Tenant;
+  role: Role;
+  is_active: boolean;
 }

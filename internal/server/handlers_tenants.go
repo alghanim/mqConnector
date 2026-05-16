@@ -84,6 +84,21 @@ func (s *Server) handleCreateTenant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Auto-add the creator as owner of the new tenant. Without this the
+	// creator can't act inside it — the resolver would fall back to
+	// their other memberships and writes would land in the wrong tenant.
+	if user, ok := auth.UserFromContext(r.Context()); ok && user != nil {
+		username := user.PreferredUsername
+		if username == "" {
+			username = user.Name
+		}
+		_ = s.store.Memberships.Upsert(r.Context(), &storage.Membership{
+			TenantID: t.ID,
+			UserSub:  user.Sub,
+			Username: username,
+			Role:     storage.RoleOwner,
+		})
+	}
 	writeJSON(w, http.StatusCreated, t)
 }
 
