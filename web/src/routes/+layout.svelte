@@ -61,6 +61,8 @@
     KeyRound as KeyIcon,
     Webhook as WebhookIcon,
     SlidersHorizontal,
+    HelpCircle,
+    LifeBuoy,
     Search,
     BellDot,
     KeyRound
@@ -190,6 +192,13 @@
         { href: '/webhooks', label: t($locale, 'nav.webhooks'), icon: WebhookIcon },
         { href: '/settings', label: t($locale, 'nav.settings'), icon: SlidersHorizontal }
       ] as NavItem[]
+    },
+    {
+      id: 'resources',
+      label: t($locale, 'nav.section.resources'),
+      items: [
+        { href: '/help', label: t($locale, 'nav.help'), icon: LifeBuoy }
+      ] as NavItem[]
     }
   ] satisfies Section[];
 
@@ -297,6 +306,15 @@
             {#if dlqCount > 0}
               <span class="icon-btn-dot" aria-hidden="true"></span>
             {/if}
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            aria-label={t($locale, 'nav.help')}
+            title={t($locale, 'nav.help')}
+            on:click={() => goto('/help')}
+          >
+            <HelpCircle size={16} aria-hidden="true" />
           </button>
           <TenantSwitcher />
           <LocaleToggle />

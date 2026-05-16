@@ -19,6 +19,8 @@ const strings: Record<Locale, Record<string, string>> = {
     'nav.tokens': 'API tokens',
     'nav.webhooks': 'Webhooks',
     'nav.settings': 'Settings',
+    'nav.help': 'Help',
+    'nav.section.resources': 'RESOURCES',
     'nav.logout': 'Sign out',
     'nav.section.operations': 'OPERATIONS',
     'nav.section.configuration': 'CONFIGURATION',
@@ -157,6 +159,70 @@ const strings: Record<Locale, Record<string, string>> = {
     'settings.import.summary.pipelines': 'pipelines',
     'settings.import.success': 'Imported successfully.',
     'settings.import.dryRun.success': 'Dry-run passed. Click "Apply import" to commit.',
+
+    // ─── Help page ──────────────────────────────────────────────────
+    // Plain-English explanations. Each section is one paragraph plus
+    // small lists where useful. Tone: friendly, concrete, no jargon
+    // unless we define it on the same line.
+    'help.title': 'Help',
+    'help.subtitle': 'A plain-English guide to what every button on the screen does.',
+    'help.toc': 'On this page',
+
+    'help.what.title': 'What does mqConnector do?',
+    'help.what.body': 'Think of mqConnector as a postal worker. It picks up messages from one mailbox, optionally opens them and rewrites the address or trims out parts you don\'t want, and drops them in a different mailbox. The "mailboxes" are message-queue systems — IBM MQ, RabbitMQ, or Kafka.',
+    'help.what.example': 'Example: the orders team writes new orders to a Kafka topic called "orders.in". The shipping team needs them in a RabbitMQ queue called "orders.out", but only the customer name and address — not the credit card. mqConnector reads from Kafka, strips the card field, and writes the rest to RabbitMQ. Forever. Automatically.',
+
+    'help.quickstart.title': 'Quick start — your first pipeline',
+    'help.quickstart.body': 'Five steps to move messages from A to B for the first time.',
+    'help.quickstart.s1': 'Make a Connection for the source (where the messages come from).',
+    'help.quickstart.s2': 'Make a Connection for the destination (where they go).',
+    'help.quickstart.s3': 'Open the Flow builder and drag a Source node, a Destination node, and link them.',
+    'help.quickstart.s4': 'Pick which Connection each node points at, then click "Save & Deploy".',
+    'help.quickstart.s5': 'Watch the dashboard — messages start flowing within seconds.',
+
+    'help.connections.title': 'Connections',
+    'help.connections.body': 'A Connection is a saved address for one MQ system. It remembers the URL, username, password, queue name — whatever\'s needed to talk to that broker. Think of it as one row in your phone\'s contact list: name + how to reach them. You make one Connection per broker; you reuse them across many pipelines.',
+    'help.connections.tip': 'Test before you save. The "Test" button on each row attempts a real connection and tells you how many milliseconds it took. A green tick means the broker is reachable from this server right now.',
+
+    'help.pipelines.title': 'Pipelines',
+    'help.pipelines.body': 'A Pipeline is one route: messages flow from one Source Connection, through some optional stages, into one (or more) Destination Connections. It runs continuously — it\'s a long-lived worker, not a "trigger and forget" job.',
+    'help.pipelines.tip': 'You don\'t have to use the visual Flow editor. /pipelines lets you toggle pipelines on/off without opening the canvas — handy when you\'re sure of the config and want a fast operations shortcut.',
+
+    'help.stages.title': 'Stages — the building blocks',
+    'help.stages.body': 'Stages sit between the Source and Destination. Each one takes the message in, does one job, and passes it on. You can chain as many as you need.',
+    'help.stage.filter': 'Filter — removes fields you don\'t want forwarded. Useful for stripping secrets like credit cards or PINs before they leave your tenant.',
+    'help.stage.transform': 'Transform — renames, masks, moves, or sets fields. Use it to map a producer\'s field names to a consumer\'s expected shape.',
+    'help.stage.translate': 'Translate — converts the message format. JSON to XML, XML to JSON. Handy when the producer and the consumer speak different formats.',
+    'help.stage.route': 'Route — picks a destination based on a rule. "If country = QA, send to queue-A; otherwise queue-B." Each rule has a priority; the first match wins.',
+    'help.stage.script': 'Script — runs a small custom script over the message. Use it for logic that doesn\'t fit the other stages. There are op-count and output-size caps so a runaway script can\'t crash the worker.',
+    'help.stage.validate': 'Validate — checks the message against a schema (JSON Schema or XSD). If it doesn\'t match, the message goes to the DLQ instead of the destination.',
+
+    'help.dlq.title': 'DLQ — when something breaks',
+    'help.dlq.body': 'DLQ stands for Dead-Letter Queue. When a message fails (broker is down, validation rejects it, your script throws an error) it lands in the DLQ instead of being lost or retried forever. You can inspect what happened, fix the cause, and either replay the message or delete it.',
+    'help.dlq.tip': 'A growing DLQ is usually a symptom, not a cause. Look at the most common error_reason — it\'ll point you at whether the issue is the producer (bad messages), the broker (network), or your pipeline config (wrong stage).',
+
+    'help.tokens.title': 'API tokens',
+    'help.tokens.body': 'Tokens are like a permanent password your scripts and CI pipelines can use instead of logging in through a browser. You create one, copy the secret once, and use it as an "Authorization" header on any API call. You can revoke it later if it leaks.',
+    'help.tokens.tip': 'The secret is shown exactly once. If you forget to copy it, you have to revoke the token and create a new one — there\'s no "show me again" button. This is deliberate (security): if we could show it, anyone with screen-share access could see it.',
+
+    'help.webhooks.title': 'Webhooks',
+    'help.webhooks.body': 'Webhooks are notifications. When something interesting happens — a pipeline starts, a pipeline errors out, a message lands in the DLQ — we POST a JSON payload to whatever URL you registered. Each request carries a signature header so your receiver can prove it really came from us.',
+    'help.webhooks.tip': 'Pick a strong random secret when you create a webhook — the receiver needs the same secret to verify the signature. The "Generate" button next to the secret field will mint 32 cryptographically-random bytes for you.',
+
+    'help.shortcuts.title': 'Keyboard shortcuts',
+    'help.shortcuts.body': 'Press ⌘K (or / on its own) anywhere to open the command palette — search pages, run common actions, jump to a specific connection or pipeline. Press ? to see all keyboard shortcuts.',
+
+    'help.glossary.title': 'Glossary',
+    'help.glossary.broker': 'Broker — the software (IBM MQ, RabbitMQ, Kafka) that actually stores and forwards messages. mqConnector talks to brokers; it doesn\'t replace them.',
+    'help.glossary.queue': 'Queue / Topic — the named "mailbox" inside a broker. Producers write to it, consumers read from it. RabbitMQ calls them queues; Kafka calls them topics; we use both words.',
+    'help.glossary.tenant': 'Tenant — a logical workspace inside mqConnector. Connections, pipelines, DLQ entries, and tokens are all scoped to one tenant. You can\'t see another tenant\'s data unless you\'re a member of it.',
+    'help.glossary.role': 'Role — your permission level inside a tenant: viewer (read-only), operator (can enable / retry), admin (full CRUD), owner (admin + manage members).',
+    'help.glossary.audit': 'Audit log — a tamper-evident record of every change anyone makes. The chain breaks if someone edits the database directly, so you can prove the trail hasn\'t been doctored.',
+
+    'help.more.title': 'More resources',
+    'help.more.runbooks': 'On-call runbooks — what to do when something pages you',
+    'help.more.security': 'Security model — STRIDE per module, threat surface',
+    'help.more.compliance': 'Compliance checklist — coding standards we hold ourselves to',
     'empty.audit.title': 'No audit activity yet',
     'empty.audit.body': 'Mutations across the admin API are recorded here for compliance.',
     'login.title': 'Sign in to mqConnector',
@@ -518,6 +584,8 @@ const strings: Record<Locale, Record<string, string>> = {
     'nav.tokens': 'مفاتيح الـ API',
     'nav.webhooks': 'الويب هوكس',
     'nav.settings': 'الإعدادات',
+    'nav.help': 'المساعدة',
+    'nav.section.resources': 'المراجع',
     'nav.logout': 'تسجيل الخروج',
     'nav.section.operations': 'العمليات',
     'nav.section.configuration': 'الإعدادات',
@@ -656,6 +724,67 @@ const strings: Record<Locale, Record<string, string>> = {
     'settings.import.summary.pipelines': 'تدفقات',
     'settings.import.success': 'تمّ الاستيراد.',
     'settings.import.dryRun.success': 'نجحت المعاينة. اضغط «تطبيق» للتأكيد.',
+
+    // ─── Help page (Arabic) ────────────────────────────────────────
+    'help.title': 'المساعدة',
+    'help.subtitle': 'دليل بسيط يشرح ما يفعله كل زر في الشاشة.',
+    'help.toc': 'محتويات الصفحة',
+
+    'help.what.title': 'ما الذي يفعله mqConnector؟',
+    'help.what.body': 'تخيّل mqConnector كساعي بريد. يلتقط الرسائل من صندوق بريد، ويمكنه فتحها وإعادة كتابة العنوان أو حذف أجزاء لا تريدها، ثم يضعها في صندوق آخر. الصناديق هنا هي أنظمة طوابير الرسائل — IBM MQ، RabbitMQ، أو Kafka.',
+    'help.what.example': 'مثال: فريق الطلبات يكتب الطلبات الجديدة في موضوع Kafka اسمه "orders.in". فريق الشحن يحتاجها في طابور RabbitMQ اسمه "orders.out"، لكن دون رقم البطاقة الائتمانية. mqConnector يقرأ من Kafka، يحذف حقل البطاقة، ويكتب الباقي في RabbitMQ. باستمرار، تلقائياً.',
+
+    'help.quickstart.title': 'بداية سريعة — أول تدفّق لك',
+    'help.quickstart.body': 'خمس خطوات لتمرير الرسائل من نقطة إلى أخرى لأوّل مرّة.',
+    'help.quickstart.s1': 'أنشِئ اتصالاً للمصدر (المكان الذي تأتي منه الرسائل).',
+    'help.quickstart.s2': 'أنشِئ اتصالاً للوجهة (المكان الذي تذهب إليه).',
+    'help.quickstart.s3': 'افتح محرّر التدفق، اسحب عقدة مصدر، عقدة وجهة، واربطهما.',
+    'help.quickstart.s4': 'اختر أي اتصال لكل عقدة، ثم اضغط «حفظ ونشر».',
+    'help.quickstart.s5': 'راقب لوحة العمليات — تبدأ الرسائل بالتدفّق خلال ثوانٍ.',
+
+    'help.connections.title': 'الاتصالات',
+    'help.connections.body': 'الاتصال هو عنوان محفوظ لنظام MQ واحد. يتذكّر العنوان واسم المستخدم وكلمة المرور واسم الطابور — كل ما يلزم للتحدّث مع ذلك الوسيط. تخيّله صفًّا واحدًا في دفتر هاتفك: الاسم وكيف تتصل به. تُنشئ اتصالاً واحدًا لكل وسيط، وتعيد استخدامه في تدفّقات كثيرة.',
+    'help.connections.tip': 'اختبر قبل أن تحفظ. زر «اختبار» في كل صف يحاول اتصالاً حقيقيًا ويخبرك بعدد المللي ثانية الذي استغرقه. علامة خضراء تعني أنّ الوسيط متاح من هذا الخادم الآن.',
+
+    'help.pipelines.title': 'التدفّقات',
+    'help.pipelines.body': 'التدفّق هو طريق واحد: الرسائل تنتقل من اتصال مصدر، عبر مراحل اختيارية، إلى اتصال وجهة (أو أكثر). يعمل بشكل مستمرّ — هو عامل طويل العمر، لا مهمّة «نفّذها وانسَها».',
+    'help.pipelines.tip': 'لست مضطرًّا لاستخدام محرّر التدفق المرئي. صفحة /pipelines تتيح لك تفعيل/تعطيل التدفّقات دون فتح اللوحة — مفيد عندما تكون متأكدًا من الإعدادات وتريد اختصارًا تشغيليًا سريعًا.',
+
+    'help.stages.title': 'المراحل — لبنات البناء',
+    'help.stages.body': 'المراحل تقع بين المصدر والوجهة. كلّ مرحلة تأخذ الرسالة، تنفّذ مهمّة واحدة، وتمرّرها للتالية. يمكنك ربط أي عدد تحتاجه.',
+    'help.stage.filter': 'تصفية — تحذف الحقول التي لا تريد تمريرها. مفيدة لإزالة الأسرار مثل أرقام البطاقات أو الـPIN قبل أن تخرج من مستأجرك.',
+    'help.stage.transform': 'تحويل — إعادة تسمية أو إخفاء أو نقل أو تعيين الحقول. استخدمها لمطابقة أسماء حقول المنتج مع الشكل الذي يتوقّعه المستهلك.',
+    'help.stage.translate': 'ترجمة — يحوّل تنسيق الرسالة. JSON إلى XML، أو XML إلى JSON. مفيد عندما يتحدّث المنتج والمستهلك بتنسيقَين مختلفَين.',
+    'help.stage.route': 'توجيه — يختار وجهة بناءً على قاعدة. «إذا البلد = QA، أرسل إلى queue-A؛ وإلّا إلى queue-B». كل قاعدة لها أولوية، والأولى المطابقة تفوز.',
+    'help.stage.script': 'سكربت — يُشغّل سكربتًا صغيرًا على الرسالة. استخدمه للمنطق الذي لا تغطّيه المراحل الأخرى. هناك سقوف على عدد العمليات وحجم المخرَج كي لا يُعطّل عاملاً.',
+    'help.stage.validate': 'تحقّق — يفحص الرسالة مقابل مخطّط (JSON Schema أو XSD). إن لم تطابق، تذهب إلى طابور الفشل بدل الوجهة.',
+
+    'help.dlq.title': 'طابور الفشل — عندما يخفق شيء',
+    'help.dlq.body': 'DLQ اختصار لـ Dead-Letter Queue — طابور الرسائل الفاشلة. حين تخفق رسالة (وسيط معطّل، رفض التحقّق، أو سكربتك يرمي خطأً)، تستقرّ هنا بدلًا من أن تُفقد أو يُعاد محاولتها إلى الأبد. يمكنك معاينة ما حدث، إصلاح السبب، ثم إعادة تشغيل الرسالة أو حذفها.',
+    'help.dlq.tip': 'طابور الفشل المتنامي عادةً عرَضٌ لا سبب. انظر إلى السبب الأكثر تكرارًا — سيدلّك إن كانت المشكلة في المنتج (رسائل سيئة)، أم في الوسيط (شبكة)، أم في إعدادات تدفّقك (مرحلة خاطئة).',
+
+    'help.tokens.title': 'مفاتيح API',
+    'help.tokens.body': 'المفاتيح كأنّها كلمة مرور دائمة تستخدمها سكربتاتك وأتمتتك بدلاً من تسجيل الدخول عبر متصفّح. تُنشئ واحدًا، تنسخ السرّ مرّة واحدة، وتستخدمه في ترويسة Authorization على أي طلب API. يمكنك إلغاؤه لاحقًا إن تسرّب.',
+    'help.tokens.tip': 'يُعرَض السرّ مرّة واحدة فقط. إن نسيت أن تنسخه، عليك إلغاء المفتاح وإنشاء واحد جديد — لا يوجد زر «أرني مرّة أخرى». هذا متعمَّد لأسباب أمنية: لو استطعنا عرضه، لاستطاع أيّ شخص يُشاهد شاشتك أن يراه.',
+
+    'help.webhooks.title': 'الويب هوكس',
+    'help.webhooks.body': 'الويب هوكس إشعارات. حين يحدث شيء مهمّ — بدء تدفّق، تعطّل تدفّق، أو وصول رسالة إلى طابور الفشل — نُرسل JSON إلى الـURL الذي سجّلته. كلّ طلب يحمل توقيعًا في الترويسة كي يستطيع المستلِم التحقّق أنّه فعلاً منّا.',
+    'help.webhooks.tip': 'اختر سرًّا قويًّا عشوائيًّا عند إنشاء الويب هوك — المستلِم يحتاج نفس السرّ للتحقّق من التوقيع. زر «توليد» سيُنشئ لك ٣٢ بايت عشوائية مشفّرة.',
+
+    'help.shortcuts.title': 'اختصارات لوحة المفاتيح',
+    'help.shortcuts.body': 'اضغط ⌘K (أو / وحدها) في أي مكان لفتح لوحة الأوامر — ابحث في الصفحات، نفّذ إجراءات شائعة، اقفز إلى اتصال أو تدفّق محدّد. اضغط ? لرؤية كل الاختصارات.',
+
+    'help.glossary.title': 'قاموس المصطلحات',
+    'help.glossary.broker': 'الوسيط — البرنامج (IBM MQ، RabbitMQ، Kafka) الذي يخزّن الرسائل ويمرّرها فعلاً. mqConnector يتحدّث مع الوسطاء، ولا يحلّ محلّهم.',
+    'help.glossary.queue': 'الطابور / الموضوع — «صندوق البريد» المُسمّى داخل الوسيط. المنتجون يكتبون فيه، والمستهلكون يقرؤون منه. RabbitMQ يسمّيه طابورًا، وKafka يسمّيه موضوعًا، ونحن نستخدم الكلمتين.',
+    'help.glossary.tenant': 'المستأجر — مساحة عمل منطقية داخل mqConnector. الاتصالات والتدفّقات وقائمة الفشل والمفاتيح كلّها مرتبطة بمستأجر واحد. لا يمكنك رؤية بيانات مستأجر آخر ما لم تكن عضوًا فيه.',
+    'help.glossary.role': 'الدور — مستوى صلاحيّتك داخل المستأجر: مشاهد (قراءة فقط)، مشغّل (تفعيل / إعادة محاولة)، مدير (CRUD كامل)، مالك (مدير + إدارة الأعضاء).',
+    'help.glossary.audit': 'سجلّ التدقيق — سجلّ مقاوم للتلاعب يوثّق كل تغيير. السلسلة تنكسر إن عدّل أحدهم قاعدة البيانات مباشرةً، فيمكنك إثبات أنّ السجلّ لم يُحرَّف.',
+
+    'help.more.title': 'مراجع إضافية',
+    'help.more.runbooks': 'أدلّة الاستجابة — ما عليك فعله حين تتلقّى تنبيهًا',
+    'help.more.security': 'النموذج الأمني — STRIDE لكل وحدة، سطح التهديد',
+    'help.more.compliance': 'قائمة الامتثال — معايير الكود التي نلتزم بها',
     'empty.audit.title': 'لا توجد سجلات إدارية',
     'empty.audit.body': 'سيتم تسجيل التعديلات الإدارية هنا للامتثال.',
     'login.title': 'تسجيل الدخول',
