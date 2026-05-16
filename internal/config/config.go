@@ -22,11 +22,31 @@ type Config struct {
 	Storage    StorageConfig    `yaml:"storage"`
 	Auth       AuthConfig       `yaml:"auth"`
 	Logging    LoggingConfig    `yaml:"logging"`
+	Tracing    TracingConfig    `yaml:"tracing"`
 	MQ         MQConfig         `yaml:"mq"`
 	Pipeline   PipelineConfig   `yaml:"pipeline"`
 	Script     ScriptConfig     `yaml:"script"`
 	Leadership LeadershipConfig `yaml:"leadership"`
 	Audit      AuditConfig      `yaml:"audit"`
+}
+
+// TracingConfig configures the OpenTelemetry OTLP/HTTP exporter. Empty
+// OTLPEndpoint means tracing stays in the structured-log "span" form
+// (one INFO line per Span.End()) without exporting anywhere.
+type TracingConfig struct {
+	// OTLPEndpoint is the OTLP/HTTP collector host:port. Standard
+	// collectors listen on :4318. Empty disables OTLP export.
+	OTLPEndpoint string `yaml:"otlp_endpoint"`
+	// ServiceName lands as service.name on every exported span.
+	// Defaults to "mqconnector".
+	ServiceName string `yaml:"service_name"`
+	// Insecure switches the exporter to plaintext HTTP. TLS by default.
+	Insecure bool `yaml:"insecure"`
+	// SampleRatio is the head-based sample rate, 0 ≤ r ≤ 1. 0 means
+	// "use the default" (1.0 — record every span). Once OTLP is
+	// configured, sample-all matches operator expectations; dial down
+	// for high-throughput pipelines.
+	SampleRatio float64 `yaml:"sample_ratio"`
 }
 
 // AuditConfig controls the audit-log archival exporter. When ArchiveDir

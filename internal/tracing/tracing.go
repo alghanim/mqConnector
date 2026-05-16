@@ -135,6 +135,21 @@ type Span struct {
 	name   string
 	start  time.Time
 	attrs  []slog.Attr
+
+	// otel is non-nil when EnableOTLP has installed a TracerProvider.
+	// Lifecycle is mirrored: SetAttr forwards to the otel span,
+	// End calls span.End on the otel side too. Lookup at Start time
+	// only — the import sits in otlp.go and is the only place this
+	// package touches go.opentelemetry.io/otel/trace.
+	otel otelSpanRef
+}
+
+// otelSpanRef is a thin interface so this file doesn't have to import
+// otel/trace just to hold a pointer. The concrete type comes from
+// otlp.go; nil is the no-OTel path.
+type otelSpanRef interface {
+	end()
+	setAttr(key string, value any)
 }
 
 // Start opens a child span on the SpanContext in ctx. If ctx has no
@@ -148,21 +163,34 @@ func Start(ctx context.Context, logger *slog.Logger, name string) (context.Conte
 		sc = NewRoot()
 	}
 	ctx = WithContext(ctx, sc)
+	// If OTLP is enabled, mirror this span into an OTel span. The
+	// returned ctx threads the OTel span context so any downstream
+	// helper that grabs the trace ID via the standard OTel API sees
+	// the same trace.
+	otelCtx, otelSpan := otelStart(ctx, name)
+	if otelSpan != nil {
+		ctx = otelCtx
+	}
 	return ctx, &Span{
 		ctx:    ctx,
 		logger: logger,
 		name:   name,
 		start:  time.Now(),
+		otel:   wrapOTel(otelSpan),
 	}
 }
 
 // SetAttr adds a key/value attribute that will be emitted on End().
-// Cheap — no formatting work happens until End fires.
+// Cheap — no formatting work happens until End fires. Mirrored into
+// the OTel span when OTLP export is enabled.
 func (s *Span) SetAttr(key string, value any) {
 	if s == nil {
 		return
 	}
 	s.attrs = append(s.attrs, slog.Any(key, value))
+	if s.otel != nil {
+		s.otel.setAttr(key, value)
+	}
 }
 
 // End closes the span and emits an INFO-level log line with name,
@@ -171,6 +199,11 @@ func (s *Span) SetAttr(key string, value any) {
 func (s *Span) End(err error) {
 	if s == nil || s.logger == nil {
 		return
+	}
+	// Always end the OTel span first so its exporter sees the duration
+	// the slog line will report. Idempotent on nil.
+	if s.otel != nil {
+		s.otel.end()
 	}
 	d := time.Since(s.start)
 	attrs := append([]any{}, LogAttrs(s.ctx)...)

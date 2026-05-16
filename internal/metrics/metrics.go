@@ -4,6 +4,9 @@ package metrics
 
 import (
 	"fmt"
+	"math"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +24,25 @@ type Pipeline struct {
 	AvgLatencyMs      float64   `json:"avg_latency_ms"`
 	Status            string    `json:"status"`
 	LastError         string    `json:"last_error,omitempty"`
+	// Histogram exposed under JSON for the UI's percentile panel.
+	// Buckets keyed by upper bound (ms) → cumulative count.
+	LatencyHistogram []HistogramBucket `json:"latency_histogram,omitempty"`
+}
+
+// HistogramBucket is one row of the latency histogram.
+type HistogramBucket struct {
+	LE    float64 `json:"le"`    // upper bound in ms (+Inf encoded as math.MaxFloat64)
+	Count uint64  `json:"count"` // cumulative count at-or-below this bound
+}
+
+// latencyBuckets are the upper bounds (in ms) for the per-message latency
+// histogram. Chosen to cover the practical range of bridge latencies — sub-
+// millisecond local pipelines up to multi-second cross-cluster hops. Values
+// match the de-facto defaults the Prometheus client lib emits for HTTP
+// histograms, scaled to ms.
+var latencyBuckets = []float64{
+	0.5, 1, 2.5, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000,
+	// +Inf bucket is rendered separately so it lives outside the slice.
 }
 
 // entry is the locked, internal representation. The mutex stays here so the
@@ -29,6 +51,12 @@ type entry struct {
 	mu             sync.Mutex
 	data           Pipeline
 	totalLatencyMs float64
+
+	// Cumulative bucket counts for the latency histogram. The slice
+	// shape matches latencyBuckets exactly; the +Inf bucket equals
+	// MessagesProcessed (every observation falls at or below +Inf).
+	latencyBucketCounts []uint64
+	latencySumMs        float64
 }
 
 // Store is the thread-safe global metrics store.
@@ -57,6 +85,7 @@ func (s *Store) Register(pipelineID, sourceQueue, destQueue string) {
 			DestQueue:   destQueue,
 			Status:      "connected",
 		},
+		latencyBucketCounts: make([]uint64, len(latencyBuckets)),
 	}
 }
 
@@ -96,6 +125,18 @@ func (s *Store) RecordSuccess(pipelineID string, bytes int64, latencyMs float64)
 	e.data.LastMessageTime = time.Now()
 	e.totalLatencyMs += latencyMs
 	e.data.AvgLatencyMs = e.totalLatencyMs / float64(e.data.MessagesProcessed)
+	// Histogram bookkeeping. Cumulative buckets: every observation at-or-
+	// below an upper bound bumps that bucket AND every wider one. We track
+	// just the bucket index for the lowest bound the value satisfies and
+	// roll forward at render time? No — that's quadratic to render. Easier:
+	// walk the bucket list once on insert and increment each bound that's
+	// >= the observed value. With 14 buckets the inner loop is negligible.
+	e.latencySumMs += latencyMs
+	for i, ub := range latencyBuckets {
+		if latencyMs <= ub {
+			e.latencyBucketCounts[i]++
+		}
+	}
 }
 
 // RecordFailure records a failed message.
@@ -118,10 +159,41 @@ func (s *Store) Snapshot() map[string]Pipeline {
 	out := make(map[string]Pipeline, len(s.pipelines))
 	for k, e := range s.pipelines {
 		e.mu.Lock()
-		out[k] = e.data
+		snap := e.data
+		// Include the histogram in the snapshot so the UI's percentile
+		// view can render p50 / p95 / p99 client-side.
+		if len(e.latencyBucketCounts) > 0 {
+			snap.LatencyHistogram = make([]HistogramBucket, len(latencyBuckets)+1)
+			for i, ub := range latencyBuckets {
+				snap.LatencyHistogram[i] = HistogramBucket{LE: ub, Count: e.latencyBucketCounts[i]}
+			}
+			// +Inf catches everything by definition; cumulative count is
+			// the same as MessagesProcessed.
+			snap.LatencyHistogram[len(latencyBuckets)] = HistogramBucket{
+				LE:    math.MaxFloat64,
+				Count: uint64(e.data.MessagesProcessed),
+			}
+		}
+		out[k] = snap
 		e.mu.Unlock()
 	}
 	return out
+}
+
+// latencyHistogramFor returns the bucket counts + sum for one pipeline. Used
+// by the Prometheus exposition; takes the entry's mutex internally.
+func (s *Store) latencyHistogramFor(pipelineID string) (counts []uint64, sumMs float64, total int64, ok bool) {
+	s.mu.RLock()
+	e, ok := s.pipelines[pipelineID]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, 0, 0, false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	counts = make([]uint64, len(e.latencyBucketCounts))
+	copy(counts, e.latencyBucketCounts)
+	return counts, e.latencySumMs, e.data.MessagesProcessed, true
 }
 
 // Uptime returns how long the store has been running.
@@ -167,9 +239,55 @@ func (s *Store) Prometheus() string {
 			m.PipelineID, m.SourceQueue, m.DestQueue, m.AvgLatencyMs)
 	}
 
+	// Real histogram for end-to-end pipeline latency. Three series per
+	// pipeline: _bucket{le="…"}, _sum, _count. Prometheus consumers (and
+	// Grafana / PromQL functions like histogram_quantile) treat these as
+	// the canonical histogram shape. Buckets are in milliseconds.
+	b.WriteString("# HELP mqconnector_pipeline_latency_ms End-to-end pipeline latency (source receive → destination send) in milliseconds\n")
+	b.WriteString("# TYPE mqconnector_pipeline_latency_ms histogram\n")
+	// Stable rendering order so a Prometheus scrape sees the same series
+	// names from one tick to the next — easier to diff for debugging.
+	ids := make([]string, 0, len(all))
+	for id := range all {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		m := all[id]
+		counts, sumMs, total, ok := s.latencyHistogramFor(id)
+		if !ok {
+			continue
+		}
+		for i, ub := range latencyBuckets {
+			fmt.Fprintf(&b,
+				"mqconnector_pipeline_latency_ms_bucket{pipeline_id=%q,source=%q,dest=%q,le=%q} %d\n",
+				m.PipelineID, m.SourceQueue, m.DestQueue, formatBound(ub), counts[i])
+		}
+		// +Inf bucket: every observation lands at-or-below +Inf by definition.
+		fmt.Fprintf(&b,
+			"mqconnector_pipeline_latency_ms_bucket{pipeline_id=%q,source=%q,dest=%q,le=\"+Inf\"} %d\n",
+			m.PipelineID, m.SourceQueue, m.DestQueue, total)
+		fmt.Fprintf(&b,
+			"mqconnector_pipeline_latency_ms_sum{pipeline_id=%q,source=%q,dest=%q} %.2f\n",
+			m.PipelineID, m.SourceQueue, m.DestQueue, sumMs)
+		fmt.Fprintf(&b,
+			"mqconnector_pipeline_latency_ms_count{pipeline_id=%q,source=%q,dest=%q} %d\n",
+			m.PipelineID, m.SourceQueue, m.DestQueue, total)
+	}
+
 	b.WriteString("# HELP mqconnector_uptime_seconds Uptime in seconds\n")
 	b.WriteString("# TYPE mqconnector_uptime_seconds gauge\n")
 	fmt.Fprintf(&b, "mqconnector_uptime_seconds %.0f\n", s.Uptime().Seconds())
 
 	return b.String()
+}
+
+// formatBound renders a histogram upper bound the way Prometheus expects.
+// Whole-number bounds drop their decimal (`"100"` not `"100.000000"`),
+// fractional bounds use the shortest accurate representation.
+func formatBound(v float64) string {
+	if v == math.Trunc(v) {
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	return strconv.FormatFloat(v, 'g', -1, 64)
 }
