@@ -55,10 +55,13 @@ func TestDispatcher_DeliversWithHMAC(t *testing.T) {
 	var gotSig string
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
 		gotBody, _ = io.ReadAll(r.Body)
 		gotSig = r.Header.Get("X-MQC-Signature")
 		w.WriteHeader(http.StatusOK)
+		// The atomic write is the synchronisation point: prior writes
+		// in this goroutine happen-before the load in the test, so the
+		// test only reads gotBody/gotSig once they're populated.
+		atomic.AddInt32(&hits, 1)
 	}))
 	defer srv.Close()
 
