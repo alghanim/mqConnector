@@ -110,6 +110,9 @@ const strings: Record<Locale, Record<string, string>> = {
     'pipelines.saveDeploy': 'Save & Deploy',
     'pipelines.saved': 'Saved and reloaded',
     'pipelines.back': '← Back to pipelines',
+    'pipelines.form.tag': 'Form view',
+    'pipelines.form.hint':
+      'Editing as a flat list. The visual editor at Flow is the recommended workflow — this view is kept for raw config and keyboard-driven edits.',
     'preview.title': 'Sample & preview',
     'preview.help':
       'Drop a representative message in, hit Preview, and see what the pipeline would emit downstream — no brokers are touched.',
@@ -304,6 +307,9 @@ const strings: Record<Locale, Record<string, string>> = {
     'pipelines.saveDeploy': 'حفظ ونشر',
     'pipelines.saved': 'تم الحفظ والإعادة تحميل',
     'pipelines.back': '→ العودة إلى التدفقات',
+    'pipelines.form.tag': 'عرض النموذج',
+    'pipelines.form.hint':
+      'تحرير كقائمة مسطّحة. المحرر المرئي في صفحة التدفق هو المسار الموصى به — يبقى هذا العرض للتحرير الخام عبر لوحة المفاتيح.',
     'preview.title': 'العينة والمعاينة',
     'preview.help':
       'ألصق رسالة نموذجية، اضغط معاينة، وشاهد ما سيُرسَل بعد التدفق — دون لمس أي وسيط.',

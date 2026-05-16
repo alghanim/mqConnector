@@ -292,6 +292,7 @@
     <div class="flex items-baseline justify-between">
       <div>
         <h2 class="text-2xl font-semibold" style="color: var(--text)">
+          <span class="form-mode-tag">{t($locale, 'pipelines.form.tag')}</span>
           {pipeline.name}
         </h2>
         <p class="text-sm mt-1" style="color: var(--text-muted)">
@@ -300,10 +301,18 @@
           · {pipeline.output_format}
           · {pipeline.enabled ? t($locale, 'common.enabled') : t($locale, 'common.disabled')}
         </p>
+        <p class="text-xs mt-2" style="color: var(--text-tertiary)">
+          {t($locale, 'pipelines.form.hint')}
+        </p>
       </div>
-      <Button on:click={save} loading={saving}>
-        {t($locale, 'pipelines.saveDeploy')}
-      </Button>
+      <div class="flex items-center gap-2">
+        <a href="/flow?pipeline={id}" class="btn-visual-link">
+          {t($locale, 'flow.openVisual')}
+        </a>
+        <Button on:click={save} loading={saving}>
+          {t($locale, 'pipelines.saveDeploy')}
+        </Button>
+      </div>
     </div>
   {/if}
 
@@ -564,4 +573,35 @@
     transition: border-color 120ms, color 120ms;
   }
   .try-btn:hover { border-color: var(--accent); color: var(--accent); }
+  /*
+   * Phase 5 demotion cues — this page is now the secondary (form) view
+   * of a pipeline; the visual editor at /flow?pipeline=:id is the
+   * recommended workflow. We mark that with an uppercase eyebrow before
+   * the pipeline name and a filled-gold link to jump into the canvas.
+   */
+  .form-mode-tag {
+    display: inline-block;
+    margin-inline-end: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--section-header);
+    vertical-align: middle;
+  }
+  .btn-visual-link {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 14px;
+    border-radius: 12px;
+    color: var(--primary-on);
+    background: var(--primary);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.2;
+    text-decoration: none;
+    transition: background-color 200ms;
+  }
+  .btn-visual-link:hover { background: var(--qb-copper); }
+  .btn-visual-link:active { background: var(--qb-gold-muted); }
 </style>
