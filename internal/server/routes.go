@@ -60,6 +60,20 @@ func (s *Server) routes() http.Handler {
 		r.Get("/api/metrics", s.handleMetricsJSON)
 		r.Get("/api/metrics/prometheus", s.handleMetricsPrometheus)
 		r.Get("/api/v1/audit", s.handleListAudit)
+
+		// Tenant management. Read-self is open to any authenticated
+		// user; everything else is enforced inside the handler.
+		r.Route("/api/v1/tenants", func(r chi.Router) {
+			r.Get("/", s.handleListMyTenants)
+			r.Post("/", s.handleCreateTenant)
+			r.Get("/{id}", s.handleGetTenant)
+			r.Put("/{id}", s.handleUpdateTenant)
+			r.Delete("/{id}", s.handleDeleteTenant)
+			r.Post("/{id}/switch", s.handleSwitchTenant)
+			r.Get("/{id}/members", s.handleListMembers)
+			r.Post("/{id}/members", s.handleUpsertMember)
+			r.Delete("/{id}/members/{user_sub}", s.handleDeleteMember)
+		})
 		r.Get("/api/v1/leadership", s.handleLeadership)
 
 		// Resource APIs under /api/v1/
