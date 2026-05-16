@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"mqConnector/internal/events"
 	"mqConnector/internal/mq"
@@ -80,6 +81,23 @@ func (s *Service) Push(ctx context.Context, entry storage.DLQEntry) error {
 	tenant := entry.TenantID
 	if tenant == "" {
 		tenant = storage.DefaultTenantID
+	}
+	// If the source pipeline carries a retry policy, schedule the row
+	// for the reaper. Failure to look up the pipeline (deleted between
+	// Push and now, or row exists with no pipeline_id) just means
+	// "manual triage only" — we still want the entry persisted.
+	if entry.PipelineID != "" {
+		if pipe, err := s.store.Pipelines.GetUnsafe(ctx, entry.PipelineID); err == nil {
+			retryMax := pipe.RetryMax
+			if retryMax == 0 {
+				retryMax = s.maxRetries
+			}
+			if retryMax > 0 {
+				delay := backoffDelay(0, pipe.RetryBackoffMs)
+				t := time.Now().UTC().Add(delay)
+				entry.NextRetryAt = &t
+			}
+		}
 	}
 	if err := s.store.DLQ.Insert(ctx, tenant, &entry); err != nil {
 		s.logger.Error("dlq insert failed", "err", err)

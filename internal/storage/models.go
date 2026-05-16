@@ -50,12 +50,24 @@ type Pipeline struct {
 	Name          string    `json:"name"`
 	SourceID      string    `json:"source_id"`
 	DestinationID string    `json:"destination_id"`
-	OutputFormat  string    `json:"output_format"` // "same" | "json" | "xml"
+	OutputFormat  string    `json:"output_format"` // "same" | "json" | "xml" | "protobuf"
 	SchemaID      string    `json:"schema_id,omitempty"`
 	FilterPaths   []string  `json:"filter_paths"`
 	Enabled       bool      `json:"enabled"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	// Workers is the number of goroutines that drain the source in
+	// parallel for this pipeline. Defaults to 1. Bounded at 16 in the
+	// API layer; a single I/O-bound stage benefits most from 2–4.
+	Workers int `json:"workers,omitempty"`
+	// RetryMax bounds the number of times the DLQ reaper will attempt
+	// to re-publish a failed message before giving up. 0 means "use the
+	// service-wide default (3)".
+	RetryMax int `json:"retry_max,omitempty"`
+	// RetryBackoffMs is the base backoff between retries in
+	// milliseconds. The actual wait is RetryBackoffMs * 2^attempt
+	// (exponential), capped at 10 minutes. 0 means "use 5000 (5s)".
+	RetryBackoffMs int `json:"retry_backoff_ms,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // Stage is one step in a pipeline's processing chain.
@@ -135,5 +147,10 @@ type DLQEntry struct {
 	ErrorReason string     `json:"error_reason"`
 	RetryCount  int        `json:"retry_count"`
 	LastRetryAt *time.Time `json:"last_retry_at,omitempty"`
+	// NextRetryAt is when the DLQ retry reaper will next attempt to
+	// re-publish this row. NULL means "manual retry only — no auto
+	// reaping". Set by Push() to time.Now() + backoff if the pipeline's
+	// retry policy is non-zero.
+	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 }

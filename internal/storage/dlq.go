@@ -24,12 +24,16 @@ func (r *DLQRepo) Insert(ctx context.Context, tenantID string, e *DLQEntry) erro
 	}
 	e.TenantID = tenantID
 	e.CreatedAt = time.Now().UTC()
+	var nextRetry any
+	if e.NextRetryAt != nil {
+		nextRetry = e.NextRetryAt.UTC()
+	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO dlq (id, tenant_id, pipeline_id, source_queue, original_msg, error_reason,
-		                 retry_count, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		                 retry_count, created_at, next_retry_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, tenantID, nullable(e.PipelineID), e.SourceQueue, e.OriginalMsg, e.ErrorReason,
-		e.RetryCount, e.CreatedAt)
+		e.RetryCount, e.CreatedAt, nextRetry)
 	if err != nil {
 		return fmt.Errorf("insert dlq: %w", err)
 	}
@@ -191,16 +195,68 @@ func (r *DLQRepo) IncrementRetry(ctx context.Context, tenantID, id string) error
 	return nil
 }
 
+// ListDue returns DLQ entries whose next_retry_at <= now, capped at
+// `limit`. The reaper walks this list, attempts to re-publish, and on
+// retry-cap exhaustion clears next_retry_at (so the row sits awaiting
+// manual triage). Bypasses tenant scoping — the reaper is a global
+// service.
+func (r *DLQRepo) ListDue(ctx context.Context, now time.Time, limit int) ([]*DLQEntry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx,
+		dlqSelect+` WHERE next_retry_at IS NOT NULL AND next_retry_at <= ?
+		            ORDER BY next_retry_at ASC LIMIT ?`,
+		now.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list due dlq: %w", err)
+	}
+	defer rows.Close()
+	var out []*DLQEntry
+	for rows.Next() {
+		e, err := scanDLQ(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ScheduleRetry sets next_retry_at on a DLQ row. Nil clears the
+// schedule — used when the row exhausts its retry budget or a manual
+// retry succeeds.
+func (r *DLQRepo) ScheduleRetry(ctx context.Context, tenantID, id string, next *time.Time) error {
+	if tenantID == "" {
+		return ErrTenantRequired
+	}
+	var arg any
+	if next != nil {
+		arg = next.UTC()
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE dlq SET next_retry_at=? WHERE id=? AND tenant_id=?`,
+		arg, id, tenantID)
+	if err != nil {
+		return fmt.Errorf("schedule retry: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 const dlqSelect = `
 SELECT id, tenant_id, COALESCE(pipeline_id, ''), source_queue, original_msg, error_reason,
-       retry_count, last_retry_at, created_at
+       retry_count, last_retry_at, next_retry_at, created_at
 FROM dlq`
 
 func scanDLQ(s scanner) (*DLQEntry, error) {
 	e := &DLQEntry{}
-	var lastRetry sql.NullTime
+	var lastRetry, nextRetry sql.NullTime
 	err := s.Scan(&e.ID, &e.TenantID, &e.PipelineID, &e.SourceQueue, &e.OriginalMsg,
-		&e.ErrorReason, &e.RetryCount, &lastRetry, &e.CreatedAt)
+		&e.ErrorReason, &e.RetryCount, &lastRetry, &nextRetry, &e.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -210,6 +266,10 @@ func scanDLQ(s scanner) (*DLQEntry, error) {
 	if lastRetry.Valid {
 		t := lastRetry.Time
 		e.LastRetryAt = &t
+	}
+	if nextRetry.Valid {
+		t := nextRetry.Time
+		e.NextRetryAt = &t
 	}
 	return e, nil
 }

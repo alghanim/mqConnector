@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"mqConnector/internal/mq"
@@ -73,19 +74,52 @@ func (e *Executor) Run(ctx context.Context) error {
 		defer e.Metrics.Unregister(e.Pipeline.ID)
 	}
 
-	logger.Info("pipeline starting")
+	// Worker count comes from the pipeline row. Clamp at runtime: ≥1
+	// (a 0-worker pipeline would silently never process anything), and
+	// ≤ a generous upper bound (the destination broker, not extra
+	// goroutines, is the usual throughput ceiling).
+	workers := e.Pipeline.Workers
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > 16 {
+		workers = 16
+	}
+
+	logger.Info("pipeline starting", "workers", workers)
 	defer logger.Info("pipeline stopped")
 
+	// Each worker runs the same receive→stages→send loop independently.
+	// They share the source connection pool slot (Pool.Get is reference-
+	// counted so the underlying broker connection isn't N-multiplied)
+	// but each receive call gets its own message — the source's
+	// ReceiveMessage is the natural serialisation point.
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		workerLogger := logger.With("worker", w)
+		go func() {
+			defer wg.Done()
+			e.runWorker(ctx, workerLogger)
+		}()
+	}
+	wg.Wait()
+	return nil
+}
+
+// runWorker is the per-goroutine receive loop. Identical semantics to
+// the original single-threaded loop — just one of N copies.
+func (e *Executor) runWorker(ctx context.Context, logger *slog.Logger) {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return
 		default:
 		}
 
 		if err := e.processOne(ctx, logger); err != nil {
 			if errors.Is(err, context.Canceled) {
-				return nil
+				return
 			}
 			// Errors here are infrastructure-level (source connection lost).
 			// Back off briefly to avoid a hot loop, then retry.
@@ -95,7 +129,7 @@ func (e *Executor) Run(ctx context.Context) error {
 			}
 			select {
 			case <-ctx.Done():
-				return nil
+				return
 			case <-time.After(2 * time.Second):
 			}
 		}

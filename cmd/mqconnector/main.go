@@ -25,9 +25,10 @@ import (
 	"mqConnector/internal/mq"
 	"mqConnector/internal/pipeline"
 	"mqConnector/internal/secrets"
-	"mqConnector/internal/webhooks"
 	"mqConnector/internal/server"
 	"mqConnector/internal/storage"
+	"mqConnector/internal/tracing"
+	"mqConnector/internal/webhooks"
 )
 
 // version is stamped at build time via -ldflags. Falls back to "dev" otherwise.
@@ -35,15 +36,23 @@ var version = "dev"
 
 func main() {
 	// Subcommand routing: anything before flags is treated as a verb.
-	// Today there's exactly one — `rotate-secrets` — so we keep this
-	// dispatch trivial instead of pulling in cobra.
-	if len(os.Args) > 1 && os.Args[1] == "rotate-secrets" {
-		os.Args = append(os.Args[:1], os.Args[2:]...) // drop the verb so flag.Parse sees the right argv
-		if err := rotateSecrets(); err != nil {
-			fmt.Fprintf(os.Stderr, "rotate-secrets: %v\n", err)
-			os.Exit(1)
+	// Kept trivial — two verbs today, no need for cobra.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "rotate-secrets":
+			os.Args = append(os.Args[:1], os.Args[2:]...) // drop verb for flag.Parse
+			if err := rotateSecrets(); err != nil {
+				fmt.Fprintf(os.Stderr, "rotate-secrets: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "gitops":
+			if err := gitops(); err != nil {
+				fmt.Fprintf(os.Stderr, "gitops: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
-		return
 	}
 
 	var (
@@ -86,6 +95,31 @@ func run(configPath string) error {
 
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	defer rootCancel()
+
+	// Optional OpenTelemetry export. Empty endpoint = no-op, tracing
+	// stays as structured-log spans. When configured, every Span.End()
+	// throughout the binary mirrors into an OTLP/HTTP exporter.
+	otelShutdown, err := tracing.EnableOTLP(rootCtx, tracing.OTLPConfig{
+		Endpoint:    cfg.Tracing.OTLPEndpoint,
+		ServiceName: cfg.Tracing.ServiceName,
+		Version:     version,
+		Insecure:    cfg.Tracing.Insecure,
+		SampleRatio: cfg.Tracing.SampleRatio,
+	})
+	if err != nil {
+		return fmt.Errorf("enable OTLP: %w", err)
+	}
+	if cfg.Tracing.OTLPEndpoint != "" {
+		logger.Info("otlp export enabled",
+			"endpoint", cfg.Tracing.OTLPEndpoint,
+			"sample_ratio", cfg.Tracing.SampleRatio,
+		)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = otelShutdown(shutdownCtx)
+	}()
 
 	// Signal handling — first signal triggers graceful shutdown; a second
 	// signal escalates to immediate exit.
@@ -155,6 +189,12 @@ func run(configPath string) error {
 		MaxRetries: cfg.Pipeline.DLQ.MaxRetries,
 		Logger:     logger,
 	})
+
+	// DLQ retry reaper. Walks dlq rows whose next_retry_at <= now and
+	// re-publishes through the pipeline's destination with exponential
+	// backoff. Pipelines opt in by setting retry_max > 0 on their row.
+	stopReaper := dlqSvc.StartReaper(rootCtx, dlq.ReaperOptions{})
+	defer stopReaper()
 
 	// DLQ retention sweeper — bounded so a long broker outage can't fill
 	// the disk. Disabled cleanly when both knobs are zero.

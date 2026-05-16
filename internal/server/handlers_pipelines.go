@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -52,6 +53,10 @@ func (s *Server) handleCreatePipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name, source_id and destination_id are required")
 		return
 	}
+	if err := validatePipelineTuning(&p); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	// Pre-validate that source and destination belong to the caller's
 	// tenant — silently rejects attempts to wire a pipeline through
 	// another tenant's connections.
@@ -80,6 +85,10 @@ func (s *Server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.ID = id
+	if err := validatePipelineTuning(&p); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := s.store.Pipelines.Update(r.Context(), tenant, &p); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
@@ -239,4 +248,21 @@ func (s *Server) reloadPipelines() {
 	if _, err := s.pipeline.Reload(contextBackground()); err != nil {
 		s.logger.Warn("hot-reload failed", "err", err)
 	}
+}
+
+// validatePipelineTuning clamps the per-pipeline performance / reliability
+// knobs to safe bounds. workers > 16 is almost never useful (the broker
+// becomes the bottleneck long before that); retry_max > 100 is operator
+// error 99% of the time (a poison message would cycle for days).
+func validatePipelineTuning(p *storage.Pipeline) error {
+	if p.Workers < 0 || p.Workers > 16 {
+		return fmt.Errorf("workers must be between 0 and 16 (got %d)", p.Workers)
+	}
+	if p.RetryMax < 0 || p.RetryMax > 100 {
+		return fmt.Errorf("retry_max must be between 0 and 100 (got %d)", p.RetryMax)
+	}
+	if p.RetryBackoffMs < 0 || p.RetryBackoffMs > 10*60*1000 {
+		return fmt.Errorf("retry_backoff_ms must be between 0 and 600000 (got %d)", p.RetryBackoffMs)
+	}
+	return nil
 }

@@ -440,6 +440,26 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_pipelines_enabled ON pipelines(enabled);
 	CREATE INDEX IF NOT EXISTS idx_pipelines_tenant  ON pipelines(tenant_id);
 	`,
+	// 0011 — DLQ retry policy + per-pipeline concurrency.
+	//
+	// pipelines.workers          — N parallel goroutines drain the
+	//                              source per pipeline. Default 1.
+	//                              Bounded at 16 in the API layer.
+	// pipelines.retry_max        — DLQ reaper attempts per row. 0 = use
+	//                              the service default (3).
+	// pipelines.retry_backoff_ms — base backoff between retries (ms).
+	//                              Actual wait is backoff * 2^attempt,
+	//                              capped at 10 minutes.
+	// dlq.next_retry_at          — when the reaper next tries this row.
+	//                              NULL = manual retry only.
+	`
+	ALTER TABLE pipelines ADD COLUMN workers          INTEGER NOT NULL DEFAULT 1;
+	ALTER TABLE pipelines ADD COLUMN retry_max        INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE pipelines ADD COLUMN retry_backoff_ms INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE dlq       ADD COLUMN next_retry_at    DATETIME NULL;
+	CREATE INDEX IF NOT EXISTS idx_dlq_next_retry ON dlq(next_retry_at)
+	  WHERE next_retry_at IS NOT NULL;
+	`,
 }
 
 func migrate(db *sql.DB) error {
