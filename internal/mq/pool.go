@@ -82,7 +82,18 @@ func (p *Pool) Get(ctx context.Context, id string, cfg Config) (Connector, func(
 	entry.mu.Lock()
 	entry.lastUsed = time.Now()
 	if err := entry.conn.Connect(ctx); err != nil {
+		// Don't keep a connector that can't connect. amqp091's IsClosed
+		// only flips after a heartbeat timeout (~60s), so a polite
+		// "already-connected" early-return inside the connector can
+		// hide a dead broker for a full minute. Evict the entry here
+		// and let the executor's next processOne dial a fresh one.
 		entry.mu.Unlock()
+		p.mu.Lock()
+		if cur, ok := p.entries[id]; ok && cur == entry {
+			delete(p.entries, id)
+		}
+		p.mu.Unlock()
+		_ = entry.conn.Disconnect()
 		return nil, nil, err
 	}
 	release := func() {

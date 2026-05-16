@@ -24,8 +24,27 @@ func newKafka(cfg Config) Connector {
 func (c *KafkaConnector) Connect(_ context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Self-healing: if a previous send/recv failed and we never tore the
+	// producer/consumer down, the broker is likely gone but our handles
+	// are still cached. Probe via Topics() — if it errors, drop the
+	// handles and re-build from scratch on the same call.
 	if c.producer != nil {
-		return nil
+		if c.consumer != nil {
+			if _, err := c.consumer.Topics(); err == nil {
+				return nil
+			}
+		}
+		// Stale handles. Tear them down and fall through.
+		if c.partitionConsumer != nil {
+			_ = c.partitionConsumer.Close()
+			c.partitionConsumer = nil
+		}
+		if c.consumer != nil {
+			_ = c.consumer.Close()
+			c.consumer = nil
+		}
+		_ = c.producer.Close()
+		c.producer = nil
 	}
 	if len(c.cfg.Brokers) == 0 {
 		return errors.New("kafka: at least one broker is required")

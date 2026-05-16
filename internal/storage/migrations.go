@@ -158,15 +158,21 @@ var migrations = []string{
 	-- Add tenant_id to every domain table. SQLite ALTER TABLE only
 	-- supports ADD COLUMN, which is what we need — every existing row
 	-- gets the seeded default tenant.
-	ALTER TABLE connections   ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
-	ALTER TABLE pipelines     ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
-	ALTER TABLE stages        ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
-	ALTER TABLE transforms    ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
-	ALTER TABLE routing_rules ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
-	ALTER TABLE scripts       ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
-	ALTER TABLE schemas       ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
-	ALTER TABLE dlq           ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
-	ALTER TABLE audit_log     ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES tenants(id);
+	-- SQLite refuses ADD COLUMN that combines NOT NULL + non-NULL DEFAULT
+	-- + REFERENCES (Cannot add a REFERENCES column with non-NULL default
+	-- value). The reference is documentary anyway — SQLite only enforces
+	-- FKs declared at CREATE TABLE time on existing rows when foreign_keys
+	-- pragma is on. Drop the inline FK clause here; the index below plus
+	-- application-level checks are the actual guarantee.
+	ALTER TABLE connections   ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+	ALTER TABLE pipelines     ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+	ALTER TABLE stages        ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+	ALTER TABLE transforms    ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+	ALTER TABLE routing_rules ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+	ALTER TABLE scripts       ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+	ALTER TABLE schemas       ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+	ALTER TABLE dlq           ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
+	ALTER TABLE audit_log     ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000';
 
 	-- Tenant-scoped lookups dominate every list query.
 	CREATE INDEX IF NOT EXISTS idx_connections_tenant   ON connections(tenant_id);

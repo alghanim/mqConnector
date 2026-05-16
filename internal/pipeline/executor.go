@@ -107,16 +107,19 @@ func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("get source: %w", err)
 	}
+	// Once we have a healthy source connection, clear any prior error
+	// status — otherwise an idle pipeline (waiting on its first message
+	// after a broker bounce) shows up in /api/health as "error" forever
+	// even though we're already reconnected.
+	if e.Metrics != nil {
+		e.Metrics.SetStatus(e.Pipeline.ID, "connected", "")
+	}
 
 	start := time.Now()
 	message, err := source.ReceiveMessage(ctx)
 	release()
 	if err != nil {
 		return err
-	}
-
-	if e.Metrics != nil {
-		e.Metrics.SetStatus(e.Pipeline.ID, "connected", "")
 	}
 
 	outcome, runErr := RunStages(ctx, e.Stages, message)

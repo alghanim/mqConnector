@@ -42,8 +42,21 @@ func newRabbitMQ(cfg Config) Connector {
 func (c *RabbitMQConnector) Connect(_ context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Self-healing: if the broker dropped under us and we never tore the
+	// connector down, c.conn is non-nil but useless. Recognise that here
+	// and fall through to a fresh dial instead of silently no-op'ing.
 	if c.conn != nil {
-		return nil
+		if !c.conn.IsClosed() {
+			return nil
+		}
+		// Reap the dead handles so the close-paths below stay correct.
+		_ = c.conn.Close()
+		c.conn = nil
+		c.channel = nil
+		c.consumeOnce = sync.Once{}
+		c.consumeErr = nil
+		c.deliveries = nil
+		c.consumerTag = ""
 	}
 	conn, err := amqp.Dial(c.cfg.URL)
 	if err != nil {
