@@ -539,6 +539,25 @@
     return `M${a.x},${a.y} C${mx},${a.y} ${mx},${cy} ${cx},${cy}`;
   }
 
+  // Resolve edges to their (from, to) nodes + pre-computed path string.
+  // We do this in a `$:` block (not inline in the {#each}) so Svelte's
+  // dependency tracker sees `nodes` as a dep — otherwise the path
+  // stays at the OLD node positions when the operator drags one of
+  // the endpoints, because Svelte doesn't trace through the byId()
+  // call to discover that the each-body depends on `nodes`.
+  type ResolvedEdge = { from: string; to: string; path: string };
+  let resolvedEdges: ResolvedEdge[] = [];
+  $: resolvedEdges = (() => {
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const out: ResolvedEdge[] = [];
+    for (const e of edges) {
+      const a = byId.get(e.from);
+      const b = byId.get(e.to);
+      if (a && b) out.push({ from: e.from, to: e.to, path: edgePath(a, b) });
+    }
+    return out;
+  })();
+
   // ─── Preview (Phase 4) ────────────────────────────────────────────
   /**
    * Build the linear stage chain from current canvas nodes (the same
@@ -1153,12 +1172,8 @@
             <path d="M0,0 L8,4 L0,8 z" />
           </marker>
         </defs>
-        {#each edges as e (e.from + '→' + e.to)}
-          {@const a = byId(e.from)}
-          {@const b = byId(e.to)}
-          {#if a && b}
-            <path d={edgePath(a, b)} class="edge" marker-end="url(#edge-arrow)" />
-          {/if}
+        {#each resolvedEdges as e (e.from + '→' + e.to)}
+          <path d={e.path} class="edge" marker-end="url(#edge-arrow)" />
         {/each}
         {#if connecting}
           {@const a = byId(connecting.fromId)}
