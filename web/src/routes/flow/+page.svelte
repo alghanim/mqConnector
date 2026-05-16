@@ -44,6 +44,7 @@
   import Alert from '$lib/components/Alert.svelte';
   import StageConfigForm from '$lib/components/StageConfigForm.svelte';
   import TransformListEditor from '$lib/components/TransformListEditor.svelte';
+  import RoutingRuleListEditor from '$lib/components/RoutingRuleListEditor.svelte';
   import { SAMPLE_FIXTURES } from '$lib/sample-fixtures';
 
   // ─── Types ────────────────────────────────────────────────────────
@@ -95,6 +96,12 @@
   // the chain consumes the same list. Edited from the props panel when
   // a transform node is selected, persisted on Save & Deploy.
   let transforms: Transform[] = [];
+  // Pipeline-level routing-rules list. Same model as transforms: rules
+  // live at pipeline scope; a `route` stage in the chain is what makes
+  // them fire at runtime. Edited in the props panel when the route
+  // node is selected. Destination nodes on the canvas are visual only
+  // — the rule's destination_id points at a connection.
+  let rules: RoutingRule[] = [];
 
   let canvasEl: HTMLElement | null = null;
   let svgEl: SVGSVGElement | null = null;
@@ -202,6 +209,7 @@
       nodes = recon.nodes;
       edges = recon.edges;
       transforms = [...txs].sort((a, b) => a.order - b.order);
+      rules = [...loadedRules].sort((a, b) => a.priority - b.priority);
       // Seed the local id counter past whatever the reconstruction
       // produced, otherwise a palette drop could collide with 'n3'.
       nextNodeIdCounter = recon.nextIdCounter;
@@ -439,6 +447,7 @@
     error = '';
     savedMsg = '';
     transforms = [];
+    rules = [];
     // Clearing the canvas also drops the pipeline binding — otherwise
     // hitting Save would silently empty the loaded pipeline's stages.
     pipelineId = null;
@@ -579,33 +588,17 @@
         : [];
       await api.put(`/v1/pipelines/${pipe.id}/transforms`, txsToPersist);
 
-      // 3. Routing rules — only if there's a route node. The rule list
-      // comes from each outgoing edge of the route node to a destination
-      // node; the rule predicate sits on each destination node's
-      // properties (condition_path, operator, value, priority).
+      // 3. Routing rules. The rules list is now the source of truth —
+      // edited from the route node's props panel, persisted whole. If
+      // there's no route stage in the chain the rules are unreachable,
+      // so we wipe them rather than carry stale data forward.
       const routeNode = stageNodes.find((n) => n.kind === 'route');
-      if (routeNode) {
-        const outEdges = edges.filter((e) => e.from === routeNode.id);
-        const rules = outEdges
-          .map((e, i) => {
-            const target = byId(e.to);
-            if (!target || target.kind !== 'destination') return null;
-            const cfg = safeParse(target.config) as Record<string, unknown>;
-            return {
-              condition_path: String(cfg.condition_path || ''),
-              condition_operator: String(cfg.condition_operator || 'eq'),
-              condition_value: String(cfg.condition_value || ''),
-              destination_id: target.connection_id || '',
-              priority: Number(cfg.priority) || i + 1,
-              enabled: true
-            };
-          })
-          .filter(Boolean);
-        await api.put(`/v1/pipelines/${pipe.id}/routing-rules`, rules);
-      } else {
-        // No route node — wipe any stale rules.
-        await api.put(`/v1/pipelines/${pipe.id}/routing-rules`, []);
-      }
+      const rulesToPersist = routeNode
+        ? rules
+            .map((r, i) => ({ ...r, priority: r.priority || i + 1 }))
+            .sort((a, b) => a.priority - b.priority)
+        : [];
+      await api.put(`/v1/pipelines/${pipe.id}/routing-rules`, rulesToPersist);
 
       // 4. Hot-reload so workers pick the new pipeline up immediately.
       await api.post('/v1/reload');
@@ -622,13 +615,6 @@
 
   function byId(id: string): FlowNode | undefined {
     return nodes.find((n) => n.id === id);
-  }
-  function safeParse(s: string): unknown {
-    try {
-      return JSON.parse(s || '{}');
-    } catch {
-      return {};
-    }
   }
 
   // Delegate to the shared module so the live behaviour is pinned by
@@ -840,6 +826,17 @@
         <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />
         <div class="mt-3">
           <TransformListEditor bind:transforms compact />
+        </div>
+      {:else if selected.kind === 'route'}
+        <!--
+          Same pipeline-scope pattern as transform: rules live in shared
+          state, edited from this panel, persisted whole. Destination
+          nodes elsewhere on the canvas are visual only — the rule's
+          destination_id points at a connection, not a node id.
+        -->
+        <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />
+        <div class="mt-3">
+          <RoutingRuleListEditor bind:rules {connections} compact />
         </div>
       {:else}
         <StageConfigForm type={selected.kind} bind:config={selected.config} {schemas} />

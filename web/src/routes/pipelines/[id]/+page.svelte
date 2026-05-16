@@ -9,7 +9,6 @@
     type StageType,
     type Transform,
     type RoutingRule,
-    type RoutingOperator,
     type Schema
   } from '$lib/api';
   import { locale, t } from '$lib/stores/locale';
@@ -20,6 +19,7 @@
   import Badge from '$lib/components/Badge.svelte';
   import StageConfigForm from '$lib/components/StageConfigForm.svelte';
   import TransformListEditor from '$lib/components/TransformListEditor.svelte';
+  import RoutingRuleListEditor from '$lib/components/RoutingRuleListEditor.svelte';
   import Alert from '$lib/components/Alert.svelte';
   import { SAMPLE_FIXTURES } from '$lib/sample-fixtures';
 
@@ -38,13 +38,6 @@
   $: stageTypeOptions = (
     ['filter', 'transform', 'translate', 'route', 'script', 'validate'] as StageType[]
   ).map((v) => ({ value: v, label: v }));
-  $: routingOpOptions = (
-    ['eq', 'neq', 'contains', 'regex', 'gt', 'lt', 'exists'] as RoutingOperator[]
-  ).map((v) => ({ value: v, label: v }));
-  $: connOptions = connections.map((c) => ({
-    value: c.id || '',
-    label: `${c.name} (${c.type})`
-  }));
 
   async function load() {
     if (!id) return;
@@ -94,23 +87,7 @@
     stages = copy.map((s, idx) => ({ ...s, stage_order: idx + 1 }));
   }
 
-  // ---------- routing ----------
-  function addRule() {
-    rules = [
-      ...rules,
-      {
-        condition_path: '',
-        condition_operator: 'eq',
-        condition_value: '',
-        destination_id: connections[0]?.id || '',
-        priority: rules.length + 1,
-        enabled: true
-      }
-    ];
-  }
-  function removeRule(i: number) {
-    rules = rules.filter((_, idx) => idx !== i);
-  }
+  // ---------- routing ---------- (list editor + state now in RoutingRuleListEditor)
 
   // ---------- sample + preview ----------
   const samplePlaceholder = '{"id":"order-1","secret":"hush","total":42}';
@@ -385,49 +362,7 @@
 
   <!-- ─── Routing rules ─────────────────────────────────────────────── -->
   <Card>
-    <div class="flex items-center justify-between mb-3">
-      <p class="section-heading">{t($locale, 'pipelines.routing')}</p>
-      <Button variant="ghost" on:click={addRule}>{t($locale, 'pipelines.routing.add')}</Button>
-    </div>
-    {#if rules.length === 0}
-      <p style="color: var(--text-muted)">{t($locale, 'pipelines.routing.empty')}</p>
-    {:else}
-      <div class="space-y-3">
-        {#each rules as r, i (i)}
-          <div class="stage-row">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Input bind:value={r.condition_path} label={t($locale, 'pipelines.routing.path')} />
-              <Select
-                bind:value={r.condition_operator}
-                options={routingOpOptions}
-                label={t($locale, 'pipelines.routing.operator')}
-              />
-              {#if r.condition_operator !== 'exists'}
-                <Input bind:value={r.condition_value} label={t($locale, 'pipelines.routing.value')} />
-              {/if}
-              <Select
-                bind:value={r.destination_id}
-                options={connOptions}
-                label={t($locale, 'pipelines.routing.destination')}
-              />
-              <Input
-                bind:value={r.priority}
-                type="number"
-                label={t($locale, 'pipelines.routing.priority')}
-              />
-              <label class="enable">
-                <input type="checkbox" bind:checked={r.enabled} />
-                {t($locale, 'common.enabled')}
-              </label>
-            </div>
-            <div class="flex justify-end mt-2">
-              <Button variant="outline" on:click={() => removeRule(i)}
-                >{t($locale, 'common.delete')}</Button>
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
+    <RoutingRuleListEditor bind:rules {connections} />
   </Card>
 
   <!-- ─── Sample & preview ─────────────────────────────────────────── -->
