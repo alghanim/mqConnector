@@ -11,7 +11,27 @@ import (
 	"github.com/google/uuid"
 
 	"mqConnector/internal/logging"
+	"mqConnector/internal/tracing"
 )
+
+// TraceContext middleware reads the W3C `traceparent` header from
+// inbound requests and seeds the request context with a SpanContext.
+// If the header is absent or malformed, a fresh root span is minted so
+// every request has correlation ids. The chosen ids are echoed back on
+// the response so clients can join their logs with ours.
+//
+// Sits early in the stack — before LogRequests, so the request access
+// log carries the trace id from the very first line.
+func TraceContext(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sc, ok := tracing.Parse(r.Header.Get("traceparent"))
+		if !ok {
+			sc = tracing.NewRoot()
+		}
+		w.Header().Set("traceparent", sc.String())
+		next.ServeHTTP(w, r.WithContext(tracing.WithContext(r.Context(), sc)))
+	})
+}
 
 type ctxKeyRequestID struct{}
 
@@ -36,7 +56,9 @@ func RequestIDFromContext(ctx context.Context) string {
 }
 
 // LogRequests wraps each request in an info-level log line with method, path,
-// status, and duration.
+// status, and duration. Trace ids from the TraceContext middleware are
+// folded into the log line via slog's group attribute so an aggregator can
+// join with downstream span logs.
 func LogRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -44,14 +66,16 @@ func LogRequests(next http.Handler) http.Handler {
 		next.ServeHTTP(rw, r)
 
 		logger := logging.FromContext(r.Context())
-		logger.Info("http request",
+		attrs := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rw.status,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"remote", r.RemoteAddr,
 			"request_id", RequestIDFromContext(r.Context()),
-		)
+		}
+		attrs = append(attrs, tracing.LogAttrs(r.Context())...)
+		logger.Info("http request", attrs...)
 	})
 }
 

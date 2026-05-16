@@ -25,6 +25,7 @@ func (s *Server) routes() http.Handler {
 		})
 	})
 	r.Use(RequestID)
+	r.Use(TraceContext)
 	r.Use(SecurityHeaders)
 	r.Use(LogRequests)
 	if len(s.cfg.Server.CORSOrigins) > 0 {
@@ -49,9 +50,13 @@ func (s *Server) routes() http.Handler {
 	r.With(s.rateLimitLogin).Post("/api/auth/refresh", s.handleRefresh)
 
 	// Authenticated endpoints — admin only. AuditAdminActions records every
-	// mutation after RequireSession populates the user context.
+	// mutation after RequireSession populates the user context. Per-tenant
+	// rate limiting sits after RequireSession (so the tenant id is in the
+	// request context) but before the audit middleware (so a 429 doesn't
+	// produce a spurious audit row).
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth.RequireSession)
+		r.Use(s.rateLimitTenant)
 		r.Use(s.AuditAdminActions)
 
 		r.Post("/api/auth/logout", s.handleLogout)

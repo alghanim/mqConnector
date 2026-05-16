@@ -9,6 +9,7 @@ import (
 
 	"mqConnector/internal/mq"
 	"mqConnector/internal/storage"
+	"mqConnector/internal/tracing"
 )
 
 // MetricsSink is the minimal surface the executor uses to report per-pipeline
@@ -121,6 +122,14 @@ func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+
+	// Every consumed message gets a fresh trace context. The receive →
+	// stages → send chain emits one span per phase so a slow operator
+	// can see exactly where time is going via the structured logs.
+	ctx, span := tracing.Start(ctx, logger, "pipeline.processOne")
+	span.SetAttr("pipeline_id", e.Pipeline.ID)
+	span.SetAttr("bytes_in", len(message))
+	defer span.End(nil)
 
 	outcome, runErr := RunStages(ctx, e.Stages, message)
 	if runErr != nil {

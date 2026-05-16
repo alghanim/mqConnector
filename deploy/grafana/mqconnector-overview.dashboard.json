@@ -1,0 +1,222 @@
+{
+  "title": "mqConnector — Overview",
+  "uid": "mqc-overview",
+  "schemaVersion": 38,
+  "version": 1,
+  "timezone": "browser",
+  "tags": ["mqconnector", "operations"],
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "pipeline_id",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(mqconnector_messages_processed_total, pipeline_id)",
+        "multi": true,
+        "includeAll": true,
+        "current": { "selected": false, "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Active pipelines",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "expr": "count(count by (pipeline_id) (mqconnector_messages_processed_total))",
+          "refId": "A"
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "type": "stat",
+      "title": "Uptime",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "targets": [{ "expr": "mqconnector_uptime_seconds", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "stat",
+      "title": "Msg / sec (5m rate)",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "expr": "sum(rate(mqconnector_messages_processed_total[5m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "decimals": 1 } }
+    },
+    {
+      "type": "stat",
+      "title": "Fail rate (5m)",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "targets": [
+        {
+          "expr": "1 - avg(mqconnector:availability:ratio5m)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.001 },
+              { "color": "red", "value": 0.01 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Throughput per pipeline (msg/s)",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (pipeline_id) (rate(mqconnector_messages_processed_total{pipeline_id=~\"$pipeline_id\"}[1m]))",
+          "legendFormat": "{{pipeline_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Failures per pipeline (msg/s)",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (pipeline_id) (rate(mqconnector_messages_failed_total{pipeline_id=~\"$pipeline_id\"}[1m]))",
+          "legendFormat": "{{pipeline_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "custom": { "fillOpacity": 20 } }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Avg latency (ms)",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "mqconnector_avg_latency_ms{pipeline_id=~\"$pipeline_id\"}",
+          "legendFormat": "{{pipeline_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 500 },
+              { "color": "red", "value": 2000 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Bytes processed (per second)",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (pipeline_id) (rate(mqconnector_bytes_processed_total{pipeline_id=~\"$pipeline_id\"}[1m]))",
+          "legendFormat": "{{pipeline_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } }
+    },
+    {
+      "type": "gauge",
+      "title": "Availability SLO — 1h",
+      "gridPos": { "x": 0, "y": 20, "w": 8, "h": 6 },
+      "targets": [
+        {
+          "expr": "avg(mqconnector:availability:ratio1h)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0.99,
+          "max": 1.0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.999 },
+              { "color": "green", "value": 0.9995 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "gauge",
+      "title": "Availability SLO — 6h",
+      "gridPos": { "x": 8, "y": 20, "w": 8, "h": 6 },
+      "targets": [
+        {
+          "expr": "avg(mqconnector:availability:ratio6h)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0.99,
+          "max": 1.0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.999 },
+              { "color": "green", "value": 0.9995 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Error budget burn (1h vs weekly)",
+      "gridPos": { "x": 16, "y": 20, "w": 8, "h": 6 },
+      "targets": [
+        {
+          "expr": "(1 - avg(mqconnector:availability:ratio1h)) / (1 - 0.999)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 6 }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

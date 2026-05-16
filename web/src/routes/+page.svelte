@@ -25,6 +25,7 @@
   import { onMount, onDestroy } from 'svelte';
   import {
     api,
+    type AuditDiff,
     type AuditEntry,
     type DLQEntry,
     type Health,
@@ -55,6 +56,43 @@
   let lastRefreshed = '';
   let interval: ReturnType<typeof setInterval> | undefined;
   let metricsFallbackTimer: ReturnType<typeof setInterval> | undefined;
+
+  // Audit diff drill-down — opens inline below the row. PUT rows are
+  // the only ones with a recorded diff; for other verbs we just show
+  // the request-id so the operator can grep logs.
+  let openDiff: string | null = null;
+  let diffCache = new Map<string, AuditDiff | null>();
+  let diffLoading: string | null = null;
+
+  async function toggleDiff(id: string) {
+    if (openDiff === id) {
+      openDiff = null;
+      return;
+    }
+    openDiff = id;
+    if (diffCache.has(id)) return;
+    diffLoading = id;
+    try {
+      const d = await api.get<AuditDiff>(`/v1/audit/${id}/diff`);
+      diffCache.set(id, d);
+    } catch {
+      // 404 → no diff recorded for this row (non-PUT or pre-Phase-19b
+      // row); cache the null so we don't refetch.
+      diffCache.set(id, null);
+    } finally {
+      diffLoading = null;
+      diffCache = diffCache; // trigger reactivity
+    }
+  }
+
+  function prettyJSON(s: string): string {
+    if (!s) return '';
+    try {
+      return JSON.stringify(JSON.parse(s), null, 2);
+    } catch {
+      return s;
+    }
+  }
 
   // Bind to the shared live stream. The layout already opened it; this
   // page just subscribes to the metrics + health + dlqTotal stores and
@@ -467,8 +505,30 @@
                   <span class="dash-event-actor">{a.actor || '—'}</span>
                   <span class="dash-event-action">{a.action}</span>
                   <code class="dash-event-resource">{a.resource}</code>
+                  {#if a.action === 'PUT'}
+                    <button
+                      type="button"
+                      class="dash-event-diff-btn"
+                      on:click={() => toggleDiff(a.id)}
+                      aria-expanded={openDiff === a.id}
+                    >
+                      {openDiff === a.id ? 'hide diff' : 'view diff'}
+                    </button>
+                  {/if}
                 </p>
                 <time class="dash-event-time" datetime={a.at}>{a.at}</time>
+                {#if openDiff === a.id}
+                  <div class="dash-event-diff">
+                    {#if diffLoading === a.id}
+                      <p class="dash-empty">{t($locale, 'common.loading')}</p>
+                    {:else if diffCache.get(a.id)}
+                      <p class="dash-event-diff-label">after</p>
+                      <pre class="dash-event-diff-pre">{prettyJSON(diffCache.get(a.id)?.after ?? '')}</pre>
+                    {:else}
+                      <p class="dash-empty">No diff recorded for this row.</p>
+                    {/if}
+                  </div>
+                {/if}
               </div>
             </li>
           {/each}
@@ -764,6 +824,48 @@
   .dash-event-time {
     color: var(--text-tertiary);
     font-size: 11px;
+  }
+  /* "view diff" toggle. Tone-neutral — the diff itself does the work
+     of showing impact. The button itself is a quiet affordance. */
+  .dash-event-diff-btn {
+    appearance: none;
+    background: transparent;
+    border: 1px dashed var(--divider);
+    color: var(--text-muted);
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-inline-start: 6px;
+  }
+  .dash-event-diff-btn:hover {
+    color: var(--text);
+    border-color: var(--text-tertiary);
+  }
+  .dash-event-diff {
+    margin-block-start: 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .dash-event-diff-label {
+    color: var(--text-tertiary);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-block-end: 4px;
+  }
+  .dash-event-diff-pre {
+    color: var(--text);
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-block-size: 240px;
+    overflow-y: auto;
   }
 
   /* ─── DLQ snippets ────────────────────────────────────────────── */

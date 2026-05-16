@@ -1,0 +1,167 @@
+# Prometheus recording + alerting rules for mqConnector.
+#
+# Two SLOs are encoded here, picked because they map directly to operator
+# expectations and to metrics the binary already exposes at /api/metrics/prometheus:
+#
+#   1. Availability: per-pipeline message processing success rate over a
+#      rolling 7-day window. Target: 99.9% (≤ 0.1% failure budget).
+#   2. Latency:       per-pipeline avg end-to-end latency stays under
+#      500ms for 99% of the messages over the same window.
+#
+# Both SLOs use a multi-burn-rate alerting strategy per Google SRE Workbook
+# Ch. 5 — fast-burn pages the operator when an outage is consuming the
+# weekly budget too quickly; slow-burn alerts when a creeping regression
+# would exhaust it over days.
+#
+# Apply to Prometheus by mounting under /etc/prometheus/rules/ and adding
+# `rule_files: [ "/etc/prometheus/rules/*.yaml" ]` to prometheus.yml.
+
+groups:
+
+  # ── 1) Availability SLO ──────────────────────────────────────────
+  - name: mqconnector.availability.recording
+    interval: 30s
+    rules:
+      - record: mqconnector:msg_total:rate5m
+        expr: |
+          sum by (pipeline_id) (
+            rate(mqconnector_messages_processed_total[5m])
+          )
+          +
+          sum by (pipeline_id) (
+            rate(mqconnector_messages_failed_total[5m])
+          )
+
+      - record: mqconnector:msg_failed:rate5m
+        expr: |
+          sum by (pipeline_id) (
+            rate(mqconnector_messages_failed_total[5m])
+          )
+
+      - record: mqconnector:availability:ratio5m
+        expr: |
+          1 - (
+            mqconnector:msg_failed:rate5m
+            /
+            clamp_min(mqconnector:msg_total:rate5m, 0.001)
+          )
+
+      - record: mqconnector:availability:ratio1h
+        expr: |
+          1 - (
+            sum by (pipeline_id) (rate(mqconnector_messages_failed_total[1h]))
+            /
+            clamp_min(
+              sum by (pipeline_id) (rate(mqconnector_messages_processed_total[1h]))
+              +
+              sum by (pipeline_id) (rate(mqconnector_messages_failed_total[1h])),
+              0.001
+            )
+          )
+
+      - record: mqconnector:availability:ratio6h
+        expr: |
+          1 - (
+            sum by (pipeline_id) (rate(mqconnector_messages_failed_total[6h]))
+            /
+            clamp_min(
+              sum by (pipeline_id) (rate(mqconnector_messages_processed_total[6h]))
+              +
+              sum by (pipeline_id) (rate(mqconnector_messages_failed_total[6h])),
+              0.001
+            )
+          )
+
+  - name: mqconnector.availability.alerts
+    rules:
+      # Fast burn — at 14.4× the budget burn rate, a 1h breach exhausts
+      # 2% of the weekly budget. Pages on-call.
+      - alert: mqConnectorAvailabilityFastBurn
+        expr: |
+          (1 - mqconnector:availability:ratio5m) > (14.4 * (1 - 0.999))
+          and
+          (1 - mqconnector:availability:ratio1h) > (14.4 * (1 - 0.999))
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: availability fast-burn"
+          description: |
+            Pipeline {{ $labels.pipeline_id }} has failed {{ $value | humanizePercentage }} of
+            messages over the last 5m. Burn rate is 14.4× the budget — at this rate, a 1h
+            outage exhausts 2% of the weekly error budget.
+
+      # Slow burn — 1× burn rate sustained over 6h indicates creeping
+      # regression. Notifies (no page) so the operator can investigate.
+      - alert: mqConnectorAvailabilitySlowBurn
+        expr: |
+          (1 - mqconnector:availability:ratio1h) > (1 * (1 - 0.999))
+          and
+          (1 - mqconnector:availability:ratio6h) > (1 * (1 - 0.999))
+        for: 30m
+        labels:
+          severity: warning
+          slo: availability
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: availability slow-burn"
+          description: |
+            Pipeline {{ $labels.pipeline_id }} has failed {{ $value | humanizePercentage }} of
+            messages over the last 6h. Sustained slow burn — investigate before it consumes
+            the weekly error budget.
+
+  # ── 2) Latency SLO ───────────────────────────────────────────────
+  - name: mqconnector.latency.alerts
+    rules:
+      - alert: mqConnectorLatencyHigh
+        expr: mqconnector_avg_latency_ms > 500
+        for: 10m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: avg latency > 500ms"
+          description: |
+            Pipeline {{ $labels.pipeline_id }} avg end-to-end latency is
+            {{ $value | humanizeDuration }}ms over the last 10m. SLO threshold is 500ms.
+
+      - alert: mqConnectorLatencyCritical
+        expr: mqconnector_avg_latency_ms > 2000
+        for: 5m
+        labels:
+          severity: critical
+          slo: latency
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: avg latency > 2s"
+          description: |
+            Pipeline {{ $labels.pipeline_id }} avg latency is {{ $value | humanizeDuration }}ms.
+            This is catastrophic for any synchronous downstream — page on-call.
+
+  # ── 3) Liveness ──────────────────────────────────────────────────
+  - name: mqconnector.liveness.alerts
+    rules:
+      - alert: mqConnectorScrapeFailed
+        expr: up{job="mqconnector"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mqConnector scrape failed"
+          description: "Prometheus has been unable to scrape mqConnector for 5 minutes."
+
+      - alert: mqConnectorNoMessagesFlowing
+        # Each running pipeline should process at least one message every
+        # 15 minutes; an idle pipeline is suspicious. Tune via
+        # `for:` if a pipeline is expected to be quiet for longer.
+        expr: |
+          rate(mqconnector_messages_processed_total[15m]) == 0
+          and
+          mqconnector_uptime_seconds > 900
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: no messages in 15m"
+          description: |
+            Pipeline {{ $labels.pipeline_id }} has processed zero messages for 15 minutes.
+            Check the upstream broker and the pipeline status.

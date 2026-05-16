@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"mqConnector/internal/audit"
 	"mqConnector/internal/auth"
@@ -184,7 +185,15 @@ func run(configPath string) error {
 
 	// Pipeline manager
 	mgr := pipeline.NewManager(rootCtx, store, pool, metricsStore, dlqSvc, logger)
-	defer mgr.Stop()
+	// Graceful drain: give in-flight messages 30s to finish their
+	// receive → stages → send round trip before the process exits.
+	// Fire-and-forget Stop() runs anyway as a backstop if the deferred
+	// call below somehow doesn't fire (panic-during-panic).
+	defer func() {
+		if ok := mgr.StopAndWait(30 * time.Second); !ok {
+			logger.Warn("pipeline manager drain timed out — some messages may be in-flight at exit")
+		}
+	}()
 
 	// Optional leader-election lease. When enabled, this replica only
 	// starts pipeline workers while it holds the lease — other replicas

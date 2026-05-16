@@ -68,6 +68,52 @@ func TestManager_Reload_StartsEnabledPipelinesOnly(t *testing.T) {
 	}
 }
 
+// TestManager_StopAndWait_Drain confirms that StopAndWait blocks until
+// the executor goroutines have actually exited (vs Stop's
+// fire-and-forget contract). Uses the in-memory connector so we don't
+// depend on a broker.
+func TestManager_StopAndWait_Drain(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+
+	src := &storage.Connection{Name: "src", Type: "rabbitmq", URL: "amqp://x", QueueName: "src-q"}
+	dst := &storage.Connection{Name: "dst", Type: "rabbitmq", URL: "amqp://x", QueueName: "dst-q"}
+	_ = store.Connections.Create(ctx, storage.DefaultTenantID, src)
+	_ = store.Connections.Create(ctx, storage.DefaultTenantID, dst)
+	pipe := &storage.Pipeline{Name: "drainable", SourceID: src.ID, DestinationID: dst.ID, Enabled: true}
+	_ = store.Pipelines.Create(ctx, storage.DefaultTenantID, pipe)
+
+	reg := mq.NewMemoryRegistry(8)
+	pool := mq.NewPool(mq.PoolOptions{IdleTimeout: time.Hour, HealthInterval: time.Hour})
+	defer pool.Close()
+	memSrc := mq.NewMemoryConnector(reg, "src-q")
+	_ = memSrc.Connect(ctx)
+	memDst := mq.NewMemoryConnector(reg, "dst-q")
+	_ = memDst.Connect(ctx)
+	pool.InjectForTest("source-"+pipe.ID, memSrc)
+	pool.InjectForTest("dest-"+pipe.ID, memDst)
+
+	mgr := NewManager(ctx, store, pool, metrics.New(), nil, logging.New("error", "json"))
+	if _, err := mgr.Reload(ctx); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if mgr.ActiveCount() != 1 {
+		t.Fatalf("expected 1 active pipeline, got %d", mgr.ActiveCount())
+	}
+
+	// Generous budget — the executor's source ReceiveMessage should
+	// observe ctx.Done immediately and unwind in microseconds.
+	if !mgr.StopAndWait(2 * time.Second) {
+		t.Fatal("StopAndWait did not drain within the budget")
+	}
+	// Once StopAndWait returns true, every executor goroutine has
+	// finished. ActiveCount is set by the goroutine's own defer, so
+	// it must be 0 after a clean drain.
+	if mgr.ActiveCount() != 0 {
+		t.Errorf("after StopAndWait, ActiveCount = %d, want 0", mgr.ActiveCount())
+	}
+}
+
 func TestToMQConfig_HandlesBrokersList(t *testing.T) {
 	c := &storage.Connection{
 		Name: "k", Type: "kafka",

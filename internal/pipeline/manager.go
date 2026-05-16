@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"mqConnector/internal/mq"
 	"mqConnector/internal/mqcfg"
@@ -25,6 +26,12 @@ type Manager struct {
 	active  map[string]context.CancelFunc // pipeline ID → cancel
 	parent  context.Context
 	stopped bool
+
+	// wg tracks every executor goroutine the manager has started but
+	// not yet observed exit. StopAndWait blocks on this so SIGTERM
+	// can give in-flight messages a chance to finish before the
+	// process exits.
+	wg sync.WaitGroup
 }
 
 // NewManager constructs a Manager but does not start anything until Reload is
@@ -175,7 +182,9 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 	m.active[p.ID] = cancel
 	m.mu.Unlock()
 
+	m.wg.Add(1)
 	go func() {
+		defer m.wg.Done()
 		defer func() {
 			m.mu.Lock()
 			delete(m.active, p.ID)
@@ -193,6 +202,10 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 // teardown; use StopAll instead if the process should remain reload-able
 // (e.g. a passive replica that lost the leadership lease but may regain
 // it).
+//
+// Stop is fire-and-forget: it does not wait for executor goroutines to
+// observe the cancellation and exit. Use StopAndWait when the caller
+// needs synchronous drain semantics (e.g. graceful shutdown on SIGTERM).
 func (m *Manager) Stop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -200,6 +213,47 @@ func (m *Manager) Stop() {
 	for id, cancel := range m.active {
 		cancel()
 		delete(m.active, id)
+	}
+}
+
+// StopAndWait cancels every running pipeline and blocks until every
+// executor goroutine has actually exited — or the timeout elapses,
+// whichever comes first. Returns true on a clean drain, false when
+// the timeout hits before all goroutines acknowledged.
+//
+// Order of operations matters: cancel() each pipeline first so the
+// blocking `source.ReceiveMessage(ctx)` calls unwind, *then* wait on
+// the WaitGroup. Reversing the order would deadlock.
+//
+// Use this from the process-level SIGTERM handler so in-flight
+// messages get to finish sending downstream before the binary exits.
+// The default 30s budget is comfortable for the receive→stages→send
+// fast path of a typical message.
+func (m *Manager) StopAndWait(timeout time.Duration) bool {
+	m.mu.Lock()
+	m.stopped = true
+	for id, cancel := range m.active {
+		cancel()
+		// We deliberately don't delete from m.active here — the
+		// goroutine's own defer does that. Premature deletion races
+		// with the goroutine's "am I still active?" checks during
+		// teardown.
+		_ = id
+	}
+	m.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		m.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		m.logger.Warn("StopAndWait: drain timeout — some executors did not exit",
+			"timeout", timeout)
+		return false
 	}
 }
 

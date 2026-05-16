@@ -222,6 +222,14 @@ export interface AuditEntry {
   status: number;
   request_id: string;
   remote_ip: string;
+  hash?: string;
+  prev_hash?: string;
+}
+
+export interface AuditDiff {
+  audit_id: string;
+  before: string;
+  after: string;
 }
 
 // ─── tenants ─────────────────────────────────────────────────────
