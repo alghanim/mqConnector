@@ -125,6 +125,10 @@ const strings: Record<Locale, Record<string, string>> = {
     'preview.paths.chipHint': 'Click to add to the filter stage',
     'preview.paths.useAll': 'Use all paths',
     'preview.try': 'Try a sample:',
+    'preview.error.noSample': 'Paste or upload a sample message first.',
+    'preview.error.failed': 'Preview failed.',
+    'preview.close': 'Close preview',
+    'preview.empty': 'Run preview to see the pipeline output.',
     'stageConfig.advanced': 'Advanced (raw JSON)',
     'stageConfig.filter.help':
       'Dot-paths to strip from each message. Add one per chip; comma or Enter to commit.',
@@ -314,6 +318,10 @@ const strings: Record<Locale, Record<string, string>> = {
     'preview.paths.chipHint': 'اضغط للإضافة إلى مرحلة التصفية',
     'preview.paths.useAll': 'استخدام جميع المسارات',
     'preview.try': 'جرّب عينة:',
+    'preview.error.noSample': 'ألصق أو ارفع رسالة عينة أولاً.',
+    'preview.error.failed': 'تعذّرت المعاينة.',
+    'preview.close': 'إغلاق المعاينة',
+    'preview.empty': 'شغّل المعاينة لرؤية مخرَج التدفق.',
     'stageConfig.advanced': 'متقدم (JSON خام)',
     'stageConfig.filter.help':
       'مسارات نقطية لاستبعادها من كل رسالة. أضف واحدة لكل شريحة؛ فاصلة أو Enter للتأكيد.',

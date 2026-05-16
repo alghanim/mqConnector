@@ -103,6 +103,16 @@
   // — the rule's destination_id points at a connection.
   let rules: RoutingRule[] = [];
 
+  // ─── Preview drawer (Phase 4) ─────────────────────────────────────
+  // A pinnable drawer at the bottom of the canvas that runs the live
+  // canvas state against the /v1/preview endpoint and shows what would
+  // leave the pipeline. No brokers are touched — server-side dry run.
+  let previewOpen = false;
+  let previewing = false;
+  let previewOutput = '';
+  let previewFormat = '';
+  let previewError = '';
+
   let canvasEl: HTMLElement | null = null;
   let svgEl: SVGSVGElement | null = null;
 
@@ -483,6 +493,92 @@
     return `M${a.x},${a.y} C${mx},${a.y} ${mx},${cy} ${cx},${cy}`;
   }
 
+  // ─── Preview (Phase 4) ────────────────────────────────────────────
+  /**
+   * Build the linear stage chain from current canvas nodes (the same
+   * extraction Save & Deploy does, minus persistence). Throws on the
+   * same validation failures so the operator sees identical messages
+   * whether they preview or deploy.
+   */
+  function extractStagesForPreview(): {
+    stages: { stage_order: number; stage_type: string; stage_config: string; enabled: boolean }[];
+  } {
+    const sources = nodes.filter((n) => n.kind === 'source');
+    const destinations = nodes.filter((n) => n.kind === 'destination');
+    if (sources.length !== 1) throw new Error(t($locale, 'flow.error.needSource'));
+    if (destinations.length < 1) throw new Error(t($locale, 'flow.error.needDest'));
+    const source = sources[0];
+
+    const order = topoFromSource(source.id);
+    const reachable = new Set(order);
+    for (const d of destinations) {
+      if (!reachable.has(d.id)) throw new Error(t($locale, 'flow.error.notConnected'));
+    }
+
+    const stageNodes: FlowNode[] = [];
+    for (const id of order) {
+      const n = byId(id);
+      if (!n) continue;
+      if (n.kind === 'source') continue;
+      if (n.kind === 'destination') break;
+      stageNodes.push(n);
+    }
+    for (const s of stageNodes) {
+      try {
+        JSON.parse(s.config || '{}');
+      } catch {
+        throw new Error(`${s.kind} (${s.label}): config is not valid JSON`);
+      }
+    }
+    return {
+      stages: stageNodes.map((n, i) => ({
+        stage_order: i + 1,
+        stage_type: n.kind === 'route' ? 'route' : n.kind,
+        stage_config: n.config || '{}',
+        enabled: true
+      }))
+    };
+  }
+
+  async function runPreview() {
+    previewing = true;
+    previewError = '';
+    previewOutput = '';
+    previewFormat = '';
+    previewOpen = true;
+    try {
+      if (!flowSample.trim()) {
+        throw new Error(t($locale, 'preview.error.noSample'));
+      }
+      const { stages } = extractStagesForPreview();
+      const r = await api.post<{
+        ok: boolean;
+        output: string;
+        format: string;
+        error?: string;
+      }>('/v1/preview', {
+        stages,
+        transforms,
+        routing_rules: rules,
+        // The canvas doesn't expose output_format yet (Phase 5 will
+        // surface it on the destination node). 'same' matches what
+        // Save & Deploy creates for a fresh pipeline.
+        output_format: 'same',
+        sample: flowSample
+      });
+      if (!r.ok) {
+        previewError = r.error || t($locale, 'preview.error.failed');
+        return;
+      }
+      previewOutput = r.output;
+      previewFormat = r.format;
+    } catch (e: unknown) {
+      previewError = (e as { message?: string }).message || t($locale, 'preview.error.failed');
+    } finally {
+      previewing = false;
+    }
+  }
+
   // ─── Save & Deploy ───────────────────────────────────────────────
   async function saveAndDeploy() {
     error = '';
@@ -636,7 +732,7 @@
 
 <svelte:window on:mousemove={onCanvasMouseMove} on:mouseup={onCanvasMouseUp} />
 
-<div class="flow-shell">
+<div class="flow-shell" class:preview-open={previewOpen}>
   <!-- ─── Palette + canvas + props ──────────────────────────────────── -->
   <aside class="palette">
     <p class="palette-heading">{t($locale, 'flow.palette.stages')}</p>
@@ -848,6 +944,45 @@
       </div>
     {/if}
   </aside>
+
+  <!--
+    Preview drawer — spans all 3 grid columns, lives in grid-row 2 when
+    open. Collapsed by default; runPreview() also opens it. The status
+    badge + close button stay on the right; the output fills the rest.
+  -->
+  {#if previewOpen}
+    <div class="flow-preview">
+      <div class="flow-preview-head">
+        <div class="flex items-center gap-2">
+          <span class="section-heading">{t($locale, 'preview.output')}</span>
+          {#if previewFormat}
+            <Badge variant="neutral">{previewFormat}</Badge>
+          {/if}
+          {#if previewing}
+            <Badge variant="neutral">{t($locale, 'common.loading')}</Badge>
+          {/if}
+        </div>
+        <div class="flex items-center gap-2">
+          <Button variant="ghost" on:click={runPreview} loading={previewing}>
+            {t($locale, 'preview.run')}
+          </Button>
+          <Button variant="ghost" on:click={() => (previewOpen = false)}>
+            {t($locale, 'preview.close')}
+          </Button>
+        </div>
+      </div>
+      {#if previewError}
+        <div class="mt-2"><Alert variant="error">{previewError}</Alert></div>
+      {:else}
+        <textarea
+          class="flow-preview-output"
+          readonly
+          value={previewOutput}
+          placeholder={t($locale, 'preview.empty')}
+        ></textarea>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <!-- ─── Header (above the shell) ────────────────────────────────── -->
@@ -877,6 +1012,9 @@
       </Button>
     {/if}
     <Button variant="ghost" on:click={clearAll}>{t($locale, 'flow.actions.clear')}</Button>
+    <Button variant="outline" on:click={runPreview} loading={previewing}>
+      {t($locale, 'preview.run')}
+    </Button>
     <Button on:click={saveAndDeploy} loading={saving}>{t($locale, 'flow.actions.save')}</Button>
   </div>
 </div>
@@ -921,10 +1059,50 @@
   .flow-shell {
     display: grid;
     grid-template-columns: 240px 1fr 300px;
+    grid-template-rows: 1fr;
     height: calc(100vh - 140px);
     min-height: 480px;
     background: var(--bg);
   }
+  /*
+   * When the preview drawer is open we split the shell into two rows so
+   * the existing 3-col layout shrinks vertically and the drawer spans
+   * the full width below it. The drawer height (260dp) is fixed so the
+   * canvas keeps a predictable working area.
+   */
+  .flow-shell.preview-open {
+    grid-template-rows: 1fr 260px;
+  }
+  .flow-preview {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: hidden;
+  }
+  .flow-preview-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .flow-preview-output {
+    flex: 1;
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text);
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 12px;
+    padding: 8px 10px;
+    resize: none;
+  }
+  .flow-preview-output:focus { outline: 2px solid var(--primary); }
 
   .palette, .props {
     background: var(--surface);
