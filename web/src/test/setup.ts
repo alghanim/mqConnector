@@ -2,6 +2,11 @@
 // installed here are visible when stores like theme/locale evaluate their
 // module-top `initial()` (which reads from localStorage and matchMedia).
 import '@testing-library/jest-dom/vitest';
+// Registers afterEach(act()+cleanup()) so Svelte's onMount lifecycle
+// actually fires inside @testing-library/svelte's jsdom mount. Without
+// this the runtime queues onMount but never flushes — page tests that
+// depend on data-fetching-on-mount would hang indefinitely.
+import '@testing-library/svelte/vitest';
 import { afterEach } from 'vitest';
 
 // --- localStorage polyfill ---------------------------------------------------
@@ -25,6 +30,25 @@ if (lsBroken) {
       setItem: (k: string, v: string) => store.set(k, String(v)),
       removeItem: (k: string) => store.delete(k),
       key: (i: number) => Array.from(store.keys())[i] ?? null
+    }
+  });
+}
+
+// --- File / Blob.text polyfill ----------------------------------------------
+// jsdom 24's File/Blob ship without the async `.text()` method that's part
+// of the WHATWG File API. The settings page's drag-drop import staging
+// reads stagedFile.text() to capture the bundle before POSTing — without
+// this polyfill those tests blow up with "f.text is not a function".
+if (typeof Blob !== 'undefined' && typeof (Blob.prototype as { text?: unknown }).text !== 'function') {
+  Object.defineProperty(Blob.prototype, 'text', {
+    configurable: true,
+    value(this: Blob): Promise<string> {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(this);
+      });
     }
   });
 }

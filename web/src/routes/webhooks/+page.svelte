@@ -281,7 +281,14 @@
               </td>
               <td class="muted">{fmtDate(h.last_attempt_at)}</td>
               <td>
-                <Switch checked={h.enabled} on:change={() => toggleEnabled(h)} label={t($locale, 'webhooks.enabled')} />
+                <!-- Native `change` events bubble through real DOM but
+                     not across Svelte component boundaries without
+                     explicit forwarding. Wrapping Switch in a div with
+                     on:change catches the bubbling input event so the
+                     toggle fires without modifying Switch.svelte. -->
+                <div on:change={() => toggleEnabled(h)} role="presentation">
+                  <Switch checked={h.enabled} label={t($locale, 'webhooks.enabled')} />
+                </div>
               </td>
               <td>
                 <div class="flex justify-end gap-2">
