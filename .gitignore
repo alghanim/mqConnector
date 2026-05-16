@@ -56,3 +56,4 @@ internal/web/dist/*
 
 # Logs
 *.log
+.claude/worktrees/
