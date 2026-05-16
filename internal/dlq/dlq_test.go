@@ -42,7 +42,7 @@ func TestDLQ_Push_PersistsEntry(t *testing.T) {
 		t.Fatalf("Push: %v", err)
 	}
 
-	list, total, err := svc.List(context.Background(), 1, 10)
+	list, total, err := svc.List(context.Background(), storage.DefaultTenantID, 1, 10)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestDLQ_Retry_FailsOnMissingEntry(t *testing.T) {
 	svc := NewService(openTestStore(t), mq.NewPool(mq.PoolOptions{}), Options{})
 	defer mq.NewPool(mq.PoolOptions{}).Close()
 
-	err := svc.Retry(context.Background(), "nonexistent")
+	err := svc.Retry(context.Background(), storage.DefaultTenantID, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent retry")
 	}
@@ -91,11 +91,11 @@ func TestDLQ_Retry_FailsAtMaxRetries(t *testing.T) {
 		ErrorReason: "boom",
 		RetryCount:  1,
 	}
-	if err := store.DLQ.Insert(ctx, e); err != nil {
+	if err := store.DLQ.Insert(ctx, storage.DefaultTenantID, e); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	err := svc.Retry(ctx, e.ID)
+	err := svc.Retry(ctx, storage.DefaultTenantID, e.ID)
 	if !errors.Is(err, ErrMaxRetries) {
 		t.Errorf("expected ErrMaxRetries, got %v", err)
 	}
@@ -112,14 +112,14 @@ func TestDLQ_Retry_RepublishesViaMemoryConnector(t *testing.T) {
 	// 1) Storage shape: pipeline + connections
 	src := &storage.Connection{Name: "src", Type: "rabbitmq", URL: "amqp://x", QueueName: "src-q"}
 	dst := &storage.Connection{Name: "dst", Type: "rabbitmq", URL: "amqp://x", QueueName: "dst-q"}
-	if err := store.Connections.Create(ctx, src); err != nil {
+	if err := store.Connections.Create(ctx, storage.DefaultTenantID, src); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Connections.Create(ctx, dst); err != nil {
+	if err := store.Connections.Create(ctx, storage.DefaultTenantID, dst); err != nil {
 		t.Fatal(err)
 	}
 	pipe := &storage.Pipeline{Name: "p1", SourceID: src.ID, DestinationID: dst.ID, Enabled: true}
-	if err := store.Pipelines.Create(ctx, pipe); err != nil {
+	if err := store.Pipelines.Create(ctx, storage.DefaultTenantID, pipe); err != nil {
 		t.Fatal(err)
 	}
 
@@ -130,7 +130,7 @@ func TestDLQ_Retry_RepublishesViaMemoryConnector(t *testing.T) {
 		OriginalMsg: []byte(`{"orig":true}`),
 		ErrorReason: "test failure",
 	}
-	if err := store.DLQ.Insert(ctx, entry); err != nil {
+	if err := store.DLQ.Insert(ctx, storage.DefaultTenantID, entry); err != nil {
 		t.Fatalf("seed dlq: %v", err)
 	}
 
@@ -144,7 +144,7 @@ func TestDLQ_Retry_RepublishesViaMemoryConnector(t *testing.T) {
 	}
 	pool.InjectForTest("dlq-retry-"+entry.ID, mem)
 
-	if err := svc.Retry(ctx, entry.ID); err != nil {
+	if err := svc.Retry(ctx, storage.DefaultTenantID, entry.ID); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
 
@@ -154,7 +154,7 @@ func TestDLQ_Retry_RepublishesViaMemoryConnector(t *testing.T) {
 	}
 
 	// retry_count should have been incremented.
-	reloaded, _ := store.DLQ.Get(ctx, entry.ID)
+	reloaded, _ := store.DLQ.Get(ctx, storage.DefaultTenantID, entry.ID)
 	if reloaded.RetryCount != 1 {
 		t.Errorf("retry_count = %d, want 1", reloaded.RetryCount)
 	}
@@ -166,12 +166,12 @@ func TestDLQ_Delete(t *testing.T) {
 
 	ctx := context.Background()
 	e := &storage.DLQEntry{OriginalMsg: []byte("x"), ErrorReason: "y"}
-	_ = store.DLQ.Insert(ctx, e)
+	_ = store.DLQ.Insert(ctx, storage.DefaultTenantID, e)
 
-	if err := svc.Delete(ctx, e.ID); err != nil {
+	if err := svc.Delete(ctx, storage.DefaultTenantID, e.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := store.DLQ.Get(ctx, e.ID); err == nil {
+	if _, err := store.DLQ.Get(ctx, storage.DefaultTenantID, e.ID); err == nil {
 		t.Error("entry should be gone")
 	}
 }

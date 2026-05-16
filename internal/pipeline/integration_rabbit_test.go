@@ -70,20 +70,20 @@ func TestIntegration_RabbitMQ_FilterRoundTrip(t *testing.T) {
 
 	src := &storage.Connection{Name: "src", Type: "rabbitmq", URL: url, QueueName: srcQ}
 	dst := &storage.Connection{Name: "dst", Type: "rabbitmq", URL: url, QueueName: dstQ}
-	if err := store.Connections.Create(ctx, src); err != nil {
+	if err := store.Connections.Create(ctx, storage.DefaultTenantID, src); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Connections.Create(ctx, dst); err != nil {
+	if err := store.Connections.Create(ctx, storage.DefaultTenantID, dst); err != nil {
 		t.Fatal(err)
 	}
 	pipe := &storage.Pipeline{Name: "integ", SourceID: src.ID, DestinationID: dst.ID, Enabled: true}
-	if err := store.Pipelines.Create(ctx, pipe); err != nil {
+	if err := store.Pipelines.Create(ctx, storage.DefaultTenantID, pipe); err != nil {
 		t.Fatal(err)
 	}
 	stages := []*storage.Stage{
 		{StageOrder: 1, StageType: "filter", StageConfig: `{"paths":["secret"]}`, Enabled: true},
 	}
-	if err := store.Stages.ReplaceForPipeline(ctx, pipe.ID, stages); err != nil {
+	if err := store.Stages.ReplaceForPipeline(ctx, storage.DefaultTenantID, pipe.ID, stages); err != nil {
 		t.Fatal(err)
 	}
 

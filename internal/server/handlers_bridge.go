@@ -7,13 +7,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"mqConnector/internal/auth"
 	"mqConnector/internal/pipeline"
 	"mqConnector/internal/storage"
 )
 
 func (s *Server) handleBridgePublish(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "connectionId")
-	conn, err := s.store.Connections.Get(r.Context(), id)
+	conn, err := s.store.Connections.Get(r.Context(), tenant, id)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "connection not found")
@@ -47,8 +49,9 @@ func (s *Server) handleBridgePublish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBridgeConsume(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "connectionId")
-	conn, err := s.store.Connections.Get(r.Context(), id)
+	conn, err := s.store.Connections.Get(r.Context(), tenant, id)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "connection not found")

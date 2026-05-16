@@ -57,10 +57,10 @@ func TestE2E_UploadSchema_FilterAndRoute(t *testing.T) {
 		Name: "orders-dest", Type: "rabbitmq",
 		URL: "amqp://x", QueueName: "orders.dst",
 	}
-	if err := store.Connections.Create(ctx, src); err != nil {
+	if err := store.Connections.Create(ctx, storage.DefaultTenantID, src); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Connections.Create(ctx, dst); err != nil {
+	if err := store.Connections.Create(ctx, storage.DefaultTenantID, dst); err != nil {
 		t.Fatal(err)
 	}
 
@@ -79,7 +79,7 @@ func TestE2E_UploadSchema_FilterAndRoute(t *testing.T) {
 		SchemaType: "json_schema",
 		Content:    schemaContent,
 	}
-	if err := store.Schemas.Create(ctx, schema); err != nil {
+	if err := store.Schemas.Create(ctx, storage.DefaultTenantID, schema); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
 
@@ -93,7 +93,7 @@ func TestE2E_UploadSchema_FilterAndRoute(t *testing.T) {
 		SchemaID:      schema.ID,
 		Enabled:       true,
 	}
-	if err := store.Pipelines.Create(ctx, pipe); err != nil {
+	if err := store.Pipelines.Create(ctx, storage.DefaultTenantID, pipe); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +110,7 @@ func TestE2E_UploadSchema_FilterAndRoute(t *testing.T) {
 		{StageOrder: 2, StageType: "filter", StageConfig: string(filterCfg), Enabled: true},
 		{StageOrder: 3, StageType: "transform", Enabled: true},
 	}
-	if err := store.Stages.ReplaceForPipeline(ctx, pipe.ID, stages); err != nil {
+	if err := store.Stages.ReplaceForPipeline(ctx, storage.DefaultTenantID, pipe.ID, stages); err != nil {
 		t.Fatalf("replace stages: %v", err)
 	}
 
@@ -129,7 +129,7 @@ func TestE2E_UploadSchema_FilterAndRoute(t *testing.T) {
 			Order:         2,
 		},
 	}
-	if err := store.Transforms.ReplaceForPipeline(ctx, pipe.ID, transforms); err != nil {
+	if err := store.Transforms.ReplaceForPipeline(ctx, storage.DefaultTenantID, pipe.ID, transforms); err != nil {
 		t.Fatalf("replace transforms: %v", err)
 	}
 
@@ -187,7 +187,7 @@ func TestE2E_UploadSchema_FilterAndRoute(t *testing.T) {
 	// ----- 6. Wait for the pipeline to drain ----------------------------
 	// We expect 2 successful messages on dst + 1 DLQ entry.
 	if err := waitFor(t, 3*time.Second, func() bool {
-		dlqList, _, _ := store.DLQ.List(ctx, 1, 10)
+		dlqList, _, _ := store.DLQ.List(ctx, storage.DefaultTenantID, 1, 10)
 		drained := reg.Drain(dst.QueueName)
 		// drained messages we already removed — put them back so the test
 		// assertions below can re-read them. (Simpler: pull once at the end.)
@@ -196,7 +196,7 @@ func TestE2E_UploadSchema_FilterAndRoute(t *testing.T) {
 		}
 		return len(drained) >= 2 && len(dlqList) >= 1
 	}); err != nil {
-		dlqList, _, _ := store.DLQ.List(ctx, 1, 10)
+		dlqList, _, _ := store.DLQ.List(ctx, storage.DefaultTenantID, 1, 10)
 		drained := reg.Drain(dst.QueueName)
 		t.Fatalf("pipeline did not drain in time: dst=%d dlq=%d", len(drained), len(dlqList))
 	}
@@ -242,7 +242,7 @@ func TestE2E_UploadSchema_FilterAndRoute(t *testing.T) {
 	}
 
 	// ----- 8. Assertions on DLQ ----------------------------------------
-	dlqEntries, total, err := store.DLQ.List(ctx, 1, 10)
+	dlqEntries, total, err := store.DLQ.List(ctx, storage.DefaultTenantID, 1, 10)
 	if err != nil {
 		t.Fatalf("list dlq: %v", err)
 	}

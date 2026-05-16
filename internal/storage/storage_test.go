@@ -35,14 +35,14 @@ func TestConnections_CRUD(t *testing.T) {
 	ctx := context.Background()
 
 	c := &Connection{Name: "ibm-prod", Type: "ibm", QueueManager: "QM1"}
-	if err := s.Connections.Create(ctx, c); err != nil {
+	if err := s.Connections.Create(ctx, DefaultTenantID, c); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if c.ID == "" {
 		t.Fatal("Create should assign ID")
 	}
 
-	got, err := s.Connections.Get(ctx, c.ID)
+	got, err := s.Connections.Get(ctx, DefaultTenantID, c.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -51,11 +51,11 @@ func TestConnections_CRUD(t *testing.T) {
 	}
 
 	got.Name = "renamed"
-	if err := s.Connections.Update(ctx, got); err != nil {
+	if err := s.Connections.Update(ctx, DefaultTenantID, got); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
-	all, err := s.Connections.List(ctx)
+	all, err := s.Connections.List(ctx, DefaultTenantID)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -63,10 +63,10 @@ func TestConnections_CRUD(t *testing.T) {
 		t.Errorf("expected one renamed connection, got %#v", all)
 	}
 
-	if err := s.Connections.Delete(ctx, c.ID); err != nil {
+	if err := s.Connections.Delete(ctx, DefaultTenantID, c.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := s.Connections.Get(ctx, c.ID); err != ErrNotFound {
+	if _, err := s.Connections.Get(ctx, DefaultTenantID, c.ID); err != ErrNotFound {
 		t.Errorf("expected ErrNotFound after delete, got %v", err)
 	}
 }
@@ -77,8 +77,8 @@ func TestPipelines_CRUD(t *testing.T) {
 
 	src := &Connection{Name: "src", Type: "rabbitmq"}
 	dst := &Connection{Name: "dst", Type: "kafka"}
-	_ = s.Connections.Create(ctx, src)
-	_ = s.Connections.Create(ctx, dst)
+	_ = s.Connections.Create(ctx, DefaultTenantID, src)
+	_ = s.Connections.Create(ctx, DefaultTenantID, dst)
 
 	p := &Pipeline{
 		Name:          "p1",
@@ -87,11 +87,11 @@ func TestPipelines_CRUD(t *testing.T) {
 		FilterPaths:   []string{"a.b", "c"},
 		Enabled:       true,
 	}
-	if err := s.Pipelines.Create(ctx, p); err != nil {
+	if err := s.Pipelines.Create(ctx, DefaultTenantID, p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	got, err := s.Pipelines.Get(ctx, p.ID)
+	got, err := s.Pipelines.Get(ctx, DefaultTenantID, p.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -104,10 +104,10 @@ func TestPipelines_CRUD(t *testing.T) {
 		{StageOrder: 1, StageType: "filter", StageConfig: `{}`, Enabled: true},
 		{StageOrder: 2, StageType: "transform", StageConfig: `{}`, Enabled: true},
 	}
-	if err := s.Stages.ReplaceForPipeline(ctx, p.ID, stages); err != nil {
+	if err := s.Stages.ReplaceForPipeline(ctx, DefaultTenantID, p.ID, stages); err != nil {
 		t.Fatalf("ReplaceStages: %v", err)
 	}
-	listed, err := s.Stages.ListByPipeline(ctx, p.ID)
+	listed, err := s.Stages.ListByPipeline(ctx, DefaultTenantID, p.ID)
 	if err != nil {
 		t.Fatalf("ListByPipeline: %v", err)
 	}
@@ -125,13 +125,13 @@ func TestDLQ_InsertAndIncrementRetry(t *testing.T) {
 		OriginalMsg: []byte("payload"),
 		ErrorReason: "validation failed",
 	}
-	if err := s.DLQ.Insert(ctx, e); err != nil {
+	if err := s.DLQ.Insert(ctx, DefaultTenantID, e); err != nil {
 		t.Fatalf("Insert: %v", err)
 	}
-	if err := s.DLQ.IncrementRetry(ctx, e.ID); err != nil {
+	if err := s.DLQ.IncrementRetry(ctx, DefaultTenantID, e.ID); err != nil {
 		t.Fatalf("IncrementRetry: %v", err)
 	}
-	got, err := s.DLQ.Get(ctx, e.ID)
+	got, err := s.DLQ.Get(ctx, DefaultTenantID, e.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}

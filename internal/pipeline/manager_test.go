@@ -30,13 +30,13 @@ func TestManager_Reload_StartsEnabledPipelinesOnly(t *testing.T) {
 
 	src := &storage.Connection{Name: "src", Type: "rabbitmq", URL: "amqp://x", QueueName: "src-q"}
 	dst := &storage.Connection{Name: "dst", Type: "rabbitmq", URL: "amqp://x", QueueName: "dst-q"}
-	_ = store.Connections.Create(ctx, src)
-	_ = store.Connections.Create(ctx, dst)
+	_ = store.Connections.Create(ctx, storage.DefaultTenantID, src)
+	_ = store.Connections.Create(ctx, storage.DefaultTenantID, dst)
 
 	enabled := &storage.Pipeline{Name: "enabled-pipe", SourceID: src.ID, DestinationID: dst.ID, Enabled: true}
 	disabled := &storage.Pipeline{Name: "disabled-pipe", SourceID: src.ID, DestinationID: dst.ID, Enabled: false}
-	_ = store.Pipelines.Create(ctx, enabled)
-	_ = store.Pipelines.Create(ctx, disabled)
+	_ = store.Pipelines.Create(ctx, storage.DefaultTenantID, enabled)
+	_ = store.Pipelines.Create(ctx, storage.DefaultTenantID, disabled)
 
 	// Preseat memory connectors in the pool so the executor doesn't try to
 	// dial a real broker.

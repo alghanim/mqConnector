@@ -12,16 +12,23 @@ import (
 
 type DLQRepo struct{ db *sql.DB }
 
-func (r *DLQRepo) Insert(ctx context.Context, e *DLQEntry) error {
+// Insert writes a DLQ entry. tenantID is required — DLQ entries always
+// originate from a tenant-owned pipeline (or carry the default tenant
+// when the pipeline_id is empty, e.g. for bridge endpoint failures).
+func (r *DLQRepo) Insert(ctx context.Context, tenantID string, e *DLQEntry) error {
+	if tenantID == "" {
+		return ErrTenantRequired
+	}
 	if e.ID == "" {
 		e.ID = uuid.NewString()
 	}
+	e.TenantID = tenantID
 	e.CreatedAt = time.Now().UTC()
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO dlq (id, pipeline_id, source_queue, original_msg, error_reason,
+		INSERT INTO dlq (id, tenant_id, pipeline_id, source_queue, original_msg, error_reason,
 		                 retry_count, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, nullable(e.PipelineID), e.SourceQueue, e.OriginalMsg, e.ErrorReason,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, tenantID, nullable(e.PipelineID), e.SourceQueue, e.OriginalMsg, e.ErrorReason,
 		e.RetryCount, e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert dlq: %w", err)
@@ -29,12 +36,23 @@ func (r *DLQRepo) Insert(ctx context.Context, e *DLQEntry) error {
 	return nil
 }
 
-func (r *DLQRepo) Get(ctx context.Context, id string) (*DLQEntry, error) {
+func (r *DLQRepo) Get(ctx context.Context, tenantID, id string) (*DLQEntry, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	row := r.db.QueryRowContext(ctx, dlqSelect+` WHERE id=? AND tenant_id=?`, id, tenantID)
+	return scanDLQ(row)
+}
+
+// GetUnsafe — internal callers (DLQ retry executor) that already have a
+// tenant-scoped id.
+func (r *DLQRepo) GetUnsafe(ctx context.Context, id string) (*DLQEntry, error) {
 	row := r.db.QueryRowContext(ctx, dlqSelect+` WHERE id=?`, id)
 	return scanDLQ(row)
 }
 
-// DLQFilter narrows a List query. Zero-valued fields mean "any".
+// DLQFilter narrows a List query. Zero-valued fields mean "any" (within
+// the tenant the caller is asking about).
 //   - PipelineID: exact match.
 //   - Error: case-insensitive substring match against error_reason.
 //   - Since / Until: half-open time window over created_at.
@@ -45,14 +63,15 @@ type DLQFilter struct {
 	Until      *time.Time
 }
 
-// List returns DLQ entries matching f, newest-first, with the total count
-// for the filter (independent of pagination).
-func (r *DLQRepo) List(ctx context.Context, page, perPage int) ([]*DLQEntry, int, error) {
-	return r.ListFiltered(ctx, DLQFilter{}, page, perPage)
+// List returns DLQ entries for the named tenant, newest-first.
+func (r *DLQRepo) List(ctx context.Context, tenantID string, page, perPage int) ([]*DLQEntry, int, error) {
+	return r.ListFiltered(ctx, tenantID, DLQFilter{}, page, perPage)
 }
 
-// ListFiltered is the full-fidelity list with optional predicates.
-func (r *DLQRepo) ListFiltered(ctx context.Context, f DLQFilter, page, perPage int) ([]*DLQEntry, int, error) {
+func (r *DLQRepo) ListFiltered(ctx context.Context, tenantID string, f DLQFilter, page, perPage int) ([]*DLQEntry, int, error) {
+	if tenantID == "" {
+		return nil, 0, ErrTenantRequired
+	}
 	if page < 1 {
 		page = 1
 	}
@@ -60,16 +79,13 @@ func (r *DLQRepo) ListFiltered(ctx context.Context, f DLQFilter, page, perPage i
 		perPage = 20
 	}
 
-	where := "1=1"
-	args := []any{}
+	where := "tenant_id = ?"
+	args := []any{tenantID}
 	if f.PipelineID != "" {
 		where += " AND pipeline_id = ?"
 		args = append(args, f.PipelineID)
 	}
 	if f.Error != "" {
-		// LOWER(...) LIKE LOWER(?) for case-insensitive contains. SQLite
-		// indexes don't accelerate this; the table is small enough
-		// (capped by retention) that a scan is fine.
 		where += " AND LOWER(error_reason) LIKE LOWER(?)"
 		args = append(args, "%"+f.Error+"%")
 	}
@@ -108,8 +124,12 @@ func (r *DLQRepo) ListFiltered(ctx context.Context, f DLQFilter, page, perPage i
 	return out, total, rows.Err()
 }
 
-func (r *DLQRepo) Delete(ctx context.Context, id string) error {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM dlq WHERE id=?`, id)
+func (r *DLQRepo) Delete(ctx context.Context, tenantID, id string) error {
+	if tenantID == "" {
+		return ErrTenantRequired
+	}
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM dlq WHERE id=? AND tenant_id=?`, id, tenantID)
 	if err != nil {
 		return fmt.Errorf("delete dlq: %w", err)
 	}
@@ -121,7 +141,8 @@ func (r *DLQRepo) Delete(ctx context.Context, id string) error {
 }
 
 // PruneOlderThan deletes DLQ rows older than cutoff. Returns the count
-// removed. cutoff in the future or zero is a no-op.
+// removed. Runs across every tenant — retention is a system-level job
+// configured globally, not per-tenant.
 func (r *DLQRepo) PruneOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	if cutoff.IsZero() {
 		return 0, nil
@@ -134,8 +155,6 @@ func (r *DLQRepo) PruneOlderThan(ctx context.Context, cutoff time.Time) (int64, 
 	return n, nil
 }
 
-// PruneToMaxRows keeps the newest `maxRows` rows and deletes the rest.
-// maxRows <= 0 is a no-op.
 func (r *DLQRepo) PruneToMaxRows(ctx context.Context, maxRows int) (int64, error) {
 	if maxRows <= 0 {
 		return 0, nil
@@ -154,11 +173,14 @@ func (r *DLQRepo) PruneToMaxRows(ctx context.Context, maxRows int) (int64, error
 	return n, nil
 }
 
-func (r *DLQRepo) IncrementRetry(ctx context.Context, id string) error {
+func (r *DLQRepo) IncrementRetry(ctx context.Context, tenantID, id string) error {
+	if tenantID == "" {
+		return ErrTenantRequired
+	}
 	now := time.Now().UTC()
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE dlq SET retry_count = retry_count + 1, last_retry_at = ? WHERE id=?`,
-		now, id)
+		`UPDATE dlq SET retry_count = retry_count + 1, last_retry_at = ? WHERE id=? AND tenant_id=?`,
+		now, id, tenantID)
 	if err != nil {
 		return fmt.Errorf("increment retry: %w", err)
 	}
@@ -170,14 +192,14 @@ func (r *DLQRepo) IncrementRetry(ctx context.Context, id string) error {
 }
 
 const dlqSelect = `
-SELECT id, COALESCE(pipeline_id, ''), source_queue, original_msg, error_reason,
+SELECT id, tenant_id, COALESCE(pipeline_id, ''), source_queue, original_msg, error_reason,
        retry_count, last_retry_at, created_at
 FROM dlq`
 
 func scanDLQ(s scanner) (*DLQEntry, error) {
 	e := &DLQEntry{}
 	var lastRetry sql.NullTime
-	err := s.Scan(&e.ID, &e.PipelineID, &e.SourceQueue, &e.OriginalMsg,
+	err := s.Scan(&e.ID, &e.TenantID, &e.PipelineID, &e.SourceQueue, &e.OriginalMsg,
 		&e.ErrorReason, &e.RetryCount, &lastRetry, &e.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound

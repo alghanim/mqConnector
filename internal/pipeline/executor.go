@@ -127,6 +127,7 @@ func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
 		logger.Warn("stage failed, sending to DLQ", "err", runErr)
 		if e.DLQ != nil {
 			_ = e.DLQ.Push(ctx, storage.DLQEntry{
+				TenantID:    e.Pipeline.TenantID,
 				PipelineID:  e.Pipeline.ID,
 				SourceQueue: e.SourceQueue,
 				OriginalMsg: message,
@@ -163,6 +164,7 @@ func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
 	if sendErr != nil {
 		if e.DLQ != nil {
 			_ = e.DLQ.Push(ctx, storage.DLQEntry{
+				TenantID:    e.Pipeline.TenantID,
 				PipelineID:  e.Pipeline.ID,
 				SourceQueue: e.SourceQueue,
 				OriginalMsg: message,

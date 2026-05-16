@@ -11,11 +11,11 @@ func TestTransforms_ReplaceForPipeline(t *testing.T) {
 
 	src := &Connection{Name: "src", Type: "rabbitmq"}
 	dst := &Connection{Name: "dst", Type: "kafka"}
-	_ = s.Connections.Create(ctx, src)
-	_ = s.Connections.Create(ctx, dst)
+	_ = s.Connections.Create(ctx, DefaultTenantID, src)
+	_ = s.Connections.Create(ctx, DefaultTenantID, dst)
 
 	p := &Pipeline{Name: "p", SourceID: src.ID, DestinationID: dst.ID, Enabled: true}
-	if err := s.Pipelines.Create(ctx, p); err != nil {
+	if err := s.Pipelines.Create(ctx, DefaultTenantID, p); err != nil {
 		t.Fatal(err)
 	}
 
@@ -23,10 +23,10 @@ func TestTransforms_ReplaceForPipeline(t *testing.T) {
 		{TransformType: "rename", SourcePath: "a", TargetPath: "b", Order: 1},
 		{TransformType: "mask", SourcePath: "c", MaskPattern: ".", MaskReplace: "*", Order: 2},
 	}
-	if err := s.Transforms.ReplaceForPipeline(ctx, p.ID, rules); err != nil {
+	if err := s.Transforms.ReplaceForPipeline(ctx, DefaultTenantID, p.ID, rules); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Transforms.ListByPipeline(ctx, p.ID)
+	got, err := s.Transforms.ListByPipeline(ctx, DefaultTenantID, p.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,10 +38,10 @@ func TestTransforms_ReplaceForPipeline(t *testing.T) {
 	}
 
 	// Replace shrinks/clears prior rules.
-	if err := s.Transforms.ReplaceForPipeline(ctx, p.ID, nil); err != nil {
+	if err := s.Transforms.ReplaceForPipeline(ctx, DefaultTenantID, p.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = s.Transforms.ListByPipeline(ctx, p.ID)
+	got, _ = s.Transforms.ListByPipeline(ctx, DefaultTenantID, p.ID)
 	if len(got) != 0 {
 		t.Errorf("expected empty after replace, got %d", len(got))
 	}
@@ -55,13 +55,13 @@ func TestRoutingRules_ReplaceForPipeline(t *testing.T) {
 	dst1 := &Connection{Name: "dst1", Type: "kafka"}
 	dst2 := &Connection{Name: "dst2", Type: "kafka"}
 	for _, c := range []*Connection{src, dst1, dst2} {
-		if err := s.Connections.Create(ctx, c); err != nil {
+		if err := s.Connections.Create(ctx, DefaultTenantID, c); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	p := &Pipeline{Name: "p", SourceID: src.ID, DestinationID: dst1.ID, Enabled: true}
-	if err := s.Pipelines.Create(ctx, p); err != nil {
+	if err := s.Pipelines.Create(ctx, DefaultTenantID, p); err != nil {
 		t.Fatal(err)
 	}
 
@@ -69,10 +69,10 @@ func TestRoutingRules_ReplaceForPipeline(t *testing.T) {
 		{ConditionPath: "region", ConditionOperator: "eq", ConditionValue: "EU", DestinationID: dst1.ID, Priority: 10, Enabled: true},
 		{ConditionPath: "region", ConditionOperator: "eq", ConditionValue: "US", DestinationID: dst2.ID, Priority: 20, Enabled: true},
 	}
-	if err := s.RoutingRules.ReplaceForPipeline(ctx, p.ID, rules); err != nil {
+	if err := s.RoutingRules.ReplaceForPipeline(ctx, DefaultTenantID, p.ID, rules); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.RoutingRules.ListByPipeline(ctx, p.ID)
+	got, _ := s.RoutingRules.ListByPipeline(ctx, DefaultTenantID, p.ID)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 routing rules, got %d", len(got))
 	}
@@ -86,10 +86,10 @@ func TestScripts_CRUD(t *testing.T) {
 	ctx := context.Background()
 
 	sc := &Script{Name: "noop", Body: "msg.x = 1;", Enabled: true}
-	if err := s.Scripts.Create(ctx, sc); err != nil {
+	if err := s.Scripts.Create(ctx, DefaultTenantID, sc); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Scripts.Get(ctx, sc.ID)
+	got, err := s.Scripts.Get(ctx, DefaultTenantID, sc.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,13 +98,13 @@ func TestScripts_CRUD(t *testing.T) {
 	}
 
 	got.Body = "msg.y = 2;"
-	if err := s.Scripts.Update(ctx, got); err != nil {
+	if err := s.Scripts.Update(ctx, DefaultTenantID, got); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Scripts.Delete(ctx, got.ID); err != nil {
+	if err := s.Scripts.Delete(ctx, DefaultTenantID, got.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Scripts.Get(ctx, got.ID); err != ErrNotFound {
+	if _, err := s.Scripts.Get(ctx, DefaultTenantID, got.ID); err != ErrNotFound {
 		t.Errorf("expected ErrNotFound after delete: %v", err)
 	}
 }
@@ -114,22 +114,22 @@ func TestSchemas_CRUD(t *testing.T) {
 	ctx := context.Background()
 
 	sc := &Schema{Name: "order", SchemaType: "json_schema", Content: `{"type":"object"}`}
-	if err := s.Schemas.Create(ctx, sc); err != nil {
+	if err := s.Schemas.Create(ctx, DefaultTenantID, sc); err != nil {
 		t.Fatal(err)
 	}
-	all, _ := s.Schemas.List(ctx)
+	all, _ := s.Schemas.List(ctx, DefaultTenantID)
 	if len(all) != 1 {
 		t.Errorf("expected 1 schema, got %d", len(all))
 	}
 	sc.Content = `{"type":"object","required":["id"]}`
-	if err := s.Schemas.Update(ctx, sc); err != nil {
+	if err := s.Schemas.Update(ctx, DefaultTenantID, sc); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.Schemas.Get(ctx, sc.ID)
+	got, _ := s.Schemas.Get(ctx, DefaultTenantID, sc.ID)
 	if got.Content != sc.Content {
 		t.Errorf("content roundtrip failed")
 	}
-	_ = s.Schemas.Delete(ctx, sc.ID)
+	_ = s.Schemas.Delete(ctx, DefaultTenantID, sc.ID)
 }
 
 func TestStages_ReplaceForPipeline(t *testing.T) {
@@ -137,29 +137,29 @@ func TestStages_ReplaceForPipeline(t *testing.T) {
 	ctx := context.Background()
 	src := &Connection{Name: "src", Type: "rabbitmq"}
 	dst := &Connection{Name: "dst", Type: "kafka"}
-	_ = s.Connections.Create(ctx, src)
-	_ = s.Connections.Create(ctx, dst)
+	_ = s.Connections.Create(ctx, DefaultTenantID, src)
+	_ = s.Connections.Create(ctx, DefaultTenantID, dst)
 	p := &Pipeline{Name: "p", SourceID: src.ID, DestinationID: dst.ID, Enabled: true}
-	_ = s.Pipelines.Create(ctx, p)
+	_ = s.Pipelines.Create(ctx, DefaultTenantID, p)
 
 	stages := []*Stage{
 		{StageOrder: 1, StageType: "filter", StageConfig: `{"paths":["a"]}`, Enabled: true},
 		{StageOrder: 2, StageType: "transform", Enabled: true},
 	}
-	if err := s.Stages.ReplaceForPipeline(ctx, p.ID, stages); err != nil {
+	if err := s.Stages.ReplaceForPipeline(ctx, DefaultTenantID, p.ID, stages); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.Stages.ListByPipeline(ctx, p.ID)
+	got, _ := s.Stages.ListByPipeline(ctx, DefaultTenantID, p.ID)
 	if len(got) != 2 {
 		t.Errorf("expected 2 stages, got %d", len(got))
 	}
 
 	// Replace clears and rewrites.
 	stages = []*Stage{{StageOrder: 1, StageType: "translate", Enabled: true}}
-	if err := s.Stages.ReplaceForPipeline(ctx, p.ID, stages); err != nil {
+	if err := s.Stages.ReplaceForPipeline(ctx, DefaultTenantID, p.ID, stages); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = s.Stages.ListByPipeline(ctx, p.ID)
+	got, _ = s.Stages.ListByPipeline(ctx, DefaultTenantID, p.ID)
 	if len(got) != 1 || got[0].StageType != "translate" {
 		t.Errorf("replace did not overwrite: %v", got)
 	}
@@ -170,19 +170,19 @@ func TestPipelines_DeleteCascadesStages(t *testing.T) {
 	ctx := context.Background()
 	src := &Connection{Name: "src", Type: "rabbitmq"}
 	dst := &Connection{Name: "dst", Type: "kafka"}
-	_ = s.Connections.Create(ctx, src)
-	_ = s.Connections.Create(ctx, dst)
+	_ = s.Connections.Create(ctx, DefaultTenantID, src)
+	_ = s.Connections.Create(ctx, DefaultTenantID, dst)
 
 	p := &Pipeline{Name: "p", SourceID: src.ID, DestinationID: dst.ID, Enabled: true}
-	_ = s.Pipelines.Create(ctx, p)
+	_ = s.Pipelines.Create(ctx, DefaultTenantID, p)
 
-	_ = s.Stages.ReplaceForPipeline(ctx, p.ID, []*Stage{
+	_ = s.Stages.ReplaceForPipeline(ctx, DefaultTenantID, p.ID, []*Stage{
 		{StageOrder: 1, StageType: "filter", Enabled: true},
 	})
-	_ = s.Pipelines.Delete(ctx, p.ID)
+	_ = s.Pipelines.Delete(ctx, DefaultTenantID, p.ID)
 
 	// Stages should be gone via ON DELETE CASCADE.
-	got, _ := s.Stages.ListByPipeline(ctx, p.ID)
+	got, _ := s.Stages.ListByPipeline(ctx, DefaultTenantID, p.ID)
 	if len(got) != 0 {
 		t.Errorf("expected stages to be cascade-deleted, got %d", len(got))
 	}

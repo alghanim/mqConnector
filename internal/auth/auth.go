@@ -37,10 +37,11 @@ const refreshCookieSuffix = "_refresh"
 
 // Service is the auth backend. Construct with NewService.
 type Service struct {
-	client     authClient
-	cookieName string
-	sessionTTL time.Duration
-	secure     bool
+	client         authClient
+	cookieName     string
+	sessionTTL     time.Duration
+	secure         bool
+	tenantResolver TenantResolver // optional; nil = single-tenant fallback
 }
 
 // Options bundle the constructor arguments. Secure controls the cookie Secure
@@ -243,4 +244,38 @@ func WithUser(ctx context.Context, user *simpleauth.User) context.Context {
 func UserFromContext(ctx context.Context) (*simpleauth.User, bool) {
 	u, ok := ctx.Value(userKey{}).(*simpleauth.User)
 	return u, ok
+}
+
+// tenantKey carries the resolved tenant id (and the caller's role in
+// that tenant) through the request context. Populated by middleware
+// after RequireSession has run.
+type tenantKey struct{}
+
+// TenantClaim is what the handler reads.
+type TenantClaim struct {
+	TenantID string
+	Role     string // "viewer" | "operator" | "admin" | "owner"
+}
+
+// WithTenant attaches the active tenant claim to ctx.
+func WithTenant(ctx context.Context, c TenantClaim) context.Context {
+	return context.WithValue(ctx, tenantKey{}, c)
+}
+
+// TenantFromContext returns the active tenant claim. If no claim is
+// present (e.g. an internal call path that bypassed the middleware),
+// the second return is false and the caller should refuse the request.
+// Public handlers should treat the boolean as authoritative.
+func TenantFromContext(ctx context.Context) (TenantClaim, bool) {
+	c, ok := ctx.Value(tenantKey{}).(TenantClaim)
+	return c, ok
+}
+
+// TenantID is a sugar helper for the common case where the handler only
+// needs the id and trusts the middleware ran. Returns "" if no tenant
+// is in the context; the storage layer then rejects with
+// ErrTenantRequired, which propagates as a 400/401.
+func TenantID(ctx context.Context) string {
+	c, _ := TenantFromContext(ctx)
+	return c.TenantID
 }

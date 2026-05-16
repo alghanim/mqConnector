@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"mqConnector/internal/auth"
 	"mqConnector/internal/storage"
 )
 
@@ -35,7 +36,11 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(q.Get("page"))
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
 
-	list, total, err := s.store.Audit.List(r.Context(), f, page, perPage)
+	// Tenant-scoped: a regular member sees only their tenant's audit.
+	// (System-admin "see everything" comes in Phase 16b — for now the
+	// owner of the default tenant gets the closest approximation.)
+	tenant := auth.TenantID(r.Context())
+	list, total, err := s.store.Audit.List(r.Context(), tenant, f, page, perPage)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -41,12 +41,20 @@ func loadReferencedSchemas(
 
 	out := make(map[string]*storage.Schema, len(wanted))
 	for id := range wanted {
-		s, err := store.Schemas.Get(ctx, id)
+		// GetUnsafe: this is system-level pipeline boot. The schema's
+		// tenant is verified against the pipeline's tenant below.
+		s, err := store.Schemas.GetUnsafe(ctx, id)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				return nil, fmt.Errorf("schema %q referenced by pipeline but not found in storage", id)
 			}
 			return nil, fmt.Errorf("load schema %q: %w", id, err)
+		}
+		// Only enforce the cross-tenant check when BOTH sides carry a
+		// tenant id. A pipeline with an empty tenant (preview drafts,
+		// legacy inline-config callers) cannot meaningfully mismatch.
+		if p != nil && p.TenantID != "" && s.TenantID != "" && s.TenantID != p.TenantID {
+			return nil, fmt.Errorf("cross-tenant schema reference on pipeline %s (schema %s belongs to a different tenant)", p.ID, id)
 		}
 		out[id] = s
 	}

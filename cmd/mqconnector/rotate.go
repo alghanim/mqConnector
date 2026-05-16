@@ -89,7 +89,9 @@ func rotateSecrets() error {
 	store.Connections = store.Connections.WithSealer(oldSealer)
 
 	ctx := context.Background()
-	rows, err := store.Connections.List(ctx)
+	// System-level walk across every tenant — rotation is a privileged
+	// op, run only by an operator with direct access to the SQLite file.
+	rows, err := store.Connections.ListAll(ctx)
 	if err != nil {
 		return fmt.Errorf("list connections: %w", err)
 	}
@@ -97,16 +99,17 @@ func rotateSecrets() error {
 
 	if *dryRun {
 		for _, c := range rows {
-			logger.Info("would rotate", "id", c.ID, "name", c.Name, "type", c.Type, "has_password", c.Password != "")
+			logger.Info("would rotate", "id", c.ID, "name", c.Name, "tenant_id", c.TenantID, "type", c.Type, "has_password", c.Password != "")
 		}
 		fmt.Fprintf(os.Stderr, "dry-run: %d connection(s) would be rotated\n", len(rows))
 		return nil
 	}
 
-	// Swap the sealer for writes. Update each row in place.
+	// Swap the sealer for writes. Update each row in place, scoped to
+	// its own tenant.
 	store.Connections = store.Connections.WithSealer(newSealer)
 	for _, c := range rows {
-		if err := store.Connections.Update(ctx, c); err != nil {
+		if err := store.Connections.Update(ctx, c.TenantID, c); err != nil {
 			return fmt.Errorf("rewrite connection %s (%s): %w", c.ID, c.Name, err)
 		}
 		logger.Info("rotated", "id", c.ID, "name", c.Name, "type", c.Type)

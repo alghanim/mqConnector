@@ -6,11 +6,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"mqConnector/internal/auth"
 	"mqConnector/internal/storage"
 )
 
 func (s *Server) handleListScripts(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.Scripts.List(r.Context())
+	tenant := auth.TenantID(r.Context())
+	list, err := s.store.Scripts.List(r.Context(), tenant)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -19,8 +21,9 @@ func (s *Server) handleListScripts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetScript(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
-	sc, err := s.store.Scripts.Get(r.Context(), id)
+	sc, err := s.store.Scripts.Get(r.Context(), tenant, id)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
@@ -33,6 +36,7 @@ func (s *Server) handleGetScript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateScript(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	var sc storage.Script
 	if err := decodeJSON(r, &sc); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -42,7 +46,7 @@ func (s *Server) handleCreateScript(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if err := s.store.Scripts.Create(r.Context(), &sc); err != nil {
+	if err := s.store.Scripts.Create(r.Context(), tenant, &sc); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -50,6 +54,7 @@ func (s *Server) handleCreateScript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateScript(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
 	var sc storage.Script
 	if err := decodeJSON(r, &sc); err != nil {
@@ -57,7 +62,7 @@ func (s *Server) handleUpdateScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sc.ID = id
-	if err := s.store.Scripts.Update(r.Context(), &sc); err != nil {
+	if err := s.store.Scripts.Update(r.Context(), tenant, &sc); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
 			return
@@ -69,8 +74,9 @@ func (s *Server) handleUpdateScript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteScript(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
-	if err := s.store.Scripts.Delete(r.Context(), id); err != nil {
+	if err := s.store.Scripts.Delete(r.Context(), tenant, id); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
 			return
@@ -82,7 +88,8 @@ func (s *Server) handleDeleteScript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListSchemas(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.Schemas.List(r.Context())
+	tenant := auth.TenantID(r.Context())
+	list, err := s.store.Schemas.List(r.Context(), tenant)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -91,8 +98,9 @@ func (s *Server) handleListSchemas(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
-	sc, err := s.store.Schemas.Get(r.Context(), id)
+	sc, err := s.store.Schemas.Get(r.Context(), tenant, id)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
@@ -105,6 +113,7 @@ func (s *Server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateSchema(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	var sc storage.Schema
 	if err := decodeJSON(r, &sc); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -114,7 +123,7 @@ func (s *Server) handleCreateSchema(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if err := s.store.Schemas.Create(r.Context(), &sc); err != nil {
+	if err := s.store.Schemas.Create(r.Context(), tenant, &sc); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -122,6 +131,7 @@ func (s *Server) handleCreateSchema(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateSchema(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
 	var sc storage.Schema
 	if err := decodeJSON(r, &sc); err != nil {
@@ -129,7 +139,7 @@ func (s *Server) handleUpdateSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sc.ID = id
-	if err := s.store.Schemas.Update(r.Context(), &sc); err != nil {
+	if err := s.store.Schemas.Update(r.Context(), tenant, &sc); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
 			return
@@ -141,8 +151,9 @@ func (s *Server) handleUpdateSchema(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
-	if err := s.store.Schemas.Delete(r.Context(), id); err != nil {
+	if err := s.store.Schemas.Delete(r.Context(), tenant, id); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
 			return

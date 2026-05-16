@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"mqConnector/internal/auth"
 	"mqConnector/internal/dlq"
 	"mqConnector/internal/storage"
 )
@@ -43,7 +44,8 @@ func (s *Server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	list, total, err := s.dlq.ListFiltered(r.Context(), f, page, perPage)
+	tenant := auth.TenantID(r.Context())
+	list, total, err := s.dlq.ListFiltered(r.Context(), tenant, f, page, perPage)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -60,8 +62,9 @@ func (s *Server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
-	if err := s.dlq.Retry(r.Context(), id); err != nil {
+	if err := s.dlq.Retry(r.Context(), tenant, id); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
 			return
@@ -77,8 +80,9 @@ func (s *Server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
-	if err := s.dlq.Delete(r.Context(), id); err != nil {
+	if err := s.dlq.Delete(r.Context(), tenant, id); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
 			return

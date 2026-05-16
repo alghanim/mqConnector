@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"mqConnector/internal/auth"
 	"mqConnector/internal/mq"
 	"mqConnector/internal/storage"
 )
@@ -26,7 +27,8 @@ type connectionDTO struct {
 }
 
 func (s *Server) handleListConnections(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.Connections.List(r.Context())
+	tenant := auth.TenantID(r.Context())
+	list, err := s.store.Connections.List(r.Context(), tenant)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -35,8 +37,9 @@ func (s *Server) handleListConnections(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetConnection(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
-	c, err := s.store.Connections.Get(r.Context(), id)
+	c, err := s.store.Connections.Get(r.Context(), tenant, id)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
@@ -49,6 +52,7 @@ func (s *Server) handleGetConnection(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	var dto connectionDTO
 	if err := decodeJSON(r, &dto); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -63,7 +67,7 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	conn := dtoToConnection(dto)
-	if err := s.store.Connections.Create(r.Context(), conn); err != nil {
+	if err := s.store.Connections.Create(r.Context(), tenant, conn); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -71,6 +75,7 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
 	var dto connectionDTO
 	if err := decodeJSON(r, &dto); err != nil {
@@ -85,7 +90,7 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	conn := dtoToConnection(dto)
-	if err := s.store.Connections.Update(r.Context(), conn); err != nil {
+	if err := s.store.Connections.Update(r.Context(), tenant, conn); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
 			return
@@ -97,8 +102,9 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
-	if err := s.store.Connections.Delete(r.Context(), id); err != nil {
+	if err := s.store.Connections.Delete(r.Context(), tenant, id); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
 			return

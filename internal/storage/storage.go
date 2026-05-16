@@ -22,6 +22,8 @@ type Store struct {
 	Scripts      *ScriptRepo
 	Schemas      *SchemaRepo
 	Audit        *AuditRepo
+	Tenants      *TenantRepo
+	Memberships  *MembershipRepo
 }
 
 // Open opens (and migrates) the database at dsn. The caller must Close it.
@@ -55,6 +57,8 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 		Scripts:      &ScriptRepo{db: db},
 		Schemas:      &SchemaRepo{db: db},
 		Audit:        &AuditRepo{db: db},
+		Tenants:      &TenantRepo{db: db},
+		Memberships:  &MembershipRepo{db: db},
 	}, nil
 }
 

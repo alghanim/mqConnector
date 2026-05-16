@@ -35,7 +35,7 @@ func TestConnections_PasswordEncryptedAtRest(t *testing.T) {
 		QueueManager: "QM1", ConnName: "host(1414)", Channel: "DEV.SVRCONN",
 		Username: "admin", Password: "hunter2", QueueName: "DEV.Q.1",
 	}
-	if err := s.Connections.Create(ctx, c); err != nil {
+	if err := s.Connections.Create(ctx, DefaultTenantID, c); err != nil {
 		t.Fatal(err)
 	}
 
@@ -52,7 +52,7 @@ func TestConnections_PasswordEncryptedAtRest(t *testing.T) {
 	}
 
 	// Get must return plaintext.
-	got, err := s.Connections.Get(ctx, c.ID)
+	got, err := s.Connections.Get(ctx, DefaultTenantID, c.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestConnections_LegacyPlaintextRow_StillReadable(t *testing.T) {
 
 	// Insert directly to mimic a row written before encryption was enabled.
 	c := &Connection{Name: "legacy", Type: "rabbitmq", Password: "old-plain"}
-	if err := s.Connections.Create(ctx, c); err != nil { // no sealer yet
+	if err := s.Connections.Create(ctx, DefaultTenantID, c); err != nil { // no sealer yet
 		t.Fatal(err)
 	}
 
@@ -76,7 +76,7 @@ func TestConnections_LegacyPlaintextRow_StillReadable(t *testing.T) {
 	// value untouched.
 	sealer, _ := secrets.New(keyHex(t))
 	s.Connections = s.Connections.WithSealer(sealer)
-	got, err := s.Connections.Get(ctx, c.ID)
+	got, err := s.Connections.Get(ctx, DefaultTenantID, c.ID)
 	if err != nil {
 		t.Fatalf("read legacy row: %v", err)
 	}
@@ -92,10 +92,10 @@ func TestConnections_UpdateRecryptsOnSave(t *testing.T) {
 
 	ctx := context.Background()
 	c := &Connection{Name: "x", Type: "rabbitmq", Password: "v1-secret"}
-	_ = s.Connections.Create(ctx, c)
+	_ = s.Connections.Create(ctx, DefaultTenantID, c)
 
 	c.Password = "v2-secret"
-	if err := s.Connections.Update(ctx, c); err != nil {
+	if err := s.Connections.Update(ctx, DefaultTenantID, c); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,7 +108,7 @@ func TestConnections_UpdateRecryptsOnSave(t *testing.T) {
 		t.Errorf("plaintext leaked into stored value: %q", raw)
 	}
 
-	got, _ := s.Connections.Get(ctx, c.ID)
+	got, _ := s.Connections.Get(ctx, DefaultTenantID, c.ID)
 	if got.Password != "v2-secret" {
 		t.Errorf("read-back wrong: %q", got.Password)
 	}

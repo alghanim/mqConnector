@@ -11,8 +11,14 @@ import (
 
 // AuditEntry is one immutable record of an admin action. Records are insert-
 // only; no Update or Delete repo methods exist by design.
+//
+// TenantID is the actor's *active* tenant at the time of the action. A
+// global system-admin (one with owner role on the default tenant + a
+// flag we'll add later) sees all rows; a tenant-bounded user sees only
+// rows tagged with their tenant.
 type AuditEntry struct {
 	ID        string    `json:"id"`
+	TenantID  string    `json:"tenant_id"`
 	At        time.Time `json:"at"`
 	Actor     string    `json:"actor"`      // preferred_username
 	ActorSub  string    `json:"actor_sub"`  // JWT sub
@@ -30,9 +36,11 @@ type AuditRepo struct{ db *sql.DB }
 // oldest-first. The callback runs synchronously for each row; returning
 // a non-nil error aborts iteration. Used by the archival exporter so it
 // can stream-to-disk without buffering an unbounded result set.
+//
+// Across all tenants — archival is system-level.
 func (r *AuditRepo) IterOlderThan(ctx context.Context, cutoff time.Time, fn func(*AuditEntry) error) error {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, at, actor, actor_sub, action, resource, status, request_id, remote_ip
+		`SELECT id, tenant_id, at, actor, actor_sub, action, resource, status, request_id, remote_ip
 		 FROM audit_log WHERE at < ? ORDER BY at ASC`, cutoff)
 	if err != nil {
 		return fmt.Errorf("query audit: %w", err)
@@ -40,7 +48,7 @@ func (r *AuditRepo) IterOlderThan(ctx context.Context, cutoff time.Time, fn func
 	defer rows.Close()
 	for rows.Next() {
 		e := &AuditEntry{}
-		if err := rows.Scan(&e.ID, &e.At, &e.Actor, &e.ActorSub, &e.Action,
+		if err := rows.Scan(&e.ID, &e.TenantID, &e.At, &e.Actor, &e.ActorSub, &e.Action,
 			&e.Resource, &e.Status, &e.RequestID, &e.RemoteIP); err != nil {
 			return err
 		}
@@ -51,9 +59,6 @@ func (r *AuditRepo) IterOlderThan(ctx context.Context, cutoff time.Time, fn func
 	return rows.Err()
 }
 
-// DeleteOlderThan removes audit rows strictly older than cutoff. Returns
-// the number of rows removed. Called by the archival exporter after a
-// successful flush so the working table doesn't grow unbounded.
 func (r *AuditRepo) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	res, err := r.db.ExecContext(ctx, `DELETE FROM audit_log WHERE at < ?`, cutoff)
 	if err != nil {
@@ -63,8 +68,13 @@ func (r *AuditRepo) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int6
 	return n, nil
 }
 
-// Insert appends an entry to the log.
+// Insert appends an entry to the log. TenantID is required — even
+// "global" actions (e.g. tenant creation by a system-admin) carry the
+// default tenant id, so every row has a non-null tenant_id.
 func (r *AuditRepo) Insert(ctx context.Context, e *AuditEntry) error {
+	if e.TenantID == "" {
+		e.TenantID = DefaultTenantID
+	}
 	if e.ID == "" {
 		e.ID = uuid.NewString()
 	}
@@ -72,16 +82,18 @@ func (r *AuditRepo) Insert(ctx context.Context, e *AuditEntry) error {
 		e.At = time.Now().UTC()
 	}
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO audit_log (id, at, actor, actor_sub, action, resource, status, request_id, remote_ip)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.At, e.Actor, e.ActorSub, e.Action, e.Resource, e.Status, e.RequestID, e.RemoteIP)
+		INSERT INTO audit_log (id, tenant_id, at, actor, actor_sub, action, resource, status, request_id, remote_ip)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.TenantID, e.At, e.Actor, e.ActorSub, e.Action, e.Resource, e.Status, e.RequestID, e.RemoteIP)
 	if err != nil {
 		return fmt.Errorf("insert audit: %w", err)
 	}
 	return nil
 }
 
-// AuditFilter narrows a List query. Zero values mean "any".
+// AuditFilter narrows a List query. Zero values mean "any" within the
+// tenant the caller is asking about. The caller MUST pass a tenantID
+// (or "*" for system-wide queries — only system-admins set this).
 type AuditFilter struct {
 	Actor    string
 	Resource string
@@ -89,9 +101,13 @@ type AuditFilter struct {
 	Until    *time.Time
 }
 
-// List returns paged audit entries newest-first, plus the total count for
-// the filter (without pagination).
-func (r *AuditRepo) List(ctx context.Context, f AuditFilter, page, perPage int) ([]*AuditEntry, int, error) {
+// List returns paged audit entries newest-first, plus the total count
+// for the filter (without pagination). tenantID="*" means "every
+// tenant" (system-admin only — callers higher up enforce that).
+func (r *AuditRepo) List(ctx context.Context, tenantID string, f AuditFilter, page, perPage int) ([]*AuditEntry, int, error) {
+	if tenantID == "" {
+		return nil, 0, ErrTenantRequired
+	}
 	if page < 1 {
 		page = 1
 	}
@@ -101,6 +117,10 @@ func (r *AuditRepo) List(ctx context.Context, f AuditFilter, page, perPage int) 
 
 	where := "1=1"
 	args := []any{}
+	if tenantID != "*" {
+		where += " AND tenant_id = ?"
+		args = append(args, tenantID)
+	}
 	if f.Actor != "" {
 		where += " AND actor = ?"
 		args = append(args, f.Actor)
@@ -125,7 +145,7 @@ func (r *AuditRepo) List(ctx context.Context, f AuditFilter, page, perPage int) 
 
 	offset := (page - 1) * perPage
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, at, actor, actor_sub, action, resource, status, request_id, remote_ip
+		`SELECT id, tenant_id, at, actor, actor_sub, action, resource, status, request_id, remote_ip
 		 FROM audit_log WHERE `+where+` ORDER BY at DESC LIMIT ? OFFSET ?`,
 		append(args, perPage, offset)...)
 	if err != nil {
@@ -136,7 +156,7 @@ func (r *AuditRepo) List(ctx context.Context, f AuditFilter, page, perPage int) 
 	var out []*AuditEntry
 	for rows.Next() {
 		e := &AuditEntry{}
-		if err := rows.Scan(&e.ID, &e.At, &e.Actor, &e.ActorSub, &e.Action,
+		if err := rows.Scan(&e.ID, &e.TenantID, &e.At, &e.Actor, &e.ActorSub, &e.Action,
 			&e.Resource, &e.Status, &e.RequestID, &e.RemoteIP); err != nil {
 			return nil, 0, err
 		}

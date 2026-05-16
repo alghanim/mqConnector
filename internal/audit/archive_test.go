@@ -90,7 +90,7 @@ func TestArchive_WritesJSONLAndPrunes(t *testing.T) {
 	}
 
 	// Pruned from the table.
-	_, total, _ := s.Audit.List(context.Background(), storage.AuditFilter{}, 1, 50)
+	_, total, _ := s.Audit.List(context.Background(), storage.DefaultTenantID, storage.AuditFilter{}, 1, 50)
 	if total != 2 {
 		t.Errorf("expected 2 rows remaining after prune, got %d", total)
 	}

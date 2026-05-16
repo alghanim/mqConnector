@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"mqConnector/internal/auth"
 	"mqConnector/internal/pipeline"
 	"mqConnector/internal/storage"
 )
@@ -55,10 +56,13 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenant := auth.TenantID(r.Context())
 	var bctx pipeline.BuildContext
 	if req.PipelineID != "" {
-		// Load everything for this pipeline from storage.
-		p, err := s.store.Pipelines.Get(r.Context(), req.PipelineID)
+		// Load everything for this pipeline from storage — all calls
+		// tenant-scoped so a draft preview can't peek at another
+		// tenant's pipeline shape.
+		p, err := s.store.Pipelines.Get(r.Context(), tenant, req.PipelineID)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				writeError(w, http.StatusNotFound, "pipeline not found")
@@ -68,9 +72,9 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		bctx.Pipeline = p
-		bctx.StageRows, _ = s.store.Stages.ListByPipeline(r.Context(), req.PipelineID)
-		bctx.Transforms, _ = s.store.Transforms.ListByPipeline(r.Context(), req.PipelineID)
-		bctx.RoutingRules, _ = s.store.RoutingRules.ListByPipeline(r.Context(), req.PipelineID)
+		bctx.StageRows, _ = s.store.Stages.ListByPipeline(r.Context(), tenant, req.PipelineID)
+		bctx.Transforms, _ = s.store.Transforms.ListByPipeline(r.Context(), tenant, req.PipelineID)
+		bctx.RoutingRules, _ = s.store.RoutingRules.ListByPipeline(r.Context(), tenant, req.PipelineID)
 		// Schemas reachable from this pipeline are resolved by Build itself.
 	} else {
 		// Inline draft mode. We still need a non-nil Pipeline so Build can

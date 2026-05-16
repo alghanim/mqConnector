@@ -22,7 +22,7 @@ func makeStoreWithSchema(t *testing.T) (*storage.Store, string) {
 		Name: "orders.v1", SchemaType: "json_schema",
 		Content: `{"type":"object","required":["id"]}`,
 	}
-	if err := s.Schemas.Create(context.Background(), schema); err != nil {
+	if err := s.Schemas.Create(context.Background(), storage.DefaultTenantID, schema); err != nil {
 		t.Fatal(err)
 	}
 	return s, schema.ID
@@ -67,7 +67,7 @@ func TestLoadReferencedSchemas_MissingErrors(t *testing.T) {
 
 func TestBuild_ResolvesValidateStageBySchemaID(t *testing.T) {
 	store, sid := makeStoreWithSchema(t)
-	schema, _ := store.Schemas.Get(context.Background(), sid)
+	schema, _ := store.Schemas.Get(context.Background(), storage.DefaultTenantID, sid)
 
 	stages, err := Build(BuildContext{
 		Pipeline: &storage.Pipeline{SchemaID: sid},
@@ -96,10 +96,10 @@ func TestBuild_StageConfigSchemaIDBeatsPipelineLevel(t *testing.T) {
 	stageSchema := &storage.Schema{
 		Name: "stage-level", SchemaType: "xsd", Content: "name",
 	}
-	if err := store.Schemas.Create(context.Background(), stageSchema); err != nil {
+	if err := store.Schemas.Create(context.Background(), storage.DefaultTenantID, stageSchema); err != nil {
 		t.Fatal(err)
 	}
-	pipeSchema, _ := store.Schemas.Get(context.Background(), sidPipe)
+	pipeSchema, _ := store.Schemas.Get(context.Background(), storage.DefaultTenantID, sidPipe)
 
 	stages, err := Build(BuildContext{
 		Pipeline: &storage.Pipeline{SchemaID: sidPipe},

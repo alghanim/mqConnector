@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"mqConnector/internal/auth"
 	"mqConnector/internal/mq"
 	"mqConnector/internal/mqcfg"
 	"mqConnector/internal/storage"
@@ -27,8 +28,9 @@ import (
 //
 // Response shape: {"ok":true/false, "elapsed_ms":..., "error":"...if failed"}
 func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
-	rec, err := s.store.Connections.Get(r.Context(), id)
+	rec, err := s.store.Connections.Get(r.Context(), tenant, id)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "connection not found")

@@ -23,7 +23,7 @@ func seedDLQ(t *testing.T, srv *Server) {
 		{OriginalMsg: []byte("c"), ErrorReason: "validation: bad type"},
 		{OriginalMsg: []byte("d"), ErrorReason: "TLS handshake error"},
 	} {
-		if err := srv.store.DLQ.Insert(ctx, e); err != nil {
+		if err := srv.store.DLQ.Insert(ctx, storage.DefaultTenantID, e); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	}

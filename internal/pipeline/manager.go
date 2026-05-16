@@ -58,7 +58,11 @@ func (m *Manager) Reload(ctx context.Context) (int, error) {
 	}
 	m.mu.Unlock()
 
-	pipelines, err := m.store.Pipelines.List(ctx)
+	// ListAll walks every tenant's pipelines. The Manager is a
+	// system-level component that runs workers regardless of which
+	// human is currently logged into the UI — tenant scoping is
+	// enforced at the HTTP layer, not here.
+	pipelines, err := m.store.Pipelines.ListAll(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("list pipelines: %w", err)
 	}
@@ -80,26 +84,38 @@ func (m *Manager) Reload(ctx context.Context) (int, error) {
 }
 
 func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error {
-	stageRows, err := m.store.Stages.ListByPipeline(ctx, p.ID)
+	// Internal walk over a known-tenant-pipeline. The *Unsafe variants
+	// skip tenant scoping; the pipeline itself already carries its
+	// tenant_id, so cross-tenant data flow can only happen if the
+	// pipeline's storage rows were corrupted (which would be a different
+	// bug class entirely).
+	stageRows, err := m.store.Stages.ListByPipelineUnsafe(ctx, p.ID)
 	if err != nil {
 		return fmt.Errorf("list stages: %w", err)
 	}
-	transforms, err := m.store.Transforms.ListByPipeline(ctx, p.ID)
+	transforms, err := m.store.Transforms.ListByPipelineUnsafe(ctx, p.ID)
 	if err != nil {
 		return fmt.Errorf("list transforms: %w", err)
 	}
-	routes, err := m.store.RoutingRules.ListByPipeline(ctx, p.ID)
+	routes, err := m.store.RoutingRules.ListByPipelineUnsafe(ctx, p.ID)
 	if err != nil {
 		return fmt.Errorf("list routing rules: %w", err)
 	}
 
-	source, err := m.store.Connections.Get(ctx, p.SourceID)
+	source, err := m.store.Connections.GetUnsafe(ctx, p.SourceID)
 	if err != nil {
 		return fmt.Errorf("source: %w", err)
 	}
-	dest, err := m.store.Connections.Get(ctx, p.DestinationID)
+	dest, err := m.store.Connections.GetUnsafe(ctx, p.DestinationID)
 	if err != nil {
 		return fmt.Errorf("destination: %w", err)
+	}
+	// Sanity check: the pipeline must not reference a connection in a
+	// different tenant. This is impossible via the HTTP API (handlers
+	// validate); the check exists for defence in depth against a hand-
+	// edited SQLite file.
+	if source.TenantID != p.TenantID || dest.TenantID != p.TenantID {
+		return fmt.Errorf("cross-tenant connection reference detected on pipeline %s", p.ID)
 	}
 
 	// Pre-load every schema referenced either at the pipeline level or by a
@@ -130,9 +146,12 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 		if _, seen := routeDests[r.DestinationID]; seen {
 			continue
 		}
-		destConn, err := m.store.Connections.Get(ctx, r.DestinationID)
+		destConn, err := m.store.Connections.GetUnsafe(ctx, r.DestinationID)
 		if err != nil {
 			return fmt.Errorf("route destination %s: %w", r.DestinationID, err)
+		}
+		if destConn.TenantID != p.TenantID {
+			return fmt.Errorf("cross-tenant routing destination on pipeline %s", p.ID)
 		}
 		routeDests[r.DestinationID] = ToMQConfig(destConn)
 	}

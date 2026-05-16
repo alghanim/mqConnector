@@ -185,6 +185,39 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_dlq_tenant           ON dlq(tenant_id, created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_audit_tenant         ON audit_log(tenant_id, at DESC);
 	`,
+	// 0004 — tenant memberships. Maps a SimpleAuth user (by JWT `sub`) to
+	// a tenant with a role. Authorization decisions read this table; the
+	// JWT itself does not carry tenant/role claims, so we can revoke access
+	// without re-issuing tokens.
+	//
+	// Roles, weakest → strongest:
+	//   - viewer    : read-only on all resources
+	//   - operator  : viewer + enable/disable pipelines + retry/delete DLQ
+	//   - admin     : operator + CRUD connections/pipelines/scripts/schemas
+	//   - owner     : admin + member management + tenant settings
+	//
+	// Auto-bootstrap: the existing SimpleAuth admin user is granted owner
+	// of the default tenant so single-tenant deploys keep working without
+	// operator intervention. The grant is keyed by username (admin) rather
+	// than a literal sub — replaced on first login by the real sub via
+	// the membership auto-upgrade path in internal/auth.
+	`
+	CREATE TABLE IF NOT EXISTS tenant_memberships (
+		tenant_id  TEXT NOT NULL,
+		user_sub   TEXT NOT NULL,                     -- JWT sub OR username for the bootstrap entry
+		username   TEXT NOT NULL DEFAULT '',          -- display only; auto-populated on first login
+		role       TEXT NOT NULL CHECK(role IN ('viewer','operator','admin','owner')),
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (tenant_id, user_sub)
+	);
+	CREATE INDEX IF NOT EXISTS idx_memberships_user ON tenant_memberships(user_sub);
+
+	-- Bootstrap owner row keyed by the standard SimpleAuth bootstrap user.
+	-- Resolved to the real sub on first login.
+	INSERT OR IGNORE INTO tenant_memberships (tenant_id, user_sub, username, role)
+	VALUES ('00000000-0000-0000-0000-000000000000', 'bootstrap:admin', 'admin', 'owner');
+	`,
 }
 
 func migrate(db *sql.DB) error {

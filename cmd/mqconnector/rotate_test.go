@@ -34,7 +34,7 @@ func seedConn(t *testing.T, dsn, password string, sealer *secrets.Service) (stri
 	s.Connections = s.Connections.WithSealer(sealer)
 
 	c := &storage.Connection{Name: "test", Type: "rabbitmq", URL: "amqp://x", Password: password}
-	if err := s.Connections.Create(context.Background(), c); err != nil {
+	if err := s.Connections.Create(context.Background(), storage.DefaultTenantID, c); err != nil {
 		t.Fatal(err)
 	}
 	var raw string
@@ -52,7 +52,7 @@ func readDecrypted(t *testing.T, dsn string, sealer *secrets.Service, id string)
 	}
 	defer func() { _ = s.Close() }()
 	s.Connections = s.Connections.WithSealer(sealer)
-	c, err := s.Connections.Get(context.Background(), id)
+	c, err := s.Connections.Get(context.Background(), storage.DefaultTenantID, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func tryDecryptedAfterRotate(t *testing.T, dsn string, sealer *secrets.Service, 
 	}
 	defer func() { _ = s.Close() }()
 	s.Connections = s.Connections.WithSealer(sealer)
-	c, err := s.Connections.Get(context.Background(), id)
+	c, err := s.Connections.Get(context.Background(), storage.DefaultTenantID, id)
 	if err != nil {
 		return "", err
 	}

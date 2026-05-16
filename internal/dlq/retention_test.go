@@ -28,7 +28,7 @@ func TestRetention_AgePruner(t *testing.T) {
 	// Insert ten rows; backdate half of them 2 days.
 	for i := 0; i < 10; i++ {
 		e := &storage.DLQEntry{OriginalMsg: []byte("x"), ErrorReason: "test"}
-		if err := store.DLQ.Insert(ctx, e); err != nil {
+		if err := store.DLQ.Insert(ctx, storage.DefaultTenantID, e); err != nil {
 			t.Fatal(err)
 		}
 		if i < 5 {
@@ -43,7 +43,7 @@ func TestRetention_AgePruner(t *testing.T) {
 	r := NewRetention(store.DLQ, 24*time.Hour, 0, time.Hour, nil)
 	r.sweep(ctx)
 
-	_, total, _ := store.DLQ.List(ctx, 1, 20)
+	_, total, _ := store.DLQ.List(ctx, storage.DefaultTenantID, 1, 20)
 	if total != 5 {
 		t.Errorf("expected 5 rows after age-prune, got %d", total)
 	}
@@ -54,7 +54,7 @@ func TestRetention_CountPruner(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 20; i++ {
-		_ = store.DLQ.Insert(ctx, &storage.DLQEntry{OriginalMsg: []byte("x"), ErrorReason: "test"})
+		_ = store.DLQ.Insert(ctx, storage.DefaultTenantID, &storage.DLQEntry{OriginalMsg: []byte("x"), ErrorReason: "test"})
 		// Tiny sleep so created_at differs and the "newest 8" ordering is
 		// deterministic. SQLite's CURRENT_TIMESTAMP has 1s resolution.
 		time.Sleep(2 * time.Millisecond)
@@ -62,7 +62,7 @@ func TestRetention_CountPruner(t *testing.T) {
 	r := NewRetention(store.DLQ, 0, 8, time.Hour, nil)
 	r.sweep(ctx)
 
-	_, total, _ := store.DLQ.List(ctx, 1, 20)
+	_, total, _ := store.DLQ.List(ctx, storage.DefaultTenantID, 1, 20)
 	if total != 8 {
 		t.Errorf("expected 8 rows after count-prune, got %d", total)
 	}
@@ -75,19 +75,19 @@ func TestRetention_BothPolicies(t *testing.T) {
 	// 5 old (>2 days) + 10 new
 	for i := 0; i < 5; i++ {
 		e := &storage.DLQEntry{OriginalMsg: []byte("old"), ErrorReason: "x"}
-		_ = store.DLQ.Insert(ctx, e)
+		_ = store.DLQ.Insert(ctx, storage.DefaultTenantID, e)
 		_, _ = store.DB.Exec(`UPDATE dlq SET created_at = ? WHERE id = ?`,
 			time.Now().Add(-72*time.Hour).UTC(), e.ID)
 	}
 	for i := 0; i < 10; i++ {
-		_ = store.DLQ.Insert(ctx, &storage.DLQEntry{OriginalMsg: []byte("new"), ErrorReason: "x"})
+		_ = store.DLQ.Insert(ctx, storage.DefaultTenantID, &storage.DLQEntry{OriginalMsg: []byte("new"), ErrorReason: "x"})
 		time.Sleep(2 * time.Millisecond)
 	}
 
 	r := NewRetention(store.DLQ, 24*time.Hour, 6, time.Hour, nil)
 	r.sweep(ctx)
 
-	_, total, _ := store.DLQ.List(ctx, 1, 50)
+	_, total, _ := store.DLQ.List(ctx, storage.DefaultTenantID, 1, 50)
 	if total != 6 {
 		t.Errorf("expected 6 rows after both policies, got %d", total)
 	}
@@ -97,11 +97,11 @@ func TestRetention_DisabledIsNoOp(t *testing.T) {
 	store := newStore(t)
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
-		_ = store.DLQ.Insert(ctx, &storage.DLQEntry{OriginalMsg: []byte("x"), ErrorReason: "y"})
+		_ = store.DLQ.Insert(ctx, storage.DefaultTenantID, &storage.DLQEntry{OriginalMsg: []byte("x"), ErrorReason: "y"})
 	}
 	r := NewRetention(store.DLQ, 0, 0, time.Hour, nil)
 	r.sweep(ctx) // no policies — should leave rows alone.
-	_, total, _ := store.DLQ.List(ctx, 1, 50)
+	_, total, _ := store.DLQ.List(ctx, storage.DefaultTenantID, 1, 50)
 	if total != 5 {
 		t.Errorf("disabled retention should not prune; got %d remaining", total)
 	}

@@ -34,7 +34,7 @@ func TestAudit_MutationsRecordedWithActor(t *testing.T) {
 	var total int
 	for time.Now().Before(deadline) {
 		list, total, _ = srv.store.Audit.List(context.Background(),
-			storage.AuditFilter{Actor: "alice"}, 1, 50)
+			storage.DefaultTenantID, storage.AuditFilter{Actor: "alice"}, 1, 50)
 		if total >= 2 {
 			break
 		}
@@ -70,7 +70,7 @@ func TestAudit_ReadOnlyRequestsNotLogged(t *testing.T) {
 	// Brief settle — the audit insert is async.
 	time.Sleep(200 * time.Millisecond)
 
-	_, total, _ := srv.store.Audit.List(context.Background(), storage.AuditFilter{}, 1, 50)
+	_, total, _ := srv.store.Audit.List(context.Background(), storage.DefaultTenantID, storage.AuditFilter{}, 1, 50)
 	if total != 0 {
 		t.Errorf("GETs leaked into audit log: %d entries", total)
 	}
