@@ -39,6 +39,21 @@
   import PageHeader from '$lib/components/PageHeader.svelte';
   import StatChip from '$lib/components/StatChip.svelte';
   import SystemPulse from '$lib/components/SystemPulse.svelte';
+  import MetricStrip from '$lib/components/MetricStrip.svelte';
+  import RouteHealthMatrix from '$lib/components/RouteHealthMatrix.svelte';
+
+  type Metric = {
+    label: string;
+    value: string | number;
+    unit?: string;
+    delta?: string;
+    deltaTone?: 'success' | 'danger' | 'neutral';
+    sub?: string;
+    tone?: 'default' | 'success' | 'warning' | 'danger' | 'accent';
+    href?: string;
+    spark?: number[];
+    sparkTone?: 'primary' | 'secondary' | 'success' | 'warning' | 'danger';
+  };
   import {
     metrics as liveMetrics,
     dlqTotal as liveDlqTotal,
@@ -227,10 +242,117 @@
   // ── Derived KPIs ────────────────────────────────────────────────
   $: totalProcessed = pipelines.reduce((s, m) => s + m.messages_processed, 0);
   $: totalFailed = pipelines.reduce((s, m) => s + m.messages_failed, 0);
+  $: totalBytes = pipelines.reduce((s, m) => s + m.bytes_processed, 0);
+  $: avgLatency = pipelines.length
+    ? pipelines.reduce((s, p) => s + p.avg_latency_ms, 0) / pipelines.length
+    : 0;
   $: totalPipelines = pipelines.length;
   $: activePipelines =
     health?.active_pipelines ?? pipelines.filter((p) => p.status === 'connected').length;
   $: errorPipelines = pipelines.filter((p) => p.last_error);
+  $: warningPipelines = pipelines.filter(
+    (p) => !p.last_error && p.status !== 'connected' && p.status !== 'idle'
+  );
+
+  // Failed-message deltas (mirrors aggregateDeltas calc for the second
+  // chart series). Keeps the chart honest — operators don't have to
+  // open /metrics to see whether the spike came from successes or
+  // failures.
+  $: aggregateFailedDeltas = (() => {
+    let maxLen = 0;
+    for (const snaps of history.values()) if (snaps.length > maxLen) maxLen = snaps.length;
+    if (maxLen < 2) return [] as number[];
+    const out: number[] = new Array(maxLen - 1).fill(0);
+    for (const snaps of history.values()) {
+      const offset = maxLen - snaps.length;
+      for (let i = 1; i < snaps.length; i++) {
+        const d = snaps[i].failed - snaps[i - 1].failed;
+        out[offset + i - 1] += Math.max(0, d);
+      }
+    }
+    // historyVersion read here to refresh on each snapshot
+    void historyVersion;
+    return out;
+  })();
+
+  // Plain rolling rate (msg/sec, 60 s window) + half-vs-half delta for
+  // the headline strip.
+  $: windowSum = aggregateDeltas.reduce((s, v) => s + v, 0);
+  $: rate = aggregateDeltas.length > 0 ? windowSum / (aggregateDeltas.length * 5) : 0;
+  $: rateHalf = Math.floor(aggregateDeltas.length / 2);
+  $: ratePrev = rateHalf > 0 ? aggregateDeltas.slice(0, rateHalf).reduce((s, v) => s + v, 0) : 0;
+  $: rateCur = rateHalf > 0
+    ? aggregateDeltas.slice(aggregateDeltas.length - rateHalf).reduce((s, v) => s + v, 0)
+    : 0;
+  $: ratePct = ratePrev === 0 ? 0 : Math.round(((rateCur - ratePrev) / ratePrev) * 100);
+  $: failPct = totalProcessed + totalFailed > 0
+    ? (totalFailed / (totalProcessed + totalFailed)) * 100
+    : 0;
+
+  // KPI tiles for the dense MetricStrip below the system pulse.
+  // Order is deliberate: throughput first (the heartbeat), then volume,
+  // then quality (fail %), then the queue depths the operator can act on.
+  $: kpiMetrics = [
+    {
+      label: t($locale, 'dash.kpi.rate'),
+      value: fmtRate(rate),
+      unit: t($locale, 'dash.pulse.rateUnit'),
+      delta: rateHalf > 0 && ratePrev > 0 ? `${ratePct > 0 ? '+' : ''}${ratePct}%` : undefined,
+      deltaTone:
+        ratePct > 0 ? 'success' : ratePct < 0 ? 'danger' : 'neutral',
+      spark: aggregateDeltas,
+      sparkTone: 'secondary'
+    },
+    {
+      label: t($locale, 'dash.kpi.processed'),
+      value: fmtNumber(totalProcessed),
+      sub: `${fmtBytes(totalBytes)}`
+    },
+    {
+      label: t($locale, 'dash.kpi.failed'),
+      value: fmtNumber(totalFailed),
+      tone: totalFailed > 0 ? 'danger' : 'default',
+      sub: `${failPct.toFixed(failPct < 0.1 ? 3 : 2)}%`,
+      spark: aggregateFailedDeltas,
+      sparkTone: 'danger'
+    },
+    {
+      label: t($locale, 'dash.kpi.activePipelines'),
+      value: `${activePipelines}/${totalPipelines}`,
+      sub:
+        warningPipelines.length > 0
+          ? `${warningPipelines.length} ${t($locale, 'dash.kpi.warning')}`
+          : t($locale, 'dash.kpi.allHealthy'),
+      tone: errorPipelines.length > 0 ? 'danger' : warningPipelines.length > 0 ? 'warning' : 'success',
+      href: '/metrics'
+    },
+    {
+      label: t($locale, 'dash.kpi.avgLatency'),
+      value: avgLatency.toFixed(1),
+      unit: 'ms',
+      tone: avgLatency > 250 ? 'warning' : avgLatency > 1000 ? 'danger' : 'default'
+    },
+    {
+      label: t($locale, 'dash.kpi.dlq'),
+      value: fmtNumber(dlqTotal),
+      tone: dlqTotal > 0 ? 'accent' : 'default',
+      sub: dlqTotal > 0 ? t($locale, 'dash.kpi.dlqRetryable') : t($locale, 'dash.kpi.dlqEmpty'),
+      href: '/dlq'
+    }
+  ] satisfies Metric[];
+
+  function fmtRate(v: number): string {
+    if (v >= 1000) return `${(v / 1000).toFixed(1)}K`;
+    if (v >= 100) return v.toFixed(0);
+    if (v >= 10) return v.toFixed(1);
+    return v.toFixed(2);
+  }
+  function fmtBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  }
 
   // ── Formatters ──────────────────────────────────────────────────
   function variantFor(s: string): 'success' | 'warning' | 'danger' | 'neutral' {
@@ -284,9 +406,28 @@
     y: CHART_PAD.top + (1 - p) * (CHART_H - CHART_PAD.top - CHART_PAD.bottom),
     label: fmtNumber(Math.round(chartMax * p))
   }));
+
+  // Failed series — same geometry, layered on top in a danger tint.
+  $: chartFailedPoints = (() => {
+    if (aggregateFailedDeltas.length < 2) return '';
+    const innerW = CHART_W - CHART_PAD.start - CHART_PAD.end;
+    const innerH = CHART_H - CHART_PAD.top - CHART_PAD.bottom;
+    // Scale against the successful-series max so the eye doesn't read
+    // a small failure spike as catastrophic. If failures dominate (max
+    // failed > max processed) we expand the chart range to fit them.
+    const ref = Math.max(chartMax, ...aggregateFailedDeltas, 1);
+    return aggregateFailedDeltas
+      .map((v, i) => {
+        const x =
+          CHART_PAD.start + (i * innerW) / (aggregateFailedDeltas.length - 1);
+        const y = CHART_PAD.top + innerH - (v / ref) * innerH;
+        return `${x.toFixed(2)},${y.toFixed(2)}`;
+      })
+      .join(' ');
+  })();
 </script>
 
-<div class="space-y-6 max-w-6xl">
+<div class="dash-root">
   <PageHeader title={t($locale, 'dash.title')} subtitle={t($locale, 'dash.pageSubtitle')}>
     <svelte:fragment slot="stats">
       {#if health}
@@ -322,101 +463,74 @@
     processedTotal={totalProcessed}
   />
 
-  <!-- ─── KPI row ───────────────────────────────────────────────── -->
-  <section aria-label={t($locale, 'dash.title')} class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-    <Card strip>
-      <p class="section-heading">{t($locale, 'dash.kpi.processed')}</p>
-      <p class="dash-kpi">{fmtNumber(totalProcessed)}</p>
-    </Card>
-    <Card>
-      <p class="section-heading">{t($locale, 'dash.kpi.failed')}</p>
-      <p class="dash-kpi" style:color={totalFailed > 0 ? 'var(--danger)' : 'var(--text)'}>
-        {fmtNumber(totalFailed)}
-      </p>
-    </Card>
-    <Card>
-      <p class="section-heading">{t($locale, 'dash.kpi.activePipelines')}</p>
-      <p class="dash-kpi">
-        {activePipelines}<span class="dash-kpi-sub"> / {totalPipelines}</span>
-      </p>
-    </Card>
-    <Card>
-      <p class="section-heading">{t($locale, 'dash.kpi.dlq')}</p>
-      <p class="dash-kpi">
-        <a href="/dlq" class="dash-kpi-link">{fmtNumber(dlqTotal)}</a>
-      </p>
-    </Card>
-  </section>
+  <!-- ─── Dense KPI strip (6 tiles) ─────────────────────────────── -->
+  <MetricStrip strip metrics={kpiMetrics} />
 
-  <!-- ─── Throughput chart + Connection health ──────────────────── -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-    <div class="lg:col-span-2">
-      <Card>
-        <div class="flex items-baseline justify-between flex-wrap gap-2 mb-2">
-          <p class="section-heading">{t($locale, 'dash.throughput.title')}</p>
-          <span class="text-caption">{t($locale, 'dash.throughput.subtitle')}</span>
+  <!-- ─── Throughput chart + Route health matrix ────────────────── -->
+  <div class="dash-grid-3">
+    <Card padding="md">
+      <div class="dash-card-head">
+        <p class="section-heading">{t($locale, 'dash.throughput.title')}</p>
+        <div class="dash-chart-legend">
+          <span class="legend-swatch legend-success" aria-hidden="true"></span>
+          <span class="text-caption">{t($locale, 'metrics.processed')}</span>
+          <span class="legend-swatch legend-danger" aria-hidden="true"></span>
+          <span class="text-caption">{t($locale, 'metrics.failed')}</span>
+          <span class="dash-chart-window text-caption">{t($locale, 'dash.throughput.subtitle')}</span>
         </div>
-        {#if aggregateDeltas.length < 2}
-          <p class="dash-empty">{t($locale, 'dash.throughput.empty')}</p>
-        {:else}
-          <svg
-            class="dash-chart"
-            viewBox="0 0 {CHART_W} {CHART_H}"
-            role="img"
-            aria-label="{t($locale, 'dash.throughput.title')} — {aggregateDeltas[aggregateDeltas.length - 1]} {t(
-              $locale,
-              'dash.kpi.processed'
-            )}"
-            preserveAspectRatio="none"
-          >
-            <!-- Horizontal grid lines + y-axis labels -->
-            {#each chartTicks as tick}
-              <line
-                x1={CHART_PAD.start}
-                x2={CHART_W - CHART_PAD.end}
-                y1={tick.y}
-                y2={tick.y}
-                class="dash-chart-grid"
-              />
-              <text x={CHART_PAD.start - 6} y={tick.y + 4} class="dash-chart-tick" text-anchor="end">
-                {tick.label}
-              </text>
-            {/each}
-            <!-- Area fill -->
-            <polygon points={chartArea} class="dash-chart-area" />
-            <!-- Line -->
-            <polyline points={chartPoints} class="dash-chart-line" fill="none" />
-          </svg>
-        {/if}
-      </Card>
-    </div>
-    <div>
-      <Card>
-        <div class="flex items-baseline justify-between flex-wrap gap-2 mb-3">
-          <p class="section-heading">{t($locale, 'dash.connections.title')}</p>
-          <a href="/metrics" class="link text-caption">{t($locale, 'dash.pipelines.viewAll')}</a>
-        </div>
-        {#if !health?.connections || health.connections.length === 0}
-          <p class="dash-empty">{t($locale, 'dash.connections.empty')}</p>
-        {:else}
-          <ul class="dash-conns">
-            {#each health.connections as c (c.pipeline_id)}
-              <li class="dash-conn-row">
-                <Badge variant={variantFor(c.status)}>{c.status}</Badge>
-                <div class="dash-conn-body">
-                  <p class="dash-conn-name">{c.pipeline_id}</p>
-                  <p class="dash-conn-flow">{c.source_queue} → {c.dest_queue}</p>
-                </div>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </Card>
-    </div>
+      </div>
+      {#if aggregateDeltas.length < 2}
+        <p class="dash-empty">{t($locale, 'dash.throughput.empty')}</p>
+      {:else}
+        <svg
+          class="dash-chart"
+          viewBox="0 0 {CHART_W} {CHART_H}"
+          role="img"
+          aria-label="{t($locale, 'dash.throughput.title')} — {aggregateDeltas[aggregateDeltas.length - 1]} {t(
+            $locale,
+            'dash.kpi.processed'
+          )}"
+          preserveAspectRatio="none"
+        >
+          {#each chartTicks as tick}
+            <line
+              x1={CHART_PAD.start}
+              x2={CHART_W - CHART_PAD.end}
+              y1={tick.y}
+              y2={tick.y}
+              class="dash-chart-grid"
+            />
+            <text x={CHART_PAD.start - 6} y={tick.y + 4} class="dash-chart-tick" text-anchor="end">
+              {tick.label}
+            </text>
+          {/each}
+          <polygon points={chartArea} class="dash-chart-area" />
+          <polyline points={chartPoints} class="dash-chart-line" fill="none" />
+          {#if chartFailedPoints}
+            <polyline points={chartFailedPoints} class="dash-chart-line-fail" fill="none" />
+          {/if}
+        </svg>
+      {/if}
+    </Card>
+
+    <Card padding="md">
+      <div class="dash-card-head">
+        <p class="section-heading">{t($locale, 'dash.matrix.title')}</p>
+        <a href="/metrics" class="link text-caption">{t($locale, 'dash.pipelines.viewAll')}</a>
+      </div>
+      <RouteHealthMatrix pipelines={pipelines}>
+        <p slot="empty" class="dash-empty">{t($locale, 'dash.connections.empty')}</p>
+      </RouteHealthMatrix>
+      <div class="dash-matrix-legend">
+        <span class="legend-item"><span class="legend-dot legend-success"></span>{t($locale, 'dash.matrix.healthy')} <b>{activePipelines}</b></span>
+        <span class="legend-item"><span class="legend-dot legend-warning"></span>{t($locale, 'dash.matrix.warn')} <b>{warningPipelines.length}</b></span>
+        <span class="legend-item"><span class="legend-dot legend-danger"></span>{t($locale, 'dash.matrix.err')} <b>{errorPipelines.length}</b></span>
+      </div>
+    </Card>
   </div>
 
   <!-- ─── Pipeline status grid with sparklines ──────────────────── -->
-  <Card>
+  <Card padding="md">
     <div class="flex items-baseline justify-between mb-3">
       <p class="section-heading">{t($locale, 'dash.pipelines.title')}</p>
       <a href="/metrics" class="link text-caption">{t($locale, 'dash.pipelines.viewAll')}</a>
@@ -567,30 +681,93 @@
 </div>
 
 <style>
-  /* (header meta is now rendered by PageHeader+StatChip) */
+  /* ─── Root layout — vertical rhythm 14 px, full-width ─────────── */
+  .dash-root {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
 
-  /* ─── KPI cards ───────────────────────────────────────────────── */
-  .dash-kpi {
-    margin-top: 6px;
-    color: var(--text);
-    font-size: 28px;
-    font-weight: 700;
-    line-height: 1.1;
-    letter-spacing: -0.01em;
+  .dash-grid-3 {
+    display: grid;
+    grid-template-columns: minmax(0, 2.4fr) minmax(0, 1fr);
+    gap: 14px;
   }
-  .dash-kpi-sub {
+  @media (max-width: 1100px) {
+    .dash-grid-3 {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .dash-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-block-end: 10px;
+    flex-wrap: wrap;
+  }
+  .dash-chart-legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .dash-chart-window {
+    margin-inline-start: 8px;
+  }
+  .legend-swatch {
+    display: inline-block;
+    inline-size: 12px;
+    block-size: 2px;
+    border-radius: 999px;
+  }
+  .legend-success {
+    background: var(--success-solid);
+  }
+  .legend-warning {
+    background: var(--warning);
+  }
+  .legend-danger {
+    background: var(--danger);
+  }
+  .legend-dot {
+    display: inline-block;
+    inline-size: 8px;
+    block-size: 8px;
+    border-radius: 999px;
+    margin-inline-end: 4px;
+    vertical-align: -1px;
+  }
+  .legend-dot.legend-success {
+    background: var(--success-solid);
+  }
+  .legend-dot.legend-warning {
+    background: var(--warning);
+  }
+  .legend-dot.legend-danger {
+    background: var(--danger);
+  }
+
+  .dash-matrix-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-block-start: 8px;
+    margin-block-start: 8px;
+    border-block-start: 1px solid var(--divider);
     color: var(--text-muted);
-    font-size: 16px;
-    font-weight: 500;
+    font-size: 11px;
   }
-  .dash-kpi-link {
-    color: inherit;
-    text-decoration: none;
-    border-block-end: 1px dashed var(--border-strong);
+  .dash-matrix-legend b {
+    color: var(--text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    margin-inline-start: 2px;
   }
-  .dash-kpi-link:hover {
-    color: var(--primary);
-    border-block-end-color: var(--primary);
+  .legend-item {
+    display: inline-flex;
+    align-items: center;
   }
 
   /* ─── Throughput chart ────────────────────────────────────────── */
@@ -627,39 +804,13 @@
   :global([data-theme='light']) .dash-chart-area {
     fill: color-mix(in srgb, var(--primary) 14%, transparent);
   }
-
-  /* ─── Connection list ─────────────────────────────────────────── */
-  .dash-conns {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .dash-conn-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-  }
-  .dash-conn-body {
-    min-inline-size: 0;
-    flex: 1;
-  }
-  .dash-conn-name {
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .dash-conn-flow {
-    color: var(--text-muted);
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .dash-chart-line-fail {
+    stroke: var(--danger);
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    stroke-dasharray: 2 3;
+    opacity: 0.9;
   }
 
   /* ─── Pipeline grid ───────────────────────────────────────────── */

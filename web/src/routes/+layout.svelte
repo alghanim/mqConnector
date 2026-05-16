@@ -639,10 +639,11 @@
   /* ─── Page area ────────────────────────────────────────────────── */
   .page {
     flex: 1;
-    padding: 1.5rem;
+    padding: 1.125rem 1.5rem 2rem;
     overflow-y: auto;
-    max-width: 1400px;
-    width: 100%;
+    inline-size: 100%;
+    max-inline-size: 1680px;
+    margin-inline: auto;
   }
 
   @media (max-width: 900px) {

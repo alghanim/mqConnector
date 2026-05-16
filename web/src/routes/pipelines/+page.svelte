@@ -4,11 +4,12 @@
   doesn't have to read endpoint names to understand wiring.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { api, type Pipeline, type Connection } from '$lib/api';
+  import { onDestroy, onMount } from 'svelte';
+  import { api, type Pipeline, type Connection, type PipelineMetric } from '$lib/api';
   import { locale, t } from '$lib/stores/locale';
   import { toasts } from '$lib/stores/toasts';
   import { page } from '$app/stores';
+  import { metrics as liveMetrics } from '$lib/stores/live';
 
   import Card from '$lib/components/Card.svelte';
   import Button from '$lib/components/Button.svelte';
@@ -22,6 +23,7 @@
   import StatChip from '$lib/components/StatChip.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
+  import Sparkline from '$lib/components/Sparkline.svelte';
 
   import {
     Plus,
@@ -36,7 +38,8 @@
     GitFork,
     Rabbit,
     Server,
-    Database
+    Database,
+    AlertOctagon
   } from 'lucide-svelte';
 
   let pipelines: Pipeline[] = [];
@@ -50,6 +53,57 @@
 
   let query = '';
   let statusFilter: '' | 'enabled' | 'disabled' = '';
+
+  // Sparkline window per pipeline_id keyed by the pipeline's *id*. Same
+  // mechanic as the overview page — 13 snapshots = 60 s window.
+  const MAX_SAMPLES = 13;
+  type Snapshot = { processed: number; failed: number };
+  let history = new Map<string, Snapshot[]>();
+  let historyVersion = 0;
+  let lastMetricsAt = 0;
+
+  // Quick lookup of the latest metrics by pipeline_id so each row can
+  // surface processed/failed/avg-latency/last-error inline.
+  let metricByPipeline: Record<string, PipelineMetric> = {};
+
+  // Subscribe to the shared SSE store. Each new frame folds into
+  // metricByPipeline + the sparkline windows.
+  $: if ($liveMetrics && $liveMetrics.receivedAt !== lastMetricsAt) {
+    lastMetricsAt = $liveMetrics.receivedAt;
+    const byId: Record<string, PipelineMetric> = {};
+    const next = new Map(history);
+    const liveIds = new Set<string>();
+    for (const m of $liveMetrics.pipelines) {
+      byId[m.pipeline_id] = m;
+      liveIds.add(m.pipeline_id);
+      const arr = next.get(m.pipeline_id) ?? [];
+      arr.push({ processed: m.messages_processed, failed: m.messages_failed });
+      while (arr.length > MAX_SAMPLES) arr.shift();
+      next.set(m.pipeline_id, arr);
+    }
+    for (const id of Array.from(next.keys())) {
+      if (!liveIds.has(id)) next.delete(id);
+    }
+    metricByPipeline = byId;
+    history = next;
+    historyVersion++;
+  }
+
+  function deltas(id: string, _v: number): number[] {
+    const arr = history.get(id) ?? [];
+    if (arr.length < 2) return [];
+    const out: number[] = [];
+    for (let i = 1; i < arr.length; i++) {
+      out.push(Math.max(0, arr[i].processed - arr[i - 1].processed));
+    }
+    return out;
+  }
+
+  function fmtNum(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return n.toLocaleString();
+  }
 
   async function refresh() {
     loading = true;
@@ -72,6 +126,7 @@
       startNew();
     }
   });
+  onDestroy(() => {});
 
   $: connOptions = connections.map((c) => ({
     value: c.id || '',
@@ -296,115 +351,163 @@
   {:else if filtered.length === 0}
     <p class="empty-filter">{t($locale, 'common.none')}</p>
   {:else}
-    <table class="pipe-table">
-      <thead>
-        <tr>
-          <th>{t($locale, 'connections.name')}</th>
-          <th>{t($locale, 'pipelines.flow')}</th>
-          <th>{t($locale, 'pipelines.output')}</th>
-          <th>{t($locale, 'common.status')}</th>
-          <th class="th-actions"></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each filtered as p (p.id || p.name)}
-          {@const src = connections.find((c) => c.id === p.source_id)}
-          {@const dst = connections.find((c) => c.id === p.destination_id)}
-          {@const SrcIcon = typeIcon(src?.type || '')}
-          {@const DstIcon = typeIcon(dst?.type || '')}
+    <div class="pipe-table-wrap">
+      <table class="pipe-table">
+        <thead>
           <tr>
-            <td>
-              <div class="cell-name">
-                <span class="cell-icon" aria-hidden="true">
-                  <GitFork size={14} />
-                </span>
-                <span class="cell-name-text">{p.name}</span>
-              </div>
-            </td>
-            <td>
-              <div class="flow">
-                <span class="flow-end">
-                  <span class="flow-ico" data-type={src?.type || ''} aria-hidden="true">
-                    <svelte:component this={SrcIcon} size={12} />
-                  </span>
-                  <span class="flow-name">{src?.name || '?'}</span>
-                </span>
-                <ArrowRight size={14} aria-hidden="true" class="flow-arr" />
-                <span class="flow-end">
-                  <span class="flow-ico" data-type={dst?.type || ''} aria-hidden="true">
-                    <svelte:component this={DstIcon} size={12} />
-                  </span>
-                  <span class="flow-name">{dst?.name || '?'}</span>
-                </span>
-              </div>
-            </td>
-            <td>
-              <Badge variant="neutral">{p.output_format}</Badge>
-            </td>
-            <td>
-              {#if p.enabled}
-                <Badge variant="success">{t($locale, 'common.enabled')}</Badge>
-              {:else}
-                <Badge variant="warning">{t($locale, 'common.disabled')}</Badge>
-              {/if}
-            </td>
-            <td>
-              <div class="row-actions">
-                {#if p.id}
-                  <a
-                    class="icon-action"
-                    href="/flow?pipeline={p.id}"
-                    aria-label={t($locale, 'flow.openVisual')}
-                    title={t($locale, 'flow.openVisual')}
-                  >
-                    <GitFork size={14} aria-hidden="true" />
-                  </a>
-                  <a
-                    class="icon-action"
-                    href="/pipelines/{p.id}"
-                    aria-label={t($locale, 'pipelines.configure')}
-                    title={t($locale, 'pipelines.configure')}
-                  >
-                    <Settings2 size={14} aria-hidden="true" />
-                  </a>
-                {/if}
-                <button
-                  type="button"
-                  class="icon-action"
-                  aria-label={p.enabled ? t($locale, 'common.disable') : t($locale, 'common.enable')}
-                  title={p.enabled ? t($locale, 'common.disable') : t($locale, 'common.enable')}
-                  on:click={() => toggleEnabled(p)}
-                >
-                  {#if p.enabled}
-                    <PowerOff size={14} aria-hidden="true" />
-                  {:else}
-                    <Power size={14} aria-hidden="true" />
-                  {/if}
-                </button>
-                <button
-                  type="button"
-                  class="icon-action"
-                  aria-label={t($locale, 'common.edit')}
-                  title={t($locale, 'common.edit')}
-                  on:click={() => startEdit(p)}
-                >
-                  <Pencil size={14} aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  class="icon-action danger"
-                  aria-label={t($locale, 'common.delete')}
-                  title={t($locale, 'common.delete')}
-                  on:click={() => askRemove(p)}
-                >
-                  <Trash2 size={14} aria-hidden="true" />
-                </button>
-              </div>
-            </td>
+            <th class="th-status"></th>
+            <th>{t($locale, 'connections.name')}</th>
+            <th>{t($locale, 'pipelines.flow')}</th>
+            <th>{t($locale, 'pipelines.output')}</th>
+            <th class="right">{t($locale, 'metrics.processed')}</th>
+            <th class="right">{t($locale, 'metrics.failed')}</th>
+            <th class="right">{t($locale, 'metrics.avgLatency')}</th>
+            <th class="th-spark">{t($locale, 'metrics.col.trend')}</th>
+            <th class="th-actions"></th>
           </tr>
-        {/each}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each filtered as p (p.id || p.name)}
+            {@const src = connections.find((c) => c.id === p.source_id)}
+            {@const dst = connections.find((c) => c.id === p.destination_id)}
+            {@const SrcIcon = typeIcon(src?.type || '')}
+            {@const DstIcon = typeIcon(dst?.type || '')}
+            {@const m = p.id ? metricByPipeline[p.id] : undefined}
+            {@const liveTone = m?.last_error
+              ? 'danger'
+              : m?.status === 'connected'
+                ? 'success'
+                : p.enabled
+                  ? 'warning'
+                  : 'neutral'}
+            <tr>
+              <td class="cell-pulse">
+                <span class="status-dot" data-tone={liveTone} aria-hidden="true"
+                  title={m?.status || (p.enabled ? t($locale, 'common.enabled') : t($locale, 'common.disabled'))}
+                ></span>
+              </td>
+              <td>
+                <div class="cell-name">
+                  <span class="cell-icon" aria-hidden="true">
+                    <GitFork size={14} />
+                  </span>
+                  <div class="cell-name-stack">
+                    <span class="cell-name-text">{p.name}</span>
+                    <span class="cell-name-sub">
+                      {#if !p.enabled}<Badge variant="warning">{t($locale, 'common.disabled')}</Badge>{/if}
+                      {#if m?.last_error}
+                        <span class="cell-err-pill" title={m.last_error}>
+                          <AlertOctagon size={11} aria-hidden="true" />
+                          {t($locale, 'common.reason')}
+                        </span>
+                      {/if}
+                    </span>
+                  </div>
+                </div>
+              </td>
+              <td>
+                <div class="flow">
+                  <span class="flow-end">
+                    <span class="flow-ico" data-type={src?.type || ''} aria-hidden="true">
+                      <svelte:component this={SrcIcon} size={12} />
+                    </span>
+                    <span class="flow-name">{src?.name || '?'}</span>
+                  </span>
+                  <ArrowRight size={14} aria-hidden="true" class="flow-arr" />
+                  <span class="flow-end">
+                    <span class="flow-ico" data-type={dst?.type || ''} aria-hidden="true">
+                      <svelte:component this={DstIcon} size={12} />
+                    </span>
+                    <span class="flow-name">{dst?.name || '?'}</span>
+                  </span>
+                </div>
+              </td>
+              <td>
+                <Badge variant="neutral">{p.output_format}</Badge>
+              </td>
+              <td class="right number">{m ? fmtNum(m.messages_processed) : '—'}</td>
+              <td class="right">
+                {#if m && m.messages_failed > 0}
+                  <span class="fail-count">{fmtNum(m.messages_failed)}</span>
+                {:else if m}
+                  <span class="muted-zero">0</span>
+                {:else}
+                  <span class="muted-zero">—</span>
+                {/if}
+              </td>
+              <td class="right number"
+                class:lat-warn={m && m.avg_latency_ms > 250}
+                class:lat-bad={m && m.avg_latency_ms > 1000}>
+                {m ? `${m.avg_latency_ms.toFixed(1)} ms` : '—'}
+              </td>
+              <td class="th-spark">
+                {#if p.id}
+                  <Sparkline
+                    data={deltas(p.id, historyVersion)}
+                    variant={m?.messages_failed && m.messages_failed > 0 ? 'warning' : 'secondary'}
+                    width={88}
+                    height={22}
+                  />
+                {/if}
+              </td>
+              <td>
+                <div class="row-actions">
+                  {#if p.id}
+                    <a
+                      class="icon-action"
+                      href="/flow?pipeline={p.id}"
+                      aria-label={t($locale, 'flow.openVisual')}
+                      title={t($locale, 'flow.openVisual')}
+                    >
+                      <GitFork size={14} aria-hidden="true" />
+                    </a>
+                    <a
+                      class="icon-action"
+                      href="/pipelines/{p.id}"
+                      aria-label={t($locale, 'pipelines.configure')}
+                      title={t($locale, 'pipelines.configure')}
+                    >
+                      <Settings2 size={14} aria-hidden="true" />
+                    </a>
+                  {/if}
+                  <button
+                    type="button"
+                    class="icon-action"
+                    aria-label={p.enabled ? t($locale, 'common.disable') : t($locale, 'common.enable')}
+                    title={p.enabled ? t($locale, 'common.disable') : t($locale, 'common.enable')}
+                    on:click={() => toggleEnabled(p)}
+                  >
+                    {#if p.enabled}
+                      <PowerOff size={14} aria-hidden="true" />
+                    {:else}
+                      <Power size={14} aria-hidden="true" />
+                    {/if}
+                  </button>
+                  <button
+                    type="button"
+                    class="icon-action"
+                    aria-label={t($locale, 'common.edit')}
+                    title={t($locale, 'common.edit')}
+                    on:click={() => startEdit(p)}
+                  >
+                    <Pencil size={14} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    class="icon-action danger"
+                    aria-label={t($locale, 'common.delete')}
+                    title={t($locale, 'common.delete')}
+                    on:click={() => askRemove(p)}
+                  >
+                    <Trash2 size={14} aria-hidden="true" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   {/if}
 </Card>
 
@@ -445,6 +548,10 @@
     padding-block: 0.5rem;
   }
 
+  .pipe-table-wrap {
+    overflow-x: auto;
+    margin-inline: -16px;
+  }
   .pipe-table {
     width: 100%;
     border-collapse: collapse;
@@ -452,7 +559,7 @@
   }
   .pipe-table thead th {
     text-align: start;
-    padding: 0.5rem 0.75rem;
+    padding: 0.5rem 0.625rem;
     color: var(--text-muted);
     font-size: 0.6875rem;
     font-weight: 600;
@@ -462,6 +569,7 @@
     background: var(--surface);
     position: sticky;
     top: 0;
+    z-index: 1;
   }
   .pipe-table tbody tr {
     transition: background-color 100ms;
@@ -470,15 +578,99 @@
     background: var(--surface-2);
   }
   .pipe-table td {
-    padding: 0.625rem 0.75rem;
-    border-bottom: 1px solid var(--border);
+    padding: 0.5rem 0.625rem;
+    border-bottom: 1px solid var(--divider-subtle);
     color: var(--text);
+    vertical-align: middle;
   }
   .pipe-table tbody tr:last-child td {
     border-bottom: 0;
   }
   .th-actions {
-    width: 1%;
+    inline-size: 1%;
+  }
+  .th-status {
+    inline-size: 28px;
+  }
+  .th-spark {
+    inline-size: 100px;
+  }
+  .cell-pulse {
+    inline-size: 28px;
+  }
+  .right {
+    text-align: end;
+  }
+  .number {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  .muted-zero {
+    color: var(--text-tertiary);
+  }
+  .fail-count {
+    color: var(--danger);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .lat-warn {
+    color: var(--warning);
+  }
+  .lat-bad {
+    color: var(--danger);
+  }
+
+  .status-dot {
+    display: inline-block;
+    inline-size: 8px;
+    block-size: 8px;
+    border-radius: 999px;
+    background: var(--text-tertiary);
+    vertical-align: middle;
+  }
+  .status-dot[data-tone='success'] {
+    background: var(--success-solid);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent);
+  }
+  .status-dot[data-tone='warning'] {
+    background: var(--warning);
+  }
+  .status-dot[data-tone='danger'] {
+    background: var(--danger);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent);
+    animation: pipe-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pipe-pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50%      { transform: scale(1.2); opacity: .8; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .status-dot { animation: none !important; }
+  }
+
+  .cell-name-stack {
+    display: inline-flex;
+    flex-direction: column;
+    min-inline-size: 0;
+  }
+  .cell-name-sub {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-block-start: 2px;
+  }
+  .cell-err-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--danger-bg);
+    color: var(--danger);
+    font-size: 10.5px;
+    font-weight: 600;
+    border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+    cursor: help;
   }
 
   .cell-name {
