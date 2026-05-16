@@ -16,20 +16,20 @@ describe('Dialog', () => {
 
   it('clicking Confirm emits confirm', async () => {
     let fired = false;
-    const { getByText, component } = render(Dialog, {
-      props: { open: true, confirmLabel: 'Yes', cancelLabel: 'No' }
+    const { getByText } = render(Dialog, {
+      props: { open: true, confirmLabel: 'Yes', cancelLabel: 'No' },
+      events: { confirm: () => (fired = true) }
     });
-    component.$on('confirm', () => (fired = true));
     await fireEvent.click(getByText('Yes'));
     expect(fired).toBe(true);
   });
 
   it('clicking Cancel emits cancel', async () => {
     let fired = false;
-    const { getByText, component } = render(Dialog, {
-      props: { open: true, confirmLabel: 'Yes', cancelLabel: 'No' }
+    const { getByText } = render(Dialog, {
+      props: { open: true, confirmLabel: 'Yes', cancelLabel: 'No' },
+      events: { cancel: () => (fired = true) }
     });
-    component.$on('cancel', () => (fired = true));
     await fireEvent.click(getByText('No'));
     expect(fired).toBe(true);
   });

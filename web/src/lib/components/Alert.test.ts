@@ -20,10 +20,12 @@ describe('Alert', () => {
 
   it('shows close button only when dismissible and emits dismiss', async () => {
     let dismissed = false;
-    const { queryByLabelText, component } = render(Alert, {
-      props: { dismissible: true }
+    // Svelte 5 components no longer expose `$on`; pass the listener
+    // through the deprecated-but-still-supported `events` mount option.
+    const { queryByLabelText } = render(Alert, {
+      props: { dismissible: true },
+      events: { dismiss: () => (dismissed = true) }
     });
-    component.$on('dismiss', () => (dismissed = true));
     const close = queryByLabelText('Dismiss')!;
     expect(close).toBeInTheDocument();
     await fireEvent.click(close);

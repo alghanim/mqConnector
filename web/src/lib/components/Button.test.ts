@@ -29,9 +29,8 @@ describe('Button', () => {
   // it so it never happens again.
   it('forwards DOM click events to parent listeners', async () => {
     let clicked = false;
-    const { getByRole, component } = render(Button);
-    component.$on('click', () => {
-      clicked = true;
+    const { getByRole } = render(Button, {
+      events: { click: () => (clicked = true) }
     });
     await fireEvent.click(getByRole('button'));
     expect(clicked).toBe(true);

@@ -29,14 +29,14 @@ describe('StageConfigForm', () => {
     });
 
     it('committing a path via the Add button updates the config', async () => {
-      const { getByPlaceholderText, getByText, component } = renderForm('filter', '{"paths":[]}');
+      const { getByPlaceholderText, getByText, queryByText } = renderForm('filter', '{"paths":[]}');
       const input = getByPlaceholderText(/customer.secret/i) as HTMLInputElement;
       await fireEvent.input(input, { target: { value: 'newPath' } });
       await fireEvent.click(getByText('Add'));
-      // Read back the bound config — vitest sees the latest from the
-      // component's prop bag after fireEvent flushes.
-      const cfg = JSON.parse((component as any).$$.ctx[(component as any).$$.props.config] || '{}');
-      expect(cfg.paths).toContain('newPath');
+      // Svelte 5 components don't expose the legacy `$$.ctx` bag, so
+      // assert on the visible chip the commit produces — same end-user
+      // contract, no private API.
+      expect(queryByText('newPath')).toBeInTheDocument();
     });
 
     it('Enter key commits and clears the input', async () => {

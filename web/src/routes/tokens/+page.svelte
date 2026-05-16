@@ -269,7 +269,7 @@
   <div class="reveal-scrim" role="presentation" on:click|self={() => (justCreated = null)}>
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-    <div class="reveal-panel" role="dialog" aria-modal="true" aria-labelledby="reveal-title" on:click|stopPropagation>
+    <div class="reveal-panel" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="reveal-title" on:click|stopPropagation>
       <h2 id="reveal-title" class="reveal-title">{t($locale, 'tokens.create.success')}</h2>
       <p class="reveal-warning">{t($locale, 'tokens.secret.warning')}</p>
       <div class="reveal-secret-row">

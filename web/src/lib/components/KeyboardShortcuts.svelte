@@ -94,6 +94,7 @@
       bind:this={dialogEl}
       class="panel"
       role="dialog"
+      tabindex="-1"
       aria-modal="true"
       aria-labelledby="ks-title"
       on:click|stopPropagation

@@ -17,7 +17,12 @@
   export let id = `inp-${Math.random().toString(36).slice(2, 9)}`;
   export let required = false;
   export let disabled = false;
-  export let autocomplete: string | undefined = undefined;
+  // Svelte 5 narrows the input element's autocomplete attribute to the
+  // WHATWG `FullAutoFill` union (HTMLInputAutoCompleteAttribute) rather
+  // than accepting any string. Type the prop to match so callers get
+  // autocomplete on the autocomplete prop, instead of pushing the
+  // mismatch into runtime markup.
+  export let autocomplete: import('svelte/elements').FullAutoFill | undefined = undefined;
   /** Persistent hint shown below the input. Hidden when `error` is set. */
   export let helper = '';
   /** Validation message. Switches the border to --danger and overrides helper. */

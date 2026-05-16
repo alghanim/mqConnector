@@ -1,12 +1,9 @@
 import { describe, it, expect } from 'vitest';
 // Node built-ins — used to cross-check inline fixtures against the on-disk
-// copies in testdata/samples. @types/node isn't a project dep (web is a
-// browser bundle), so the imports are typed via the suppression below.
-// @ts-expect-error — node built-in, untyped in this project
+// copies in testdata/samples. The Svelte 5 migration installed @types/node,
+// so these now type-check natively.
 import { readFileSync, existsSync } from 'node:fs';
-// @ts-expect-error — node built-in, untyped in this project
 import { resolve, dirname } from 'node:path';
-// @ts-expect-error — node built-in, untyped in this project
 import { fileURLToPath } from 'node:url';
 import { SAMPLE_ORDER_JSON, SAMPLE_PAYMENT_XML, SAMPLE_FIXTURES } from './sample-fixtures';
 
