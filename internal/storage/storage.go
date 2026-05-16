@@ -41,6 +41,8 @@ type Store struct {
 	Audit        *AuditRepo
 	Tenants      *TenantRepo
 	Memberships  *MembershipRepo
+	APITokens    *APITokenRepo
+	Webhooks     *WebhookRepo
 }
 
 // Dialect reports which SQL flavour the underlying connection speaks.
@@ -115,6 +117,8 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 		Audit:        &AuditRepo{db: db},
 		Tenants:      &TenantRepo{db: db},
 		Memberships:  &MembershipRepo{db: db},
+		APITokens:    &APITokenRepo{db: db},
+		Webhooks:     &WebhookRepo{db: db},
 	}, nil
 }
 

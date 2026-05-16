@@ -1,0 +1,23 @@
+apiVersion: v2
+name: mqconnector
+description: |
+  Single-binary message-queue bridge with embedded admin UI. Consumes from
+  one MQ (IBM MQ, RabbitMQ, Kafka), runs a configurable pipeline of
+  filter / transform / translate / route / script / validate stages, and
+  forwards to another MQ. Air-gap friendly — no telemetry, no auto-update,
+  no third-party IdP.
+type: application
+version: 0.1.0          # chart version
+appVersion: "1.0.0"     # mqConnector version
+home: https://github.com/your-org/mqConnector
+sources:
+  - https://github.com/your-org/mqConnector
+keywords:
+  - message-queue
+  - bridge
+  - integration
+  - ibm-mq
+  - rabbitmq
+  - kafka
+maintainers:
+  - name: mqConnector team

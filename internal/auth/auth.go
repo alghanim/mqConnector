@@ -42,6 +42,7 @@ type Service struct {
 	sessionTTL     time.Duration
 	secure         bool
 	tenantResolver TenantResolver // optional; nil = single-tenant fallback
+	apiTokenLookup APITokenLookup // optional; nil disables Bearer auth
 }
 
 // Options bundle the constructor arguments. Secure controls the cookie Secure

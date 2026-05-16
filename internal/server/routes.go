@@ -78,6 +78,27 @@ func (s *Server) routes() http.Handler {
 		r.Get("/api/v1/secrets/status", s.handleSecretsStatus)
 		r.Post("/api/v1/secrets/rotate", s.handleRotateSecrets)
 
+		// API tokens (headless / CI auth). Scoped to the caller's
+		// tenant; the secret is shown exactly once at creation.
+		r.Get("/api/v1/tokens", s.handleListTokens)
+		r.Post("/api/v1/tokens", s.handleCreateToken)
+		r.Delete("/api/v1/tokens/{id}", s.handleRevokeToken)
+
+		// Webhooks — outbound HTTP delivery of internal events with
+		// HMAC-SHA256 signing.
+		r.Route("/api/v1/webhooks", func(r chi.Router) {
+			r.Get("/", s.handleListWebhooks)
+			r.Post("/", s.handleCreateWebhook)
+			r.Put("/{id}", s.handleUpdateWebhook)
+			r.Delete("/{id}", s.handleDeleteWebhook)
+		})
+
+		// Tenant-scoped configuration import / export. YAML by default;
+		// JSON on Accept: application/json or ?format=json. Import
+		// requires admin (enforced inside the handler).
+		r.Get("/api/v1/config/export", s.handleExportConfig)
+		r.Post("/api/v1/config/import", s.handleImportConfig)
+
 		// Server-Sent Events — long-lived stream. The RequestContextTimeout
 		// middleware detects "Accept: text/event-stream" and skips the
 		// per-request deadline; the SSE handler clears the per-connection

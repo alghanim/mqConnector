@@ -107,6 +107,11 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 	// new tenants — so we always install it when storage is wired.
 	if deps.Auth != nil && deps.Store != nil {
 		deps.Auth.SetTenantResolver(newTenantResolver(deps.Store, deps.Logger))
+		// Bearer-token authentication. The adapter keeps the auth
+		// package free of a storage dependency.
+		if deps.Store.APITokens != nil {
+			deps.Auth.SetAPITokenLookup(apiTokenAdapter{repo: deps.Store.APITokens})
+		}
 	}
 
 	router := s.routes()

@@ -7,10 +7,18 @@ import (
 	"sync"
 	"time"
 
+	"mqConnector/internal/events"
 	"mqConnector/internal/mq"
 	"mqConnector/internal/mqcfg"
 	"mqConnector/internal/storage"
 )
+
+// EventSink is the minimal interface the manager needs to emit
+// lifecycle events. internal/events.Publisher satisfies it; tests can
+// pass a nil sink to skip emission.
+type EventSink interface {
+	Publish(ctx context.Context, e events.Event) int
+}
 
 // Manager owns one Executor per enabled pipeline and supports hot-reload:
 // callers can mutate pipeline configuration in storage and call Reload to
@@ -32,6 +40,34 @@ type Manager struct {
 	// can give in-flight messages a chance to finish before the
 	// process exits.
 	wg sync.WaitGroup
+
+	// Optional event sink. nil means "don't emit lifecycle events".
+	events EventSink
+}
+
+// SetEventSink installs a publisher to receive pipeline.started /
+// pipeline.stopped lifecycle events. Idempotent. Pass nil to disable.
+func (m *Manager) SetEventSink(sink EventSink) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = sink
+}
+
+// emit fires an event when a sink is installed, swallows otherwise.
+// Held under the manager's mutex would risk back-pressure on a slow
+// subscriber — but the Publisher's non-blocking send keeps it cheap.
+func (m *Manager) emit(ctx context.Context, evType, tenantID string, data map[string]any) {
+	m.mu.Lock()
+	sink := m.events
+	m.mu.Unlock()
+	if sink == nil {
+		return
+	}
+	sink.Publish(ctx, events.Event{
+		Type:     evType,
+		TenantID: tenantID,
+		Data:     data,
+	})
 }
 
 // NewManager constructs a Manager but does not start anything until Reload is
@@ -182,6 +218,16 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 	m.active[p.ID] = cancel
 	m.mu.Unlock()
 
+	// Lifecycle event: pipeline started. Emitted before the executor
+	// goroutine spins up so a subscriber that lists pipelines straight
+	// after will see the row as live.
+	m.emit(ctx, events.TypePipelineStarted, p.TenantID, map[string]any{
+		"pipeline_id":   p.ID,
+		"pipeline_name": p.Name,
+		"source_queue":  source.QueueName,
+		"dest_queue":    dest.QueueName,
+	})
+
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -189,10 +235,21 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 			m.mu.Lock()
 			delete(m.active, p.ID)
 			m.mu.Unlock()
+			// Lifecycle event: pipeline stopped. Reasons include
+			// explicit Stop, Reload churn, or an executor error.
+			m.emit(context.Background(), events.TypePipelineStopped, p.TenantID, map[string]any{
+				"pipeline_id":   p.ID,
+				"pipeline_name": p.Name,
+			})
 		}()
 		if err := executor.Run(pipelineCtx); err != nil {
 			m.logger.Error("executor exited with error",
 				"pipeline_id", p.ID, "err", err)
+			m.emit(context.Background(), events.TypePipelineError, p.TenantID, map[string]any{
+				"pipeline_id":   p.ID,
+				"pipeline_name": p.Name,
+				"err":           err.Error(),
+			})
 		}
 	}()
 	return nil

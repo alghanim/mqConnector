@@ -17,6 +17,7 @@ import (
 	"mqConnector/internal/auth"
 	"mqConnector/internal/config"
 	"mqConnector/internal/dlq"
+	"mqConnector/internal/events"
 	"mqConnector/internal/health"
 	"mqConnector/internal/leadership"
 	"mqConnector/internal/logging"
@@ -24,6 +25,7 @@ import (
 	"mqConnector/internal/mq"
 	"mqConnector/internal/pipeline"
 	"mqConnector/internal/secrets"
+	"mqConnector/internal/webhooks"
 	"mqConnector/internal/server"
 	"mqConnector/internal/storage"
 )
@@ -183,8 +185,19 @@ func run(configPath string) error {
 			"sweep_interval", cfg.Audit.SweepInterval)
 	}
 
+	// Event bus + webhook dispatcher. Started before the pipeline
+	// manager so lifecycle events emitted during Reload land on a
+	// running subscriber rather than getting dropped by a not-yet-
+	// subscribed publisher.
+	eventBus := events.NewPublisher(128, logger)
+	dispatcher := webhooks.New(store.Webhooks, eventBus, webhooks.Options{}, logger)
+	go dispatcher.Run(rootCtx)
+	defer dispatcher.Stop()
+
 	// Pipeline manager
 	mgr := pipeline.NewManager(rootCtx, store, pool, metricsStore, dlqSvc, logger)
+	mgr.SetEventSink(eventBus)
+	dlqSvc.SetEventSink(eventBus)
 	// Graceful drain: give in-flight messages 30s to finish their
 	// receive → stages → send round trip before the process exits.
 	// Fire-and-forget Stop() runs anyway as a backstop if the deferred

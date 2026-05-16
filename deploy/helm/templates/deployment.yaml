@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mqconnector.fullname" . }}
+  labels: {{- include "mqconnector.labels" . | nindent 4 }}
+spec:
+  # Multi-replica requires .Values.config.leadership.enabled = true so
+  # only one replica consumes from the source queue at a time. The
+  # chart doesn't enforce that — leaving it as an operator decision so
+  # passive replicas (e.g. for HTTP-API load balancing) stay possible.
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: {{- include "mqconnector.selectorLabels" . | nindent 6 }}
+  strategy:
+    # Recreate keeps the SQLite WAL writer single-process at all times.
+    # If you migrate to Postgres (Phase 18), bump this to RollingUpdate.
+    type: Recreate
+  template:
+    metadata:
+      labels: {{- include "mqconnector.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Triggers a rollout when config.yaml or the master key changes
+        # without operators needing to remember `kubectl rollout`.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if not .Values.secrets.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if .Values.prometheus.podMonitor }}
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/api/metrics/prometheus"
+        prometheus.io/port: "8443"
+        prometheus.io/scheme: "https"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "mqconnector.serviceAccountName" . }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: mqconnector
+          image: "{{ include "mqconnector.image" . }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "-config"
+            - "/etc/mqconnector/config.yaml"
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          env:
+            - name: MQC_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mqconnector.secretName" . }}
+                  key: MQC_MASTER_KEY
+                  optional: true
+            - name: MQC_MASTER_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mqconnector.secretName" . }}
+                  key: MQC_MASTER_KEYS
+                  optional: true
+            - name: AUTH_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mqconnector.secretName" . }}
+                  key: AUTH_ADMIN_KEY
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 5
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mqconnector
+              readOnly: true
+            {{- if .Values.tls.existingSecret }}
+            - name: tls
+              mountPath: /etc/mqconnector/tls
+              readOnly: true
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+            {{- end }}
+            # Writable tmp for the SQLite WAL pragma flips. readOnlyRootFilesystem
+            # in the pod security context still applies to the binary itself.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "mqconnector.fullname" . }}-config
+        {{- if .Values.tls.existingSecret }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.tls.existingSecret }}
+        {{- end }}
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "mqconnector.fullname" . }}-data
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # 35s is comfortably above the StopAndWait(30s) drain budget the
+      # binary's SIGTERM handler enforces — in-flight messages get to
+      # finish their send before kube SIGKILLs the pod.
+      terminationGracePeriodSeconds: 35

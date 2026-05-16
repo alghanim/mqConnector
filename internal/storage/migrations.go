@@ -256,6 +256,62 @@ var migrations = []string{
 	ALTER TABLE connections ADD COLUMN tls_key_file             TEXT NOT NULL DEFAULT '';
 	ALTER TABLE connections ADD COLUMN tls_insecure_skip_verify INTEGER NOT NULL DEFAULT 0;
 	`,
+	// 0007 — API tokens for headless / automation clients. Stored as
+	// sha256 hashes (never the secret itself). The "prefix" column is
+	// the first 8 chars of the user-visible secret so the UI can list
+	// rows like "mqct_abc12345…" without needing the full token (which
+	// is shown exactly once at creation time and never again).
+	//
+	// role is the token's scope — must be ≤ the creating user's role at
+	// creation time, enforced by the handler. expires_at is nullable for
+	// non-expiring tokens; revoked_at is nullable for active tokens. A
+	// token is valid iff revoked_at IS NULL AND (expires_at IS NULL OR
+	// expires_at > NOW).
+	`
+	CREATE TABLE IF NOT EXISTS api_tokens (
+		id           TEXT PRIMARY KEY,
+		tenant_id    TEXT NOT NULL,
+		user_sub     TEXT NOT NULL,         -- who created the token (audit trail)
+		name         TEXT NOT NULL,         -- human label
+		prefix       TEXT NOT NULL,         -- first 8 chars of the secret, for UI display
+		token_hash   TEXT NOT NULL UNIQUE,  -- sha256 hex of the secret
+		role         TEXT NOT NULL CHECK(role IN ('viewer','operator','admin','owner')),
+		created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		expires_at   DATETIME NULL,
+		last_used_at DATETIME NULL,
+		revoked_at   DATETIME NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_api_tokens_tenant ON api_tokens(tenant_id);
+	CREATE INDEX IF NOT EXISTS idx_api_tokens_hash   ON api_tokens(token_hash);
+	`,
+	// 0008 — webhooks. Operators register outbound HTTP endpoints to
+	// receive event notifications when certain things happen in the
+	// system (pipeline lifecycle, DLQ pushes). The body is signed with
+	// HMAC-SHA256 against the per-webhook secret so receivers can
+	// verify authenticity without TLS-based identity.
+	//
+	// `events` is a comma-separated list of event-type filters
+	// ("pipeline.started,pipeline.error,dlq.pushed") or "*" for all.
+	// `last_*` columns capture the last delivery attempt for the UI's
+	// status display; they're best-effort and never block the request
+	// that triggered the event.
+	`
+	CREATE TABLE IF NOT EXISTS webhooks (
+		id              TEXT PRIMARY KEY,
+		tenant_id       TEXT NOT NULL,
+		name            TEXT NOT NULL,
+		url             TEXT NOT NULL,
+		secret          TEXT NOT NULL,
+		events          TEXT NOT NULL DEFAULT '*',
+		enabled         INTEGER NOT NULL DEFAULT 1,
+		last_status     INTEGER NOT NULL DEFAULT 0,
+		last_error      TEXT NOT NULL DEFAULT '',
+		last_attempt_at DATETIME NULL,
+		created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_webhooks_tenant ON webhooks(tenant_id);
+	`,
 }
 
 func migrate(db *sql.DB) error {

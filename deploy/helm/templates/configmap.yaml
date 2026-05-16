@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mqconnector.fullname" . }}-config
+  labels: {{- include "mqconnector.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    server:
+      listen: {{ .Values.config.server.listen | quote }}
+      read_timeout: {{ .Values.config.server.readTimeout }}
+      write_timeout: {{ .Values.config.server.writeTimeout }}
+      idle_timeout: {{ .Values.config.server.idleTimeout }}
+      max_body_bytes: {{ .Values.config.server.maxBodyBytes }}
+      tls:
+        enabled: {{ .Values.config.server.tls.enabled }}
+        min_version: {{ .Values.config.server.tls.minVersion | quote }}
+        cert_file: {{ .Values.config.server.tls.certFile | quote }}
+        key_file: {{ .Values.config.server.tls.keyFile | quote }}
+      cors_origins:
+        {{- range .Values.config.server.corsOrigins }}
+        - {{ . | quote }}
+        {{- end }}
+
+    auth:
+      simpleauth_url: {{ .Values.config.auth.simpleauthUrl | quote }}
+      insecure_skip_verify: {{ .Values.config.auth.insecureSkipVerify }}
+      cookie_name: {{ .Values.config.auth.cookieName | quote }}
+      session_ttl: {{ .Values.config.auth.sessionTtl }}
+      secure: {{ .Values.config.auth.secure }}
+
+    storage:
+      dsn: {{ .Values.config.storage.dsn | quote }}
+      max_open_conns: {{ .Values.config.storage.maxOpenConns }}
+      max_idle_conns: {{ .Values.config.storage.maxIdleConns }}
+
+    audit:
+      archive_dir: {{ .Values.config.audit.archiveDir | quote }}
+      max_age: {{ .Values.config.audit.maxAge }}
+      sweep_interval: {{ .Values.config.audit.sweepInterval }}
+
+    leadership:
+      enabled: {{ .Values.config.leadership.enabled }}
+      ttl: {{ .Values.config.leadership.ttl }}

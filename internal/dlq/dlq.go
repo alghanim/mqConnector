@@ -15,11 +15,19 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
+	"mqConnector/internal/events"
 	"mqConnector/internal/mq"
 	"mqConnector/internal/mqcfg"
 	"mqConnector/internal/storage"
 )
+
+// EventSink is the minimal surface dlq uses to emit dlq.pushed events.
+// internal/events.Publisher satisfies it. Nil disables emission.
+type EventSink interface {
+	Publish(ctx context.Context, e events.Event) int
+}
 
 // Service is the DLQ controller. It owns no goroutines; callers drive it.
 type Service struct {
@@ -27,6 +35,16 @@ type Service struct {
 	pool       *mq.Pool
 	maxRetries int
 	logger     *slog.Logger
+
+	sinkMu sync.RWMutex
+	sink   EventSink
+}
+
+// SetEventSink installs the publisher Push will emit dlq.pushed to.
+func (s *Service) SetEventSink(sink EventSink) {
+	s.sinkMu.Lock()
+	defer s.sinkMu.Unlock()
+	s.sink = sink
 }
 
 // Options bundles the constructor arguments.
@@ -73,6 +91,23 @@ func (s *Service) Push(ctx context.Context, entry storage.DLQEntry) error {
 		"source_queue", entry.SourceQueue,
 		"reason", entry.ErrorReason,
 	)
+	// Lifecycle event: a message landed in DLQ. Best-effort emission —
+	// a slow webhook subscriber must never back-pressure the pipeline.
+	s.sinkMu.RLock()
+	sink := s.sink
+	s.sinkMu.RUnlock()
+	if sink != nil {
+		sink.Publish(ctx, events.Event{
+			Type:     events.TypeDLQPushed,
+			TenantID: tenant,
+			Data: map[string]any{
+				"dlq_id":       entry.ID,
+				"pipeline_id":  entry.PipelineID,
+				"source_queue": entry.SourceQueue,
+				"reason":       entry.ErrorReason,
+			},
+		})
+	}
 	return nil
 }
 

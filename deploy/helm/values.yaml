@@ -1,0 +1,142 @@
+# mqConnector — default Helm values.
+#
+# Override what you need; everything else picks production-safe defaults.
+# The chart is intentionally small — mqConnector is a single binary with
+# an embedded UI, so the Kubernetes shape is a Deployment + Service +
+# Secret + PVC, not a multi-pod fleet.
+
+image:
+  repository: mqconnector/mqconnector
+  tag: ""                # defaults to .Chart.appVersion when empty
+  pullPolicy: IfNotPresent
+  pullSecrets: []        # [{name: my-registry-cred}]
+
+# replicaCount: 1 is the safe default for SQLite-backed deploys.
+# Multi-replica is correct ONLY when the leadership lease is enabled
+# (see `leadership.enabled`) so the source queue isn't double-consumed.
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 1
+    memory: 1Gi
+
+service:
+  type: ClusterIP
+  port: 8443
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: mqconnector.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []                # [{secretName: mqc-tls, hosts: [mqconnector.example.com]}]
+
+# Persistent volume for the SQLite DB. Phase 18+ Postgres deploys can
+# set persistence.enabled=false once the postgres backend lands.
+persistence:
+  enabled: true
+  storageClass: ""       # "" = cluster default
+  size: 10Gi
+  accessMode: ReadWriteOnce
+  mountPath: /var/lib/mqconnector
+
+# ───────────────────────────────────────────────────────────────────
+# mqConnector configuration. Everything here is mirrored into a
+# ConfigMap (config.yaml) and a Secret (passwords + master key). The
+# Pod mounts both at /etc/mqconnector and passes -config to the binary.
+# ───────────────────────────────────────────────────────────────────
+config:
+  server:
+    listen: "0.0.0.0:8443"
+    readTimeout: 30s
+    writeTimeout: 30s
+    idleTimeout: 120s
+    maxBodyBytes: 10485760
+    tls:
+      enabled: true
+      # Set these to point at mounted PEM paths. The chart will mount
+      # `tls.existingSecret` into /etc/mqconnector/tls/.
+      minVersion: "1.2"
+      certFile: /etc/mqconnector/tls/tls.crt
+      keyFile: /etc/mqconnector/tls/tls.key
+    corsOrigins: []
+
+  auth:
+    simpleauthUrl: ""    # e.g. "https://simpleauth.svc.cluster.local:8443"
+    insecureSkipVerify: false
+    cookieName: mqc_session
+    sessionTtl: 8h
+    secure: true
+
+  storage:
+    # Default DSN binds to the persistent volume. To use Postgres in a
+    # future release: "postgres://user:pass@host:5432/mqc?sslmode=require"
+    dsn: "file:/var/lib/mqconnector/mqc.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)"
+    maxOpenConns: 25
+    maxIdleConns: 10
+
+  audit:
+    archiveDir: /var/lib/mqconnector/audit-archive
+    maxAge: 720h         # 30d
+    sweepInterval: 1h
+
+  leadership:
+    enabled: false        # set true + bump replicaCount > 1 for HA
+    ttl: 30s
+
+# ───────────────────────────────────────────────────────────────────
+# Secrets. Every field here lands in a Kubernetes Secret. Two ways
+# to provide values:
+#   1. Inline below (NOT recommended for production — visible in
+#      `helm get values`).
+#   2. Set `secrets.existingSecret` to the name of a Secret you
+#      manage out-of-band (sealed-secrets, ESO, Vault Agent, etc.)
+#      that contains the same keys.
+# ───────────────────────────────────────────────────────────────────
+secrets:
+  existingSecret: ""
+  # The following are only used when existingSecret is empty.
+  masterKey: ""               # 64 hex chars — MQC_MASTER_KEY
+  simpleauthAdminKey: ""      # AUTH_ADMIN_KEY
+  # Multi-version rotation key set: "v1=<hex>,v2=<hex>"
+  masterKeys: ""
+
+tls:
+  existingSecret: ""          # kubernetes.io/tls Secret name
+
+# ───────────────────────────────────────────────────────────────────
+# Observability
+# ───────────────────────────────────────────────────────────────────
+prometheus:
+  # When true, the chart adds a podAnnotation so Prometheus-Operator's
+  # PodMonitor picks the pod up automatically. The metrics endpoint is
+  # /api/metrics/prometheus, behind cookie or token auth — wire your
+  # scrape job with a long-lived API token from /api/v1/tokens (see
+  # Phase 21 docs).
+  podMonitor: false
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Standard pod placement knobs.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podSecurityContext:
+  fsGroup: 1000
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
