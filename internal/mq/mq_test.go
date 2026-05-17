@@ -52,7 +52,9 @@ func (f *fakeConn) SendMessage(_ context.Context, _ []byte) error { return nil }
 func (f *fakeConn) ReceiveMessage(_ context.Context) ([]byte, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *fakeConn) Ping(_ context.Context) error { return f.pingErr }
+func (f *fakeConn) Ping(_ context.Context) error         { return f.pingErr }
+func (f *fakeConn) Commit(_ context.Context) error       { return nil }
+func (f *fakeConn) Nack(_ context.Context, _ bool) error { return nil }
 
 func TestPool_GetReusesEntry(t *testing.T) {
 	p := NewPool(PoolOptions{IdleTimeout: time.Hour, HealthInterval: time.Hour})

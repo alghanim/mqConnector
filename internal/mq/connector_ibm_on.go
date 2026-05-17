@@ -114,7 +114,12 @@ func (c *IBMConnector) ReceiveMessage(ctx context.Context) ([]byte, error) {
 
 	md := ibmmq.NewMQMD()
 	gmo := ibmmq.NewMQGMO()
-	gmo.Options = ibmmq.MQGMO_WAIT
+	// MQGMO_SYNCPOINT holds the get inside a unit of work that we
+	// commit (Cmit) in Commit() or roll back (Back) in Nack(). A
+	// crash between Get and Commit causes IBM MQ to roll back the
+	// uncommitted get on the queue manager's next sweep — true
+	// at-least-once.
+	gmo.Options = ibmmq.MQGMO_WAIT | ibmmq.MQGMO_SYNCPOINT
 	gmo.WaitInterval = 1000 // 1s — short so we can re-check ctx
 
 	for {
@@ -134,6 +139,42 @@ func (c *IBMConnector) ReceiveMessage(ctx context.Context) ([]byte, error) {
 		}
 		return buf[:n], nil
 	}
+}
+
+// Commit calls MQCMIT on the queue manager, persisting the
+// most-recent syncpoint-scoped Get (and any other in-flight work on
+// this thread/connection). Called by the executor after a successful
+// downstream send or DLQ push.
+func (c *IBMConnector) Commit(_ context.Context) error {
+	c.mu.Lock()
+	mgr := c.mgr
+	c.mu.Unlock()
+	if mgr == nil {
+		return errors.New("ibm: not connected")
+	}
+	if err := mgr.Cmit(); err != nil {
+		return fmt.Errorf("ibm Cmit: %w", err)
+	}
+	return nil
+}
+
+// Nack rolls back the in-flight syncpoint via MQBACK. The queue
+// manager will redeliver the rolled-back message on the next Get.
+// requeue is implicit: IBM MQ always redelivers a backed-out get
+// (configure the queue's backout-threshold / BOQNAME for poison-
+// message routing). requeue=false is the same behaviour at this
+// layer — we don't have a per-message reject primitive.
+func (c *IBMConnector) Nack(_ context.Context, _ bool) error {
+	c.mu.Lock()
+	mgr := c.mgr
+	c.mu.Unlock()
+	if mgr == nil {
+		return errors.New("ibm: not connected")
+	}
+	if err := mgr.Back(); err != nil {
+		return fmt.Errorf("ibm Back: %w", err)
+	}
+	return nil
 }
 
 func (c *IBMConnector) Ping(_ context.Context) error {

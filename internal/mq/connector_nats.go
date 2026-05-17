@@ -37,6 +37,11 @@ type NATSConnector struct {
 	pullSub *nats.Subscription  // JetStream pull-subscribe, if used
 
 	deliveries chan []byte // buffered drain for core NATS deliveries
+
+	// pendingJS holds the most-recent JetStream message awaiting an
+	// explicit Ack/Nak via Commit/Nack. The pool serialises receives,
+	// so at most one is pending per connector.
+	pendingJS *nats.Msg
 }
 
 func newNATS(cfg Config) Connector { return &NATSConnector{cfg: cfg} }
@@ -206,10 +211,13 @@ func (c *NATSConnector) ReceiveMessage(ctx context.Context) ([]byte, error) {
 			return nil, errors.New("nats: empty fetch")
 		}
 		m := msgs[0]
-		// Ack immediately. At-least-once: if the executor's downstream
-		// send fails we route to DLQ rather than rely on NATS
-		// redelivery — same posture as the RabbitMQ consumer.
-		_ = m.Ack()
+		// Hold the Ack until the executor calls Commit() after a
+		// successful downstream send (or DLQ push). A crash mid-flight
+		// causes JetStream to redeliver after the consumer's AckWait
+		// expires, giving us true at-least-once.
+		c.mu.Lock()
+		c.pendingJS = m
+		c.mu.Unlock()
 		return m.Data, nil
 	}
 	if ch != nil {
@@ -224,6 +232,50 @@ func (c *NATSConnector) ReceiveMessage(ctx context.Context) ([]byte, error) {
 		}
 	}
 	return nil, errors.New("nats: not subscribed")
+}
+
+// Commit acks the most-recent JetStream message. Core NATS has no
+// per-message acknowledgement (fire-and-forget protocol), so Commit
+// is a no-op there — operators using core NATS as a source accept
+// the broker's at-most-once semantics by definition.
+func (c *NATSConnector) Commit(_ context.Context) error {
+	c.mu.Lock()
+	m := c.pendingJS
+	c.pendingJS = nil
+	c.mu.Unlock()
+	if m == nil {
+		return nil
+	}
+	if err := m.Ack(); err != nil {
+		return fmt.Errorf("nats jetstream Ack: %w", err)
+	}
+	return nil
+}
+
+// Nack rolls back the most-recent JetStream message so the broker
+// redelivers it after AckWait expires (or immediately, via Nak). Core
+// NATS no-ops for the same reason as Commit.
+func (c *NATSConnector) Nack(_ context.Context, requeue bool) error {
+	c.mu.Lock()
+	m := c.pendingJS
+	c.pendingJS = nil
+	c.mu.Unlock()
+	if m == nil {
+		return nil
+	}
+	// requeue=true → immediate Nak (broker redelivers on the next
+	// pull). requeue=false → Term, which tells JetStream to NOT
+	// redeliver (the executor's own DLQ already covered this case).
+	if requeue {
+		if err := m.Nak(); err != nil {
+			return fmt.Errorf("nats jetstream Nak: %w", err)
+		}
+	} else {
+		if err := m.Term(); err != nil {
+			return fmt.Errorf("nats jetstream Term: %w", err)
+		}
+	}
+	return nil
 }
 
 func (c *NATSConnector) Ping(_ context.Context) error {

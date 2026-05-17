@@ -31,6 +31,11 @@ type AMQP10Connector struct {
 	session  *amqp.Session
 	sender   *amqp.Sender
 	receiver *amqp.Receiver
+
+	// pending holds the most-recent unacknowledged delivery. Commit
+	// AcceptMessage's it; Nack ReleaseMessage's it. The pool serialises
+	// access, so at most one is in flight per connector.
+	pending *amqp.Message
 }
 
 func newAMQP10(cfg Config) Connector { return &AMQP10Connector{cfg: cfg} }
@@ -156,16 +161,60 @@ func (c *AMQP10Connector) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Accept (ack) immediately. Same at-least-once posture as the
-	// RabbitMQ + NATS connectors — a downstream send failure routes
-	// to DLQ, we don't rely on the broker's redelivery.
-	if err := receiver.AcceptMessage(ctx, msg); err != nil {
-		// Acceptance failure usually means the link is closed.
-		// Return the body so the executor at least sees the message
-		// and let the next Receive trip the link error.
-		return assembleBody(msg), fmt.Errorf("amqp10 accept: %w", err)
-	}
+	// Hold acceptance until Commit() is called after a successful
+	// downstream send (or DLQ push). A crash mid-flight leaves the
+	// message in the broker's unsettled state; on reconnect the
+	// broker redelivers, giving true at-least-once semantics.
+	c.mu.Lock()
+	c.pending = msg
+	c.mu.Unlock()
 	return assembleBody(msg), nil
+}
+
+// Commit settles the most-recent delivery with the broker as accepted.
+func (c *AMQP10Connector) Commit(ctx context.Context) error {
+	c.mu.Lock()
+	receiver := c.receiver
+	msg := c.pending
+	c.pending = nil
+	c.mu.Unlock()
+	if msg == nil {
+		return nil
+	}
+	if receiver == nil {
+		return errors.New("amqp10: receiver not opened")
+	}
+	if err := receiver.AcceptMessage(ctx, msg); err != nil {
+		return fmt.Errorf("amqp10 accept: %w", err)
+	}
+	return nil
+}
+
+// Nack releases (requeue=true) or rejects (requeue=false) the
+// most-recent delivery. Release returns the message to the broker for
+// redelivery; Reject sends it to the broker's dead-letter chain.
+func (c *AMQP10Connector) Nack(ctx context.Context, requeue bool) error {
+	c.mu.Lock()
+	receiver := c.receiver
+	msg := c.pending
+	c.pending = nil
+	c.mu.Unlock()
+	if msg == nil {
+		return nil
+	}
+	if receiver == nil {
+		return errors.New("amqp10: receiver not opened")
+	}
+	if requeue {
+		if err := receiver.ReleaseMessage(ctx, msg); err != nil {
+			return fmt.Errorf("amqp10 release: %w", err)
+		}
+		return nil
+	}
+	if err := receiver.RejectMessage(ctx, msg, nil); err != nil {
+		return fmt.Errorf("amqp10 reject: %w", err)
+	}
+	return nil
 }
 
 func (c *AMQP10Connector) Ping(_ context.Context) error {

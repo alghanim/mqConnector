@@ -29,7 +29,11 @@ func (s *slowCancelConnector) Disconnect() error                    { return s.i
 func (s *slowCancelConnector) SendMessage(ctx context.Context, msg []byte) error {
 	return s.inner.SendMessage(ctx, msg)
 }
-func (s *slowCancelConnector) Ping(ctx context.Context) error { return s.inner.Ping(ctx) }
+func (s *slowCancelConnector) Ping(ctx context.Context) error    { return s.inner.Ping(ctx) }
+func (s *slowCancelConnector) Commit(ctx context.Context) error  { return s.inner.Commit(ctx) }
+func (s *slowCancelConnector) Nack(ctx context.Context, requeue bool) error {
+	return s.inner.Nack(ctx, requeue)
+}
 func (s *slowCancelConnector) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	msg, err := s.inner.ReceiveMessage(ctx)
 	// Hold the receive call for `delay` past the cancel so the next

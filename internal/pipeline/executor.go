@@ -89,27 +89,34 @@ func (e *Executor) Run(ctx context.Context) error {
 	logger.Info("pipeline starting", "workers", workers)
 	defer logger.Info("pipeline stopped")
 
-	// Each worker runs the same receive→stages→send loop independently.
-	// They share the source connection pool slot (Pool.Get is reference-
-	// counted so the underlying broker connection isn't N-multiplied)
-	// but each receive call gets its own message — the source's
-	// ReceiveMessage is the natural serialisation point.
+	// Each worker runs the same receive→stages→send→commit loop
+	// independently. To preserve at-least-once semantics we give every
+	// worker its OWN pool slot (key includes worker index) — otherwise
+	// concurrent ReceiveMessage calls into a shared connector would
+	// race on the per-connector "pending delivery" slot used by
+	// Commit/Nack. With per-worker connectors the broker handles
+	// parallelism the way each protocol intends: Kafka rebalances
+	// partitions across group members, RabbitMQ round-robins
+	// deliveries, JetStream fans out to subscriptions.
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
-		workerLogger := logger.With("worker", w)
+		workerIdx := w
+		workerLogger := logger.With("worker", workerIdx)
 		go func() {
 			defer wg.Done()
-			e.runWorker(ctx, workerLogger)
+			e.runWorker(ctx, workerIdx, workerLogger)
 		}()
 	}
 	wg.Wait()
 	return nil
 }
 
-// runWorker is the per-goroutine receive loop. Identical semantics to
-// the original single-threaded loop — just one of N copies.
-func (e *Executor) runWorker(ctx context.Context, logger *slog.Logger) {
+// runWorker is the per-goroutine receive loop. Each worker has its own
+// pool key so the per-broker Commit/Nack token (delivery tag, Kafka
+// session, JetStream msg ack) is unambiguous — see Run for the design
+// note on per-worker connectors.
+func (e *Executor) runWorker(ctx context.Context, workerIdx int, logger *slog.Logger) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -117,7 +124,7 @@ func (e *Executor) runWorker(ctx context.Context, logger *slog.Logger) {
 		default:
 		}
 
-		if err := e.processOne(ctx, logger); err != nil {
+		if err := e.processOne(ctx, workerIdx, logger); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return
 			}
@@ -136,12 +143,24 @@ func (e *Executor) runWorker(ctx context.Context, logger *slog.Logger) {
 	}
 }
 
-func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
+func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.Logger) error {
+	// Single-worker pipelines keep the historical key so existing
+	// dashboards and test injections continue to work. Multi-worker
+	// pipelines get one connector per worker.
 	sourceID := "source-" + e.Pipeline.ID
+	if workerIdx > 0 {
+		sourceID = fmt.Sprintf("%s-w%d", sourceID, workerIdx)
+	}
 	source, release, err := e.Pool.Get(ctx, sourceID, e.Source)
 	if err != nil {
 		return fmt.Errorf("get source: %w", err)
 	}
+	// Hold the source connection through receive→send→commit so the
+	// per-connector "pending delivery" slot is consistent across the
+	// whole transaction. Releasing here means the pool can evict it on
+	// idle timeout once we're done, but other workers won't grab it
+	// mid-flight because each worker has a unique pool key.
+	defer release()
 	// Once we have a healthy source connection, clear any prior error
 	// status — otherwise an idle pipeline (waiting on its first message
 	// after a broker bounce) shows up in /api/health as "error" forever
@@ -152,7 +171,6 @@ func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
 
 	start := time.Now()
 	message, err := source.ReceiveMessage(ctx)
-	release()
 	if err != nil {
 		return err
 	}
@@ -168,8 +186,14 @@ func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
 	outcome, runErr := RunStages(ctx, e.Stages, message)
 	if runErr != nil {
 		logger.Warn("stage failed, sending to DLQ", "err", runErr)
+		// At-least-once handoff: a stage failure is "handled" once the
+		// DLQ owns the bytes. If the DLQ push succeeds we Commit (so
+		// the broker stops redelivering); if it fails we Nack with
+		// requeue so the broker redelivers and we get another shot
+		// next iteration.
+		dlqErr := errors.New("dlq disabled")
 		if e.DLQ != nil {
-			_ = e.DLQ.Push(ctx, storage.DLQEntry{
+			dlqErr = e.DLQ.Push(ctx, storage.DLQEntry{
 				TenantID:    e.Pipeline.TenantID,
 				PipelineID:  e.Pipeline.ID,
 				SourceQueue: e.SourceQueue,
@@ -180,6 +204,7 @@ func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
 		if e.Metrics != nil {
 			e.Metrics.RecordFailure(e.Pipeline.ID)
 		}
+		e.finalize(ctx, source, dlqErr == nil, logger)
 		return nil
 	}
 	current := outcome.Body
@@ -205,8 +230,9 @@ func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	if sendErr != nil {
+		dlqErr := errors.New("dlq disabled")
 		if e.DLQ != nil {
-			_ = e.DLQ.Push(ctx, storage.DLQEntry{
+			dlqErr = e.DLQ.Push(ctx, storage.DLQEntry{
 				TenantID:    e.Pipeline.TenantID,
 				PipelineID:  e.Pipeline.ID,
 				SourceQueue: e.SourceQueue,
@@ -217,6 +243,7 @@ func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
 		if e.Metrics != nil {
 			e.Metrics.RecordFailure(e.Pipeline.ID)
 		}
+		e.finalize(ctx, source, dlqErr == nil, logger)
 		return nil
 	}
 
@@ -225,7 +252,24 @@ func (e *Executor) processOne(ctx context.Context, logger *slog.Logger) error {
 			int64(len(current)),
 			float64(time.Since(start).Milliseconds()))
 	}
+	e.finalize(ctx, source, true, logger)
 	return nil
+}
+
+// finalize closes out the per-message ack/nack with the source broker.
+// handled=true (send succeeded OR DLQ owns the bytes) → Commit.
+// handled=false (both downstream and DLQ failed) → Nack with requeue
+// so the source broker redelivers on the next loop iteration.
+func (e *Executor) finalize(ctx context.Context, source mq.Connector, handled bool, logger *slog.Logger) {
+	if handled {
+		if err := source.Commit(ctx); err != nil {
+			logger.Warn("source commit failed", "err", err)
+		}
+		return
+	}
+	if err := source.Nack(ctx, true); err != nil {
+		logger.Warn("source nack failed", "err", err)
+	}
 }
 
 func (e *Executor) send(ctx context.Context, id string, cfg mq.Config, message []byte) error {

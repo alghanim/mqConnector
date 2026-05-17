@@ -64,7 +64,14 @@ func (c *MQTTConnector) Connect(ctx context.Context) error {
 
 	opts := mqtt.NewClientOptions().AddBroker(c.cfg.URL)
 	opts.SetClientID(c.clientID())
-	opts.SetCleanSession(true)
+	// CleanSession=false + a stable ClientID means the broker holds
+	// QoS-1/2 messages addressed to our subscriptions while we're
+	// disconnected, and re-delivers them on reconnect. This is the
+	// MQTT-protocol-level "survive a restart" guarantee — paho's
+	// auto-reconnect picks them up transparently. Operators who want
+	// a fresh session every boot (anonymous consumers, dev loops) can
+	// supply a unique client_id per run.
+	opts.SetCleanSession(false)
 	opts.SetConnectTimeout(10 * time.Second)
 	opts.SetAutoReconnect(true)
 	// We use manual ack-style backpressure (bounded channel + drop on
@@ -196,6 +203,21 @@ func (c *MQTTConnector) Ping(_ context.Context) error {
 	}
 	return nil
 }
+
+// Commit is a no-op for MQTT: paho's default-publish-handler fires
+// BEFORE the user code sees the message, and paho handles the PUBACK
+// to the broker at the protocol level (QoS 1) or PUBREC/PUBCOMP (QoS
+// 2) before invoking the callback. By the time ReceiveMessage returns
+// the payload, the broker has already received the ack — there's no
+// later "commit" we can issue. The session-level persistence guarantee
+// comes from CleanSession=false (set in Connect), which makes the
+// broker hold messages between mqConnector restarts.
+func (c *MQTTConnector) Commit(_ context.Context) error { return nil }
+
+// Nack is a no-op for the same reason as Commit. MQTT's wire protocol
+// doesn't expose a "redeliver" action to the subscriber — the broker
+// re-attempts QoS 1/2 delivery on its own when no PUBACK arrives.
+func (c *MQTTConnector) Nack(_ context.Context, _ bool) error { return nil }
 
 // ─── helpers ─────────────────────────────────────────────────────────
 

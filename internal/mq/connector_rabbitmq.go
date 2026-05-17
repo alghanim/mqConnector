@@ -33,6 +33,12 @@ type RabbitMQConnector struct {
 	consumeErr  error
 	deliveries  <-chan amqp.Delivery
 	consumerTag string
+
+	// pendingDelivery holds the delivery returned by the last
+	// ReceiveMessage call. Commit acks it; Nack nacks it. The pool
+	// serialises ReceiveMessage on a given connector, so at most one
+	// delivery is pending at any time.
+	pendingDelivery *amqp.Delivery
 }
 
 func newRabbitMQ(cfg Config) Connector {
@@ -57,6 +63,7 @@ func (c *RabbitMQConnector) Connect(_ context.Context) error {
 		c.consumeErr = nil
 		c.deliveries = nil
 		c.consumerTag = ""
+		c.pendingDelivery = nil
 	}
 	// When the operator has configured TLS material, dial through
 	// DialConfig so we can attach a custom *tls.Config (CA roots +
@@ -133,6 +140,7 @@ func (c *RabbitMQConnector) Disconnect() error {
 	}
 	c.deliveries = nil
 	c.consumerTag = ""
+	c.pendingDelivery = nil
 	return firstErr
 }
 
@@ -203,19 +211,56 @@ func (c *RabbitMQConnector) ReceiveMessage(ctx context.Context) ([]byte, error) 
 		if c.consumerTag == "" {
 			c.consumerTag = d.ConsumerTag
 		}
+		// Hold the delivery until the executor calls Commit() (after a
+		// successful downstream send) or Nack() (on failure routed to
+		// the broker's own DLX). This is the at-least-once guarantee:
+		// a crash between receive and Commit causes the broker to
+		// redeliver instead of silently dropping the message. The pool
+		// serialises access to one connection, so at most one delivery
+		// is pending per RabbitMQConnector at a time.
+		c.pendingDelivery = &d
 		c.mu.Unlock()
-		// Ack now: the executor's downstream Send is best-effort and a
-		// failed send routes the body to DLQ via the manager, so we
-		// don't need to hold the source-side ack until then. multiple=
-		// false acks just this delivery.
-		if ackErr := d.Ack(false); ackErr != nil {
-			// Ack failure usually means the channel is gone. Return the
-			// body so the executor at least gets to send it, and let
-			// the next ReceiveMessage trip the channel error.
-			return d.Body, fmt.Errorf("rabbitmq Ack: %w", ackErr)
-		}
 		return d.Body, nil
 	}
+}
+
+// Commit acks the most-recent delivery returned by ReceiveMessage. The
+// executor calls this after a successful downstream send OR after a
+// successful DLQ push — in both cases the message is "handled" and
+// the broker can forget it.
+func (c *RabbitMQConnector) Commit(_ context.Context) error {
+	c.mu.Lock()
+	d := c.pendingDelivery
+	c.pendingDelivery = nil
+	c.mu.Unlock()
+	if d == nil {
+		return nil // nothing to commit — Commit called twice or before any receive
+	}
+	if err := d.Ack(false); err != nil {
+		return fmt.Errorf("rabbitmq Ack: %w", err)
+	}
+	return nil
+}
+
+// Nack rolls back the most-recent delivery. requeue=true puts it back
+// at the head of the queue for another consumer; requeue=false sends
+// it to the broker's configured dead-letter exchange (if any). The
+// executor's own DLQ already covers the application-level case, so
+// the natural pairing is: send-succeeded → Commit; pipeline-stage-error
+// → Commit (already DLQ'd internally); broker-side-broken → don't call
+// either, let the redelivery cycle replay it next time.
+func (c *RabbitMQConnector) Nack(_ context.Context, requeue bool) error {
+	c.mu.Lock()
+	d := c.pendingDelivery
+	c.pendingDelivery = nil
+	c.mu.Unlock()
+	if d == nil {
+		return nil
+	}
+	if err := d.Nack(false, requeue); err != nil {
+		return fmt.Errorf("rabbitmq Nack: %w", err)
+	}
+	return nil
 }
 
 func (c *RabbitMQConnector) Ping(_ context.Context) error {

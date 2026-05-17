@@ -75,6 +75,11 @@ type Config struct {
 	// Kafka
 	Brokers []string
 	Topic   string
+	// GroupID overrides the auto-derived consumer-group id. Leave empty
+	// to let the connector hash brokers+topic into a stable group; set
+	// explicitly when two pipelines on the same Kafka source need
+	// independent offsets.
+	GroupID string
 
 	// MQTT
 	ClientID string // unique per broker; auto-generated if blank
@@ -114,8 +119,28 @@ type Connector interface {
 	Disconnect() error
 	SendMessage(ctx context.Context, message []byte) error
 	// ReceiveMessage blocks until a message is available, ctx is cancelled,
-	// or an error occurs.
+	// or an error occurs. The connector tracks the delivery internally so
+	// the caller can later acknowledge or nack it via Commit / Nack.
 	ReceiveMessage(ctx context.Context) ([]byte, error)
+	// Commit acknowledges the most-recent delivery returned by
+	// ReceiveMessage. This is the at-least-once guarantee: by holding
+	// the ack until after the pipeline's downstream send (or DLQ push)
+	// has succeeded, a crash mid-flight causes the source broker to
+	// redeliver instead of silently dropping the message.
+	//
+	// Brokers that don't support explicit acknowledgement (NATS Core,
+	// MQTT QoS 0) implement this as a no-op. Brokers that auto-ack at
+	// the protocol level (paho MQTT with QoS 1/2 + auto-ack callback)
+	// also no-op. Brokers that need an explicit commit hook implement
+	// it here: RabbitMQ d.Ack, Kafka offset MarkMessage, JetStream
+	// msg.Ack, AMQP 1.0 receiver.AcceptMessage, IBM MQ MQCMIT.
+	Commit(ctx context.Context) error
+	// Nack rolls back the most-recent delivery. Optional — only brokers
+	// that distinguish "ack me / requeue me" implement it meaningfully;
+	// the rest fall back to no-op. requeue=true asks the broker to put
+	// the message back on the head of the queue; false routes it to
+	// the broker's own DLX / poison-message handling where supported.
+	Nack(ctx context.Context, requeue bool) error
 	// Ping is used by the pool to check liveness. It must be safe to call
 	// concurrently with SendMessage / ReceiveMessage.
 	Ping(ctx context.Context) error

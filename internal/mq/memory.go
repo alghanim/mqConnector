@@ -129,6 +129,16 @@ func (m *MemoryConnector) Ping(_ context.Context) error {
 	return nil
 }
 
+// Commit is a no-op for the in-memory connector — messages dequeued by
+// ReceiveMessage are immediately removed from the registry's queue, so
+// there's nothing to defer. The method exists to satisfy the
+// at-least-once Connector contract.
+func (m *MemoryConnector) Commit(_ context.Context) error { return nil }
+
+// Nack is a no-op for the same reason as Commit; the in-memory queue
+// has no concept of redelivery.
+func (m *MemoryConnector) Nack(_ context.Context, _ bool) error { return nil }
+
 func (m *MemoryConnector) alive() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
