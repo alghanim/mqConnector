@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/IBM/sarama"
@@ -59,6 +61,19 @@ func newKafka(cfg Config) Connector {
 	return &KafkaConnector{cfg: cfg}
 }
 
+// initialOffsetFromConfig maps the operator-facing string to sarama's
+// constant. Anything other than the documented values (or the empty
+// string from legacy connection rows that pre-date this knob) falls
+// back to OffsetNewest — the upgrade-safe default.
+func initialOffsetFromConfig(cfg Config) int64 {
+	switch strings.ToLower(strings.TrimSpace(cfg.InitialOffset)) {
+	case "oldest", "earliest":
+		return sarama.OffsetOldest
+	default:
+		return sarama.OffsetNewest
+	}
+}
+
 // groupIDFor returns a stable consumer-group id. If cfg.GroupID is set
 // we honour it; otherwise we derive a deterministic id from the
 // brokers + topic so restarts pick up where they left off.
@@ -100,7 +115,22 @@ func (c *KafkaConnector) Connect(_ context.Context) error {
 	// At-least-once: read committed-only, manual commit. The executor
 	// drives MarkMessage via Commit(); we never auto-commit.
 	scfg.Consumer.Offsets.AutoCommit.Enable = false
-	scfg.Consumer.Offsets.Initial = sarama.OffsetOldest
+	// Initial offset for a NEW consumer group (no committed offsets yet).
+	//
+	// Default is OffsetNewest, matching what most Kafka clients use:
+	// a fresh consumer attaches at the partition's current end and
+	// receives only messages produced from now on. This is the safe
+	// upgrade default — the previous binary used ConsumePartition
+	// with OffsetNewest (no consumer group at all), so the
+	// upgrade-from-pre-consumer-group path with this default
+	// produces no replay AND no loss for messages that were already
+	// committed downstream by the old binary.
+	//
+	// Operators who want to consume historical data (replay from
+	// the start of the topic's retention window) override per
+	// connection via cfg.InitialOffset = "oldest". An empty value
+	// (legacy connection rows) maps to OffsetNewest.
+	scfg.Consumer.Offsets.Initial = initialOffsetFromConfig(c.cfg)
 
 	if c.cfg.TLS.Enabled() {
 		tlsCfg, err := BuildTLSConfig(c.cfg.TLS)
@@ -121,6 +151,23 @@ func (c *KafkaConnector) Connect(_ context.Context) error {
 		_ = producer.Close()
 		return fmt.Errorf("kafka NewConsumerGroup: %w", err)
 	}
+	// Announce the offset policy. Operators reading this log on an
+	// upgrade can confirm: with initial=newest, we'll attach at the
+	// partition's current end if this group has no committed offset,
+	// so the upgrade from a pre-consumer-group binary doesn't flood
+	// the destination with replays. If they wanted the replay
+	// behaviour they should set InitialOffset="oldest" on the
+	// connection. Once the group has any committed offset, this knob
+	// is ignored — the broker's stored offset wins.
+	policy := "newest"
+	if scfg.Consumer.Offsets.Initial == sarama.OffsetOldest {
+		policy = "oldest"
+	}
+	slog.Info("kafka consumer group attached",
+		"component", "mq.kafka",
+		"topic", c.cfg.Topic,
+		"group_id", groupID,
+		"initial_offset_if_fresh", policy)
 
 	c.producer = producer
 	c.group = group

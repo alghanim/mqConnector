@@ -44,7 +44,12 @@ type Connection struct {
 	// left off (the right answer for "one logical consumer per source
 	// connection"). Set explicitly when two pipelines on the same
 	// Kafka source need independent offsets.
-	GroupID   string    `json:"group_id,omitempty"`
+	GroupID string `json:"group_id,omitempty"`
+	// InitialOffset controls where a fresh Kafka consumer group
+	// attaches: "newest" (default, upgrade-safe) or "oldest"
+	// (replay from broker retention head). Ignored once the group
+	// has any committed offset — the broker's stored offset wins.
+	InitialOffset string    `json:"initial_offset,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

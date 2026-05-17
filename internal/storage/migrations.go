@@ -552,6 +552,15 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_stages_pipeline ON stages(pipeline_id, stage_order);
 	CREATE INDEX IF NOT EXISTS idx_stages_tenant   ON stages(tenant_id);
 	`,
+	// 0017 — Kafka initial-offset override.
+	//
+	// Empty = "newest" (the safe upgrade default the connector picks).
+	// "oldest" replays history from the broker's retention head.
+	// See the InitialOffset doc comment on storage.Connection +
+	// internal/mq/connector_kafka.go initialOffsetFromConfig.
+	`
+	ALTER TABLE connections ADD COLUMN initial_offset TEXT NOT NULL DEFAULT '';
+	`,
 }
 
 func migrate(db *sql.DB, dialect Dialect) error {

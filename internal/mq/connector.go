@@ -80,6 +80,17 @@ type Config struct {
 	// explicitly when two pipelines on the same Kafka source need
 	// independent offsets.
 	GroupID string
+	// InitialOffset controls where a FRESH Kafka consumer group
+	// (one with no committed offsets) attaches:
+	//   "newest" (default) → start at the partition's current end;
+	//                        future messages only. Safe for upgrades.
+	//   "oldest"          → start at the partition's retained head;
+	//                        replay all retained history. Use for
+	//                        a brand-new deploy that needs to ingest
+	//                        existing topic data.
+	// Once the group has any committed offset, this knob is ignored —
+	// the broker's stored offset takes precedence.
+	InitialOffset string
 
 	// MQTT
 	ClientID string // unique per broker; auto-generated if blank

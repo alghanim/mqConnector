@@ -54,6 +54,31 @@ After upgrade, three behavioural changes can surface:
 
 - **Cookie SameSite tightened to `Strict`.** A user who navigates to mqConnector from an external link in the same tab will be treated as unauthenticated; they re-login and proceed. No action needed; brief user-visible blip.
 - **Container image is now distroless static.** If you have a custom `docker run` recipe that overrides `--user` or `--entrypoint`, audit it — the user is now `nonroot` (UID 65532), no shell exists in the image.
+- **Kafka offset handover (one-time on upgrade).** The pre-1.1 binary used `sarama.ConsumePartition(OffsetNewest)` with NO consumer group — no broker-side offset tracking. The post-1.1 binary uses a real consumer group with manual commits.
+
+  When the new binary first attaches, the auto-derived consumer group (`mqconnector-<sha256(brokers+topic)[:16]>`) has no committed offset yet. The default behaviour starting in this release is **`initial_offset: newest`** — the new group attaches at the partition's current end. This means **no replay** on upgrade but also that any messages produced *between* the old binary shutting down and the new binary attaching are missed.
+
+  For a true **zero-loss, zero-duplicate** upgrade window, drain the source side first and then upgrade:
+
+  ```sh
+  # 1. Stop producers writing to the topic, or block the network path.
+  # 2. Drain: wait until the old binary's pipeline metrics show no new
+  #    messages for a few minutes.
+  # 3. Stop the old binary.
+  # 4. (Optional but recommended) Pre-seed the new consumer group at
+  #    the topic's current end, so the new binary doesn't even need
+  #    to rely on initial_offset=newest:
+  GROUP_ID=mqconnector-$(echo -n "broker:9092topic-name" | sha256sum | head -c 16)
+  kafka-consumer-groups.sh --bootstrap-server broker:9092 \
+    --group "$GROUP_ID" --topic topic-name \
+    --reset-offsets --to-latest --execute
+  # 5. Start the new binary. It picks up the seeded offset, processes
+  #    only new messages from the producers when you unblock them.
+  # 6. Resume producers.
+  ```
+
+  If you genuinely need to replay history through the new binary (e.g. you held messages in Kafka while the bridge was offline and want to catch up), set `initial_offset: oldest` on the Kafka connection before starting the new binary. After the catch-up, every processed message commits its offset, so subsequent restarts resume cleanly with no replay.
+
 - **UID change on the data volume.** The previous alpine-based image ran as UID 1000; distroless `nonroot` is UID 65532. After upgrading, the container will fail with `attempt to write a readonly database` because the existing SQLite files are still owned by UID 1000. Fix once with:
   ```sh
   docker run --rm -v <volume-name>:/data alpine:3.20 \
