@@ -1,0 +1,104 @@
+# Release workflow — runs on tagged pushes (vX.Y.Z) and publishes a
+# signed container image plus a release-attached SBOM.
+#
+# Tagging:
+#
+#   git tag -a v1.2.3 -m "release 1.2.3"
+#   git push origin v1.2.3
+#
+# What this workflow does:
+#
+#   1. Builds the multi-stage Dockerfile.
+#   2. Pushes to ghcr.io/<owner>/mqconnector:<tag> + :latest.
+#   3. Signs the image with cosign in keyless mode — the signature
+#      is bound to the workflow's GitHub OIDC identity, so any
+#      verifier can confirm "this image was built by this repo's
+#      CI on this tag" without managing keys.
+#   4. Generates a CycloneDX SBOM from the built image and attaches
+#      it to the GitHub Release.
+#
+# Verifying a release:
+#
+#   cosign verify ghcr.io/<owner>/mqconnector:v1.2.3 \
+#     --certificate-identity-regexp "https://github.com/<owner>/mqConnector/.+" \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write       # Required to upload release artifacts
+  packages: write       # Push to ghcr.io
+  id-token: write       # cosign keyless OIDC
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch SimpleAuth SDK
+        run: |
+          git clone --depth 1 https://github.com/bodaay/SimpleAuth.git /tmp/SimpleAuth
+          test -f /tmp/SimpleAuth/sdk/go/go.mod
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-contexts: |
+            simpleauth-sdk=/tmp/SimpleAuth/sdk/go
+          build-args: |
+            VERSION=${{ github.ref_name }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/mqconnector:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/mqconnector:latest
+          push: true
+          provenance: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign image (keyless)
+        # Keyless: cosign uses the workflow's OIDC token as its
+        # identity. The signature embeds the workflow URL + commit
+        # SHA, so a verifier can prove "this image was built by
+        # this repo's CI on this commit" without us managing keys.
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository_owner }}/mqconnector@${{ steps.build.outputs.digest }}
+
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0.20.0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/mqconnector@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: mqconnector-sbom.cdx.json
+
+      - name: Attest SBOM (cosign attach)
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign attest --yes \
+            --predicate mqconnector-sbom.cdx.json \
+            --type cyclonedx \
+            ghcr.io/${{ github.repository_owner }}/mqconnector@${{ steps.build.outputs.digest }}
+
+      - name: Upload SBOM to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mqconnector-sbom.cdx.json

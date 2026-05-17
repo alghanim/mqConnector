@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -194,6 +195,37 @@ func TestScriptStage_OutputByteCap(t *testing.T) {
 	}
 	if !errors.Is(err, ErrScriptResourceLimit) {
 		t.Fatalf("expected ErrScriptResourceLimit, got %v", err)
+	}
+}
+
+// TestScriptStage_IntermediateByteCap proves the in-flight size guard
+// catches a runaway append BEFORE the script exhausts memory. We
+// drive enough assignments to exceed the cap and assert the typed
+// resource-limit error fires from inside runScript (i.e. during
+// execution, not at the final encode step).
+func TestScriptStage_IntermediateByteCap(t *testing.T) {
+	// 200 assignments of a 100-char string. Each line sets a new
+	// key (msg.k0, msg.k1, ...). At 100 bytes per value the
+	// intermediate data should pass 8 KiB well within the op budget,
+	// so a cap of 4096 bytes is enough to trip the guard mid-run.
+	var lines []byte
+	for i := 0; i < 200; i++ {
+		lines = fmt.Appendf(lines, `msg.k%d = "%s"`+"\n", i, strings.Repeat("x", 100))
+	}
+	s := &ScriptStage{
+		Script:               string(lines),
+		MaxIntermediateBytes: 4096,
+		MaxOps:               10000, // generous so the op cap doesn't fire first
+	}
+	_, _, _, err := s.Execute(context.Background(), []byte(`{}`), FormatJSON)
+	if err == nil {
+		t.Fatal("expected resource-limit error, got nil")
+	}
+	if !errors.Is(err, ErrScriptResourceLimit) {
+		t.Fatalf("expected ErrScriptResourceLimit, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "intermediate data") {
+		t.Errorf("expected error to name the intermediate cap, got %v", err)
 	}
 }
 

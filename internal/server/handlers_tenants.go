@@ -294,18 +294,26 @@ func (s *Server) handleDeleteMember(w http.ResponseWriter, r *http.Request) {
 
 // ─── authorization helpers ─────────────────────────────────────────
 
-// isSystemAdmin reports whether the caller is an owner of the default
-// tenant. Used to gate tenant creation.
+// isSystemAdmin reports whether the caller holds the explicit
+// system_admin flag on ANY of their memberships. The flag is
+// granted automatically by migration 0013 to existing owners of
+// the default tenant; new grants happen through the
+// platform-admin endpoint (TenantRepo.SetSystemAdmin) — never
+// implicitly through tenant role changes.
+//
+// Used to gate cross-tenant operations: tenant create/delete,
+// audit verify with scope=all, secret rotation, backup/integrity
+// admin endpoints.
 func (s *Server) isSystemAdmin(r *http.Request) bool {
 	user, ok := auth.UserFromContext(r.Context())
 	if !ok || user == nil {
 		return false
 	}
-	m, err := s.store.Memberships.Get(r.Context(), storage.DefaultTenantID, user.Sub)
+	ok2, err := s.store.Memberships.IsSystemAdmin(r.Context(), user.Sub)
 	if err != nil {
 		return false
 	}
-	return m.Role == storage.RoleOwner
+	return ok2
 }
 
 // isMemberOf reports whether the caller has any membership in the

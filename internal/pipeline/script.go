@@ -27,17 +27,20 @@ import (
 //
 // Sandboxing
 //
-// Per Phase 17, the runner enforces three resource caps so a malicious
-// or buggy script cannot starve the pipeline workers:
+// The runner enforces four resource caps so a malicious or buggy script
+// cannot starve the pipeline workers:
 //
-//	MaxOps         hard upper bound on executed lines (default 1000)
-//	MaxScriptBytes hard upper bound on the source size (default 32 KiB)
-//	MaxOutputBytes max size of the re-encoded message after the script
-//	               runs; messages exceeding this are rejected with an
-//	               error so a runaway append loop can't blow up memory
-//	               (default 4 MiB)
+//	MaxOps               hard upper bound on executed lines (default 1000)
+//	MaxScriptBytes       hard upper bound on the source size (default 32 KiB)
+//	MaxIntermediateBytes max in-flight encoded size of the data map,
+//	                     measured every 64 ops; catches a runaway append
+//	                     loop before it has consumed tens of MiB (default 8 MiB)
+//	MaxOutputBytes       max size of the re-encoded message after the script
+//	                     runs; messages exceeding this are rejected with an
+//	                     error so a runaway append loop can't blow up memory
+//	                     (default 4 MiB)
 //
-// All three are tunable per-stage via SetSandboxLimits; the defaults are
+// All four are tunable per-stage via the struct fields; the defaults are
 // safe for the connector's typical < 1 MiB JSON payloads. Hitting any
 // cap returns a typed error so the pipeline can route the offending
 // message to DLQ rather than crash-looping.
@@ -46,18 +49,27 @@ type ScriptStage struct {
 	Timeout time.Duration // optional hard cap; 0 ⇒ inherit ctx
 
 	// Sandbox limits — 0 means "use the default" (see DefaultMaxOps etc.).
-	MaxOps         int
-	MaxScriptBytes int
-	MaxOutputBytes int
+	MaxOps               int
+	MaxScriptBytes       int
+	MaxIntermediateBytes int
+	MaxOutputBytes       int
 }
 
 // Default sandbox limits — picked conservatively so an operator writing
 // a typical transform won't trip them, but a buggy or hostile script
 // can't pin a worker forever or balloon memory.
 const (
-	DefaultMaxOps         = 1000
-	DefaultMaxScriptBytes = 32 * 1024     // 32 KiB
-	DefaultMaxOutputBytes = 4 * 1024 * 1024 // 4 MiB
+	DefaultMaxOps               = 1000
+	DefaultMaxScriptBytes       = 32 * 1024        // 32 KiB
+	DefaultMaxIntermediateBytes = 8 * 1024 * 1024  // 8 MiB — generous headroom over output cap
+	DefaultMaxOutputBytes       = 4 * 1024 * 1024  // 4 MiB
+
+	// intermediateCheckInterval is how often (in ops) the in-flight
+	// data map is re-encoded to measure its size. Lower = catches a
+	// runaway sooner; higher = cheaper. 64 means a 1000-op script
+	// pays for ~16 size checks at the cost of catching overruns
+	// within at most 64 ops of the actual blow-up.
+	intermediateCheckInterval = 64
 )
 
 // ErrScriptResourceLimit is returned when a script hits a sandbox cap.
@@ -82,6 +94,12 @@ func (s *ScriptStage) outputByteCap() int {
 		return s.MaxOutputBytes
 	}
 	return DefaultMaxOutputBytes
+}
+func (s *ScriptStage) intermediateByteCap() int {
+	if s.MaxIntermediateBytes > 0 {
+		return s.MaxIntermediateBytes
+	}
+	return DefaultMaxIntermediateBytes
 }
 
 func (s *ScriptStage) Name() string { return "script" }
@@ -121,7 +139,7 @@ func (s *ScriptStage) Execute(ctx context.Context, message []byte, format Format
 	default:
 	}
 
-	if err := runScript(ctx, s.Script, data, s.opCap()); err != nil {
+	if err := runScript(ctx, s.Script, data, s.opCap(), s.intermediateByteCap()); err != nil {
 		return nil, format, nil, fmt.Errorf("script: %w", err)
 	}
 
@@ -143,7 +161,14 @@ func (s *ScriptStage) Execute(ctx context.Context, message []byte, format Format
 // as it goes. A line is "an op" — comments and blank lines don't count
 // (they cost effectively nothing). Counting *executable* lines means
 // the cap reflects real work, not source-code formatting.
-func runScript(ctx context.Context, script string, data map[string]any, maxOps int) error {
+//
+// maxIntermediateBytes caps the in-flight encoded size of `data`.
+// Every intermediateCheckInterval ops the function re-encodes `data`
+// to JSON and bails if the size exceeds the cap. This catches a
+// pathological script that's appending to an array in a tight loop
+// *before* it has burned tens of MiB — the earlier output-size cap
+// would only fire after re-encoding once at the end.
+func runScript(ctx context.Context, script string, data map[string]any, maxOps, maxIntermediateBytes int) error {
 	ops := 0
 	for _, raw := range splitScriptLines(script) {
 		select {
@@ -170,8 +195,35 @@ func runScript(ctx context.Context, script string, data map[string]any, maxOps i
 				return err
 			}
 		}
+		// Periodic in-flight size check. Skip when the cap is 0
+		// (operator opted out) or ops hasn't crossed the interval yet.
+		if maxIntermediateBytes > 0 && ops%intermediateCheckInterval == 0 {
+			size, err := encodedSize(data)
+			if err != nil {
+				// Encode failure mid-script is genuinely odd (the
+				// stage already decoded the same shape) — surface
+				// it rather than silently keep running.
+				return fmt.Errorf("script: intermediate encode: %w", err)
+			}
+			if size > maxIntermediateBytes {
+				return fmt.Errorf("%w: intermediate data %d bytes exceeds cap %d",
+					ErrScriptResourceLimit, size, maxIntermediateBytes)
+			}
+		}
 	}
 	return nil
+}
+
+// encodedSize returns the byte length of the JSON encoding of data.
+// Used for the intermediate-size guard; the encoder allocates but
+// the allocation lives only for the duration of the call (size is
+// counted via a Buffer, no whole-output retention needed).
+func encodedSize(data map[string]any) (int, error) {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return 0, err
+	}
+	return len(b), nil
 }
 
 func splitScriptLines(script string) []string {

@@ -368,6 +368,13 @@ const strings: Record<Locale, Record<string, string>> = {
     'pipelines.form.tag': 'Form view',
     'pipelines.form.hint':
       'Editing as a flat list. The visual editor at Flow is the recommended workflow — this view is kept for raw config and keyboard-driven edits.',
+    'replay.title': 'Replay historical window',
+    'replay.description':
+      'Re-run a past time range through this pipeline using a throwaway consumer. The live pipeline keeps running undisturbed. Available for Kafka and NATS JetStream sources only.',
+    'replay.since': 'From (UTC)',
+    'replay.until': 'To (UTC)',
+    'replay.run': 'Run replay',
+    'replay.summary': 'Read {read} · sent {sent} · dropped {dropped} · {ms}ms',
     'preview.title': 'Sample & preview',
     'preview.help':
       'Drop a representative message in, hit Preview, and see what the pipeline would emit downstream — no brokers are touched.',
@@ -962,6 +969,13 @@ const strings: Record<Locale, Record<string, string>> = {
     'pipelines.form.tag': 'عرض النموذج',
     'pipelines.form.hint':
       'تحرير كقائمة مسطّحة. المحرر المرئي في صفحة التدفق هو المسار الموصى به — يبقى هذا العرض للتحرير الخام عبر لوحة المفاتيح.',
+    'replay.title': 'إعادة تشغيل نافذة زمنية',
+    'replay.description':
+      'أعد تمرير نطاق زمني سابق عبر هذا التدفق باستخدام مستهلك مؤقت. يستمر التدفق المباشر دون تأثر. متاح لمصادر Kafka و NATS JetStream فقط.',
+    'replay.since': 'من (UTC)',
+    'replay.until': 'إلى (UTC)',
+    'replay.run': 'تشغيل الإعادة',
+    'replay.summary': 'قُرئت {read} · أُرسلت {sent} · أُسقطت {dropped} · {ms} مللي ثانية',
     'preview.title': 'العينة والمعاينة',
     'preview.help':
       'ألصق رسالة نموذجية، اضغط معاينة، وشاهد ما سيُرسَل بعد التدفق — دون لمس أي وسيط.',

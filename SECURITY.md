@@ -119,20 +119,16 @@ operator browser ──(HTTPS, session cookie)──▶ mqConnector  ──(TCP,
 
 ## 6. Known limitations (honest list)
 
-These are known gaps, in priority order:
-
-1. **IBM MQ TLS** is not yet wired through the connection-level `tls_*_file` columns. IBM MQ has its own TLS plumbing via CCDT and channel settings; Phase 17d covers RabbitMQ + Kafka. IBM MQ TLS is configured today by setting MQ env vars and using an IBM-formatted CCDT — out of band of mqConnector's columns.
-2. **SystemAdmin role**: the cross-tenant elevation today is "owner of the default tenant". An explicit flag is queued — coarse but explicit, and enforced consistently across `isSystemAdmin` callers.
-3. **Sandbox memory cap**: the script line evaluator has op-count + size caps but not memory caps on the intermediate `map[string]any`. A pathological script can still allocate ~tens of MiB before the output cap fires; the message gets DLQ'd cleanly but the worker briefly holds the allocation.
-4. **Container image signing (cosign)**: Trivy + SBOM are wired in CI; cosign-signing of release images is the next step. The Helm chart's `image.pullPolicy=Always` mitigates the practical risk in the meantime.
-5. **NATS JetStream replay UI**: replay works against Kafka + JetStream sources (`POST /api/v1/pipelines/{id}/replay`) but the admin UI form for it ships only the Kafka path. JetStream operators drive it via curl today.
-6. **S3 audit archival**: local-file archival is the default and works; `internal/audit/s3.go` has the uploader but is opt-in via `audit.s3_*` config — exercise with care in air-gapped environments.
-7. **Threat model freshness**: this document is reviewed each release. The PR template has a "did this change the threat model?" checkbox.
+This document is reviewed each release. The PR template has a "did this change the threat model?" checkbox. As of this release, every item previously listed has been closed; the section below tracks them for the audit trail.
 
 ### Closed in recent releases
 
-The items below were listed as gaps in earlier revisions of this document and are now closed:
-
+- ~~IBM MQ TLS~~ — `internal/mq/connector_ibm_on.go` now wires `tls_ca_file` (key-repository stem) and `tls_cert_file` (certificate label) into `MQSCO`, forces `ANY_TLS12_OR_HIGHER`.
+- ~~Explicit SystemAdmin flag~~ — `tenant_memberships.system_admin` column (migration 0013) replaces the implicit "owner of the default tenant" check. Backfilled for existing owners. New grants happen explicitly through `MembershipRepo.SetSystemAdmin`.
+- ~~Script sandbox memory cap~~ — `MaxIntermediateBytes` (default 8 MiB), checked every 64 ops during execution. Catches a runaway append BEFORE it has burned tens of MiB. See `internal/pipeline/script.go`.
+- ~~Container image signing (cosign)~~ — `.github/workflows/release.yml` builds, pushes to ghcr.io, signs keyless with cosign, attests the CycloneDX SBOM, and attaches the SBOM to the GitHub Release on every `v*` tag.
+- ~~NATS JetStream replay UI~~ — `web/src/routes/pipelines/[id]/+page.svelte` ships a replay form gated on `source.type === 'kafka' || (source.type === 'nats' && source.stream_name)`. Operators drive JetStream replay from the same UI as Kafka.
+- ~~S3 audit archival~~ — `cfg.Audit.S3` config block wires `internal/audit/s3.go` end-to-end. Empty credentials default to local-only (air-gapped friendly); set the four fields to upload rotated daily files to any S3-compatible store.
 - ~~Graceful shutdown~~ — `mgr.StopAndWait(30s)` drains the pipeline manager on SIGTERM.
 - ~~Audit log archival~~ — `internal/audit/archive.go` rolls daily JSONL files and prunes the live table. Leader-aware in multi-replica deploys.
 - ~~CI vuln scanning + SBOM~~ — Trivy + Syft wired in `.github/workflows/ci.yml`. Trivy fails the build on CRITICAL/HIGH CVEs; Syft emits CycloneDX as a workflow artifact.

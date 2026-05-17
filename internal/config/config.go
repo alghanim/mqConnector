@@ -53,10 +53,31 @@ type TracingConfig struct {
 // is non-empty AND MaxAge > 0, the audit sweeper streams rows older
 // than MaxAge into per-day JSONL files under ArchiveDir, then deletes
 // them from the live table.
+//
+// S3 is opt-in via AuditS3Config — leave all fields empty for the
+// local-disk path. Setting all four (Bucket, AccessKey, SecretKey,
+// Endpoint OR Region) enables upload of rotated daily files to the
+// named bucket.
 type AuditConfig struct {
-	ArchiveDir    string        `yaml:"archive_dir"`
-	MaxAge        time.Duration `yaml:"max_age"`
-	SweepInterval time.Duration `yaml:"sweep_interval"`
+	ArchiveDir    string         `yaml:"archive_dir"`
+	MaxAge        time.Duration  `yaml:"max_age"`
+	SweepInterval time.Duration  `yaml:"sweep_interval"`
+	S3            AuditS3Config  `yaml:"s3"`
+}
+
+// AuditS3Config carries S3-compatible upload settings. Compatible with
+// AWS S3, MinIO, Cloudflare R2, Wasabi, Backblaze B2 — anything that
+// speaks PUT-object over an S3 endpoint. Empty credentials disable
+// upload (Archiver.SetS3Uploader sees nil and treats archival as
+// local-only).
+type AuditS3Config struct {
+	Endpoint        string `yaml:"endpoint"`           // e.g. https://s3.amazonaws.com or http://minio:9000
+	Region          string `yaml:"region"`             // e.g. us-east-1
+	Bucket          string `yaml:"bucket"`             // destination bucket
+	Prefix          string `yaml:"prefix"`             // optional key prefix (folder)
+	AccessKey       string `yaml:"access_key"`
+	SecretKey       string `yaml:"secret_key"`
+	DeleteAfterUpload bool `yaml:"delete_after_upload"` // remove local copy after successful upload
 }
 
 // LeadershipConfig controls the multi-replica safety lease. When Enabled

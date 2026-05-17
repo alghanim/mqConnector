@@ -470,6 +470,24 @@ var migrations = []string{
 	`
 	ALTER TABLE connections ADD COLUMN group_id TEXT NOT NULL DEFAULT '';
 	`,
+	// 0013 — explicit system_admin flag on memberships.
+	//
+	// Replaces the implicit "owner of the default tenant" check with
+	// a flag that can be granted to additional users. The previous
+	// rule is preserved by backfilling: any owner of the default
+	// tenant gets system_admin=1 on this migration's run.
+	//
+	// system_admin is a cross-tenant escalation: holders can create
+	// tenants, audit-verify across tenants, and rotate the master
+	// encryption key. It is intentionally coarse — a future role
+	// model could split it further, but the current set of operations
+	// it gates are all "platform operator" not "tenant owner."
+	`
+	ALTER TABLE tenant_memberships ADD COLUMN system_admin INTEGER NOT NULL DEFAULT 0;
+	UPDATE tenant_memberships
+	   SET system_admin = 1
+	 WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND role = 'owner';
+	`,
 }
 
 func migrate(db *sql.DB) error {

@@ -281,6 +281,45 @@
       saving = false;
     }
   }
+
+  // ── Replay ──────────────────────────────────────────────────────────
+  //
+  // Replay drives the same stage chain against a historical time window
+  // on the source broker. Only sources that retain committed messages
+  // (Kafka, NATS JetStream — note: core NATS does NOT) can replay; for
+  // every other broker the API returns 400 and we hide the form.
+  let replaySince = '';
+  let replayUntil = '';
+  let replaying = false;
+  let replayError = '';
+  let replayResult: { messages_read: number; messages_sent: number; messages_dropped: number; duration: number } | null = null;
+
+  $: source = connections.find((c) => c.id === pipeline?.source_id);
+  $: sourceSupportsReplay = source?.type === 'kafka' || (source?.type === 'nats' && !!source?.stream_name);
+
+  async function runReplay() {
+    if (!pipeline) return;
+    replaying = true;
+    replayError = '';
+    replayResult = null;
+    try {
+      // datetime-local emits "YYYY-MM-DDTHH:MM" without timezone; the
+      // backend expects RFC 3339. Append ":00Z" to treat the input as
+      // UTC. Operators in non-UTC timezones can use the form and the
+      // window is still well-defined.
+      const since = replaySince.length === 16 ? replaySince + ':00Z' : replaySince;
+      const until = replayUntil.length === 16 ? replayUntil + ':00Z' : replayUntil;
+      replayResult = await api.post<typeof replayResult>(
+        `/v1/pipelines/${pipeline.id}/replay`,
+        { since, until }
+      );
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      replayError = err?.message || String(e);
+    } finally {
+      replaying = false;
+    }
+  }
 </script>
 
 <div class="space-y-6 max-w-5xl">
@@ -468,6 +507,54 @@
       </div>
     </div>
   </Card>
+
+  {#if pipeline && sourceSupportsReplay}
+    <Card>
+      <p class="section-heading mb-2">{t($locale, 'replay.title')}</p>
+      <p class="text-sm mb-3" style="color: var(--text-muted)">
+        {t($locale, 'replay.description')}
+      </p>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <label class="block text-sm">
+          <span class="block mb-1" style="color: var(--text-muted)">{t($locale, 'replay.since')}</span>
+          <input
+            type="datetime-local"
+            class="w-full rounded px-2 py-1.5 text-sm"
+            style="background: var(--surface); color: var(--text); border: 1px solid var(--border)"
+            bind:value={replaySince}
+          />
+        </label>
+        <label class="block text-sm">
+          <span class="block mb-1" style="color: var(--text-muted)">{t($locale, 'replay.until')}</span>
+          <input
+            type="datetime-local"
+            class="w-full rounded px-2 py-1.5 text-sm"
+            style="background: var(--surface); color: var(--text); border: 1px solid var(--border)"
+            bind:value={replayUntil}
+          />
+        </label>
+      </div>
+      <div class="mt-3 flex items-center gap-3">
+        <Button on:click={runReplay} loading={replaying} disabled={!replaySince || !replayUntil}>
+          {t($locale, 'replay.run')}
+        </Button>
+        {#if replayResult}
+          <span class="text-sm" style="color: var(--text-muted)">
+            read {replayResult.messages_read} · sent {replayResult.messages_sent} ·
+            dropped {replayResult.messages_dropped} ·
+            {Math.round(replayResult.duration / 1_000_000)}ms
+          </span>
+        {/if}
+      </div>
+      {#if replayError}
+        <div class="mt-2">
+          <Alert variant="error" dismissible on:dismiss={() => (replayError = '')}>
+            {replayError}
+          </Alert>
+        </div>
+      {/if}
+    </Card>
+  {/if}
 </div>
 
 <style>

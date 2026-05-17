@@ -51,8 +51,13 @@ type Membership struct {
 	UserSub   string    `json:"user_sub"`
 	Username  string    `json:"username"`
 	Role      Role      `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	// SystemAdmin grants cross-tenant elevation: create tenants,
+	// audit-verify across tenants, rotate the master key. Replaces
+	// the previous implicit "owner of the default tenant" check.
+	// Backfilled to 1 for default-tenant owners by migration 0013.
+	SystemAdmin bool      `json:"system_admin"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // MembershipRepo manages the tenant_memberships table.
@@ -67,14 +72,19 @@ func (r *MembershipRepo) Upsert(ctx context.Context, m *Membership) error {
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = m.UpdatedAt
 	}
+	sysAdmin := 0
+	if m.SystemAdmin {
+		sysAdmin = 1
+	}
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO tenant_memberships (tenant_id, user_sub, username, role, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO tenant_memberships (tenant_id, user_sub, username, role, system_admin, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tenant_id, user_sub) DO UPDATE SET
 			username = excluded.username,
 			role = excluded.role,
+			system_admin = excluded.system_admin,
 			updated_at = excluded.updated_at`,
-		m.TenantID, m.UserSub, m.Username, string(m.Role), m.CreatedAt, m.UpdatedAt)
+		m.TenantID, m.UserSub, m.Username, string(m.Role), sysAdmin, m.CreatedAt, m.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("upsert membership: %w", err)
 	}
@@ -185,13 +195,14 @@ func (r *MembershipRepo) ListByTenant(ctx context.Context, tenantID string) ([]*
 }
 
 const membershipSelect = `
-SELECT tenant_id, user_sub, username, role, created_at, updated_at
+SELECT tenant_id, user_sub, username, role, system_admin, created_at, updated_at
 FROM tenant_memberships`
 
 func scanMembership(s scanner) (*Membership, error) {
 	m := &Membership{}
 	var role string
-	err := s.Scan(&m.TenantID, &m.UserSub, &m.Username, &role, &m.CreatedAt, &m.UpdatedAt)
+	var sysAdmin int
+	err := s.Scan(&m.TenantID, &m.UserSub, &m.Username, &role, &sysAdmin, &m.CreatedAt, &m.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -199,5 +210,44 @@ func scanMembership(s scanner) (*Membership, error) {
 		return nil, err
 	}
 	m.Role = Role(role)
+	m.SystemAdmin = sysAdmin != 0
 	return m, nil
+}
+
+// SetSystemAdmin flips the system_admin bit for an existing membership
+// without touching role. Used by the platform-admin endpoint to grant
+// or revoke cross-tenant elevation explicitly.
+func (r *MembershipRepo) SetSystemAdmin(ctx context.Context, tenantID, userSub string, on bool) error {
+	v := 0
+	if on {
+		v = 1
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE tenant_memberships
+		   SET system_admin = ?, updated_at = ?
+		 WHERE tenant_id = ? AND user_sub = ?`,
+		v, time.Now().UTC(), tenantID, userSub)
+	if err != nil {
+		return fmt.Errorf("set system_admin: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// IsSystemAdmin reports whether the named user has the system_admin
+// flag set on ANY of their memberships. The flag is per-membership
+// but treated as a user-level capability — once set anywhere the
+// user is a platform operator across the whole deployment.
+func (r *MembershipRepo) IsSystemAdmin(ctx context.Context, userSub string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tenant_memberships WHERE user_sub = ? AND system_admin = 1`,
+		userSub).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("is_system_admin: %w", err)
+	}
+	return n > 0, nil
 }

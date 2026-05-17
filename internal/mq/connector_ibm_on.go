@@ -44,6 +44,29 @@ func (c *IBMConnector) Connect(ctx context.Context) error {
 		cno.SecurityParms = csp
 	}
 
+	// TLS / mTLS. IBM MQ doesn't speak PEMs directly — it wants a CMS
+	// or PKCS#12 "key repository" stem (no extension; the client
+	// appends .kdb / .sth / etc. at runtime). The operator pre-builds
+	// the repository using `runmqakm` and points TLSCAFile at the
+	// stem. TLSCertFile is optional — if set, we use it as the
+	// certificate label (Domino-style certificate selection inside the
+	// repository). TLSKeyFile is unused on IBM MQ; the private key
+	// lives inside the same kdb. TLSInsecureSkipVerify has no IBM MQ
+	// equivalent and is ignored with a warning at the API boundary.
+	if c.cfg.TLS.Enabled() {
+		sco := ibmmq.NewMQSCO()
+		sco.KeyRepository = c.cfg.TLS.CAFile // path stem, no .kdb
+		if c.cfg.TLS.CertFile != "" {
+			sco.CertificateLabel = c.cfg.TLS.CertFile
+		}
+		cno.SSLConfig = sco
+		// Force at least TLS 1.2. ANY_TLS12_OR_HIGHER is the modern
+		// IBM-recommended pseudo-spec that lets the client + queue
+		// manager negotiate the strongest available suite. Operators
+		// can override per channel on the broker side.
+		cd.SSLCipherSpec = "ANY_TLS12_OR_HIGHER"
+	}
+
 	mgr, err := ibmmq.Connx(c.cfg.QueueManager, cno)
 	if err != nil {
 		return fmt.Errorf("ibm Connx: %w", err)

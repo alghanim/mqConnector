@@ -223,6 +223,24 @@ func run(configPath string) error {
 		cfg.Audit.SweepInterval,
 		logger,
 	)
+	// Optional S3 upload of rotated daily files. Opt-in via
+	// cfg.Audit.S3 — empty access key / bucket leaves archival on
+	// local disk only. Air-gapped deployments leave the block empty.
+	if up := audit.NewS3(audit.S3Config{
+		Endpoint:  cfg.Audit.S3.Endpoint,
+		Region:    cfg.Audit.S3.Region,
+		Bucket:    cfg.Audit.S3.Bucket,
+		Prefix:    cfg.Audit.S3.Prefix,
+		AccessKey: cfg.Audit.S3.AccessKey,
+		SecretKey: cfg.Audit.S3.SecretKey,
+	}); up != nil {
+		archiver.SetS3Uploader(up, cfg.Audit.S3.DeleteAfterUpload)
+		logger.Info("audit S3 upload enabled",
+			"endpoint", cfg.Audit.S3.Endpoint,
+			"bucket", cfg.Audit.S3.Bucket,
+			"prefix", cfg.Audit.S3.Prefix,
+			"delete_after_upload", cfg.Audit.S3.DeleteAfterUpload)
+	}
 	if cfg.Audit.ArchiveDir != "" {
 		logger.Info("audit archival enabled",
 			"archive_dir", cfg.Audit.ArchiveDir,
