@@ -55,6 +55,11 @@ type Executor struct {
 	Metrics MetricsSink
 	DLQ     DLQSink
 	Logger  *slog.Logger
+
+	// budget is set in Run() when the pipeline carries
+	// MaxMsgsPerMinute > 0. Shared across all workers so the cap
+	// applies per-pipeline, not per-worker.
+	budget *budget
 }
 
 // Run blocks until ctx is cancelled or the executor encounters an unrecoverable
@@ -86,7 +91,18 @@ func (e *Executor) Run(ctx context.Context) error {
 		workers = 16
 	}
 
-	logger.Info("pipeline starting", "workers", workers)
+	// Per-pipeline message budget. When > 0 the executor enforces a
+	// simple token-bucket cap: budget messages per minute, refilled
+	// every refill window. Shared across workers so the cap is
+	// per-pipeline not per-worker (which would multiply by N). Zero
+	// disables — legacy behaviour.
+	if e.Pipeline.MaxMsgsPerMinute > 0 {
+		e.budget = newBudget(e.Pipeline.MaxMsgsPerMinute, time.Minute)
+		logger.Info("pipeline starting", "workers", workers,
+			"budget_per_minute", e.Pipeline.MaxMsgsPerMinute)
+	} else {
+		logger.Info("pipeline starting", "workers", workers)
+	}
 	defer logger.Info("pipeline stopped")
 
 	// Each worker runs the same receive→stages→send→commit loop
@@ -144,6 +160,13 @@ func (e *Executor) runWorker(ctx context.Context, workerIdx int, logger *slog.Lo
 }
 
 func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.Logger) error {
+	// Throttle. Blocks until the per-pipeline budget admits one
+	// more message or ctx cancels. No-op when budget is nil.
+	if e.budget != nil {
+		if err := e.budget.take(ctx); err != nil {
+			return err
+		}
+	}
 	// Single-worker pipelines keep the historical key so existing
 	// dashboards and test injections continue to work. Multi-worker
 	// pipelines get one connector per worker.

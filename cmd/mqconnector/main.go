@@ -254,6 +254,21 @@ func run(configPath string) error {
 			"max_age", cfg.Audit.MaxAge,
 			"sweep_interval", cfg.Audit.SweepInterval)
 	}
+	// Optional real-time syslog fan-out. Independent of archival —
+	// SIEMs that want low-latency feed register a URL here; the
+	// archiver still rolls daily files for compliance retention.
+	if cfg.Audit.SyslogURL != "" {
+		host, _ := os.Hostname()
+		sf, err := audit.NewSyslogForwarder(cfg.Audit.SyslogURL, host, "mqconnector", logger)
+		if err != nil {
+			logger.Error("syslog forwarder init failed; continuing without it",
+				"err", err, "url", cfg.Audit.SyslogURL)
+		} else {
+			store.Audit.AddSink(sf)
+			sf.Start(rootCtx)
+			logger.Info("audit syslog forwarder enabled", "url", cfg.Audit.SyslogURL)
+		}
+	}
 
 	// Event bus + webhook dispatcher. Started before the pipeline
 	// manager so lifecycle events emitted during Reload land on a

@@ -72,8 +72,15 @@ type Pipeline struct {
 	// milliseconds. The actual wait is RetryBackoffMs * 2^attempt
 	// (exponential), capped at 10 minutes. 0 means "use 5000 (5s)".
 	RetryBackoffMs int `json:"retry_backoff_ms,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	// MaxMsgsPerMinute caps the per-pipeline throughput at the source
+	// drain. 0 = unlimited (legacy behaviour). Used to isolate a
+	// misbehaving pipeline so it can't starve other pipelines on the
+	// same destination broker or overwhelm a downstream that has its
+	// own SLA. Independent of the per-tenant rate limit that gates
+	// admin API calls.
+	MaxMsgsPerMinute int       `json:"max_msgs_per_minute,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // Stage is one step in a pipeline's processing chain.

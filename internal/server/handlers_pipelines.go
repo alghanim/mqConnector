@@ -264,5 +264,8 @@ func validatePipelineTuning(p *storage.Pipeline) error {
 	if p.RetryBackoffMs < 0 || p.RetryBackoffMs > 10*60*1000 {
 		return fmt.Errorf("retry_backoff_ms must be between 0 and 600000 (got %d)", p.RetryBackoffMs)
 	}
+	if p.MaxMsgsPerMinute < 0 || p.MaxMsgsPerMinute > 1_000_000 {
+		return fmt.Errorf("max_msgs_per_minute must be between 0 and 1000000 (got %d)", p.MaxMsgsPerMinute)
+	}
 	return nil
 }

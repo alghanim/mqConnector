@@ -54,6 +54,12 @@ This section accumulates changes between tagged releases. Move entries into a ne
 - **Helm chart catch-up**: `storage.backup`, `audit.s3`, `auth.idle_timeout` exposed in `values.yaml`. Pod security context defaults updated for the distroless `nonroot` user (UID 65532).
 - **WCAG**: skip-to-main-content link in the app shell (WCAG 2.1 SC 2.4.1).
 - **CHANGELOG.md** (this file) with SemVer + 3-phase deprecation policy.
+- **TLS certificate hot-reload**: HTTPS listener now serves via `tls.Config.GetCertificate`; a 30-second watcher detects file mtime changes and reloads atomically. cert-manager / certbot rotations no longer need a `systemctl restart`.
+- **Per-pipeline message budget**: `pipelines.max_msgs_per_minute` (migration 0014). Fixed-window throttle shared across all workers of one pipeline so a noisy pipeline can't starve its neighbours on shared destination brokers.
+- **Real-time syslog forwarding**: `audit.syslog_url` config (tcp:// or udp://). Every successful audit insert fans out an RFC 5424 message with the audit row's JSON in the MSG field. Non-blocking on the hot path, 1024-deep buffer, reconnect with backoff.
+- **UPGRADING.md** doc with per-version upgrade procedure + Helm + multi-replica zero-downtime variant + rollback.
+- **docs/API_RECIPES.md** with curl + jq recipes for the workflows operators actually do.
+- **docs/PLUGIN_DESIGN.md** — design note for the future WASM-based custom-stage system. Captures the four candidate mechanisms (plugin.Open / WASM / gRPC sidecar / scripting) and lays out the proposed wazero path so the eventual implementation lands on a thought-through shape.
 
 ### Changed
 

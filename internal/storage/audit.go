@@ -79,9 +79,29 @@ func computeAuditHash(prevHash string, e *AuditEntry) string {
 // audit writer per node. The leader-elected HA setup writes audit
 // from one node at a time anyway; if that ever changes we'd need an
 // advisory lock at the DB layer.
+// AuditSink receives a copy of every successfully-inserted audit
+// entry. Used by the syslog forwarder so audit rows can stream to a
+// SIEM in real time without waiting for the archiver's batch
+// rollover. Implementations MUST NOT block — the chain mutex is held
+// while the sink is invoked. Fire-and-forget on a buffered channel
+// is the right shape.
+type AuditSink interface {
+	OnInsert(e AuditEntry)
+}
+
 type AuditRepo struct {
 	db      *sql.DB
 	chainMu sync.Mutex
+	sinks   []AuditSink
+}
+
+// AddSink registers a callback that fires after every successful
+// audit insert. Safe to call before the repo is used; not
+// concurrent-safe with active insert traffic.
+func (r *AuditRepo) AddSink(s AuditSink) {
+	if s != nil {
+		r.sinks = append(r.sinks, s)
+	}
 }
 
 // IterOlderThan streams audit entries created strictly before cutoff,
@@ -164,6 +184,12 @@ func (r *AuditRepo) Insert(ctx context.Context, e *AuditEntry) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.TenantID, e.At, e.Actor, e.ActorSub, e.Action, e.Resource, e.Status, e.RequestID, e.RemoteIP, e.Hash, e.PrevHash); err != nil {
 		return fmt.Errorf("insert audit: %w", err)
+	}
+	// Real-time fan-out to any registered sinks (syslog, etc.).
+	// We hold chainMu through this so sinks must be non-blocking —
+	// the contract is documented on AuditSink.
+	for _, s := range r.sinks {
+		s.OnInsert(*e)
 	}
 	return nil
 }

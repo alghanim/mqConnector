@@ -49,6 +49,7 @@ type Server struct {
 	tenantLimiter    *tenantLimiter
 	sensitiveLimiter *sensitiveLimiter
 	accountLockout   *accountLockout
+	tlsReloader      *certReloader
 	stopGC           chan struct{}
 	stopGCOnce       sync.Once
 }
@@ -137,7 +138,22 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		if strings.HasPrefix(cfg.Server.TLS.MinVersion, "1.3") {
 			minVer = tls.VersionTLS13
 		}
-		s.httpSrv.TLSConfig = &tls.Config{MinVersion: minVer}
+		// Hot-reload of the cert + key so an external rotator
+		// (cert-manager, certbot, ACM) can swap files in without us
+		// restarting. GetCertificate is consulted on every handshake;
+		// the reloader's cached pointer means no lock contention on
+		// the hot path.
+		reloader, err := newCertReloader(
+			cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile, s.logger)
+		if err != nil {
+			return nil, fmt.Errorf("tls cert load: %w", err)
+		}
+		s.tlsReloader = reloader
+		s.httpSrv.TLSConfig = &tls.Config{
+			MinVersion:     minVer,
+			GetCertificate: reloader.GetCertificate,
+		}
+		go reloader.Watch(30*time.Second, s.stopGC)
 	}
 	return s, nil
 }
@@ -152,7 +168,10 @@ func (s *Server) Run(ctx context.Context) error {
 			"tls", s.cfg.Server.TLS.Enabled,
 		)
 		if s.cfg.Server.TLS.Enabled {
-			errCh <- s.httpSrv.ListenAndServeTLS(s.cfg.Server.TLS.CertFile, s.cfg.Server.TLS.KeyFile)
+			// Empty cert/key args here mean "use TLSConfig.GetCertificate"
+			// which the reloader installed. That's what enables hot
+			// rotation: the loader pulls a fresh cert per handshake.
+			errCh <- s.httpSrv.ListenAndServeTLS("", "")
 		} else {
 			errCh <- s.httpSrv.ListenAndServe()
 		}

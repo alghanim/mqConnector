@@ -488,6 +488,14 @@ var migrations = []string{
 	   SET system_admin = 1
 	 WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND role = 'owner';
 	`,
+	// 0014 — per-pipeline message budget. Independent of the
+	// tenant-level admin API rate limit; this one gates how many
+	// messages a single pipeline can drain per minute, so a
+	// misbehaving pipeline can't starve its neighbours on the same
+	// destination broker. 0 = unlimited (legacy).
+	`
+	ALTER TABLE pipelines ADD COLUMN max_msgs_per_minute INTEGER NOT NULL DEFAULT 0;
+	`,
 }
 
 func migrate(db *sql.DB) error {

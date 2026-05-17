@@ -59,10 +59,15 @@ type TracingConfig struct {
 // Endpoint OR Region) enables upload of rotated daily files to the
 // named bucket.
 type AuditConfig struct {
-	ArchiveDir    string         `yaml:"archive_dir"`
-	MaxAge        time.Duration  `yaml:"max_age"`
-	SweepInterval time.Duration  `yaml:"sweep_interval"`
-	S3            AuditS3Config  `yaml:"s3"`
+	ArchiveDir    string        `yaml:"archive_dir"`
+	MaxAge        time.Duration `yaml:"max_age"`
+	SweepInterval time.Duration `yaml:"sweep_interval"`
+	S3            AuditS3Config `yaml:"s3"`
+	// SyslogURL is the destination for real-time forwarding of every
+	// audit row. Format: tcp://host:port or udp://host:port.
+	// Empty disables. Independent of S3 / file archival — both can
+	// run side by side.
+	SyslogURL string `yaml:"syslog_url"`
 }
 
 // AuditS3Config carries S3-compatible upload settings. Compatible with

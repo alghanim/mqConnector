@@ -323,10 +323,10 @@
       <p class="text-muted">{t($locale, 'common.none')}</p>
     </div>
   {:else}
-    <table class="conn-table">
+    <table class="conn-table" aria-label={t($locale, 'connections.title')}>
       <thead>
         <tr>
-          <th aria-sort={sortBy === 'name' ? 'ascending' : 'none'}>
+          <th scope="col" aria-sort={sortBy === 'name' ? 'ascending' : 'none'}>
             <button type="button" class="th-sort" on:click={() => (sortBy = 'name')}>
               {t($locale, 'connections.name')}
             </button>
