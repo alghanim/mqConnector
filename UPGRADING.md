@@ -54,6 +54,12 @@ After upgrade, three behavioural changes can surface:
 
 - **Cookie SameSite tightened to `Strict`.** A user who navigates to mqConnector from an external link in the same tab will be treated as unauthenticated; they re-login and proceed. No action needed; brief user-visible blip.
 - **Container image is now distroless static.** If you have a custom `docker run` recipe that overrides `--user` or `--entrypoint`, audit it — the user is now `nonroot` (UID 65532), no shell exists in the image.
+- **UID change on the data volume.** The previous alpine-based image ran as UID 1000; distroless `nonroot` is UID 65532. After upgrading, the container will fail with `attempt to write a readonly database` because the existing SQLite files are still owned by UID 1000. Fix once with:
+  ```sh
+  docker run --rm -v <volume-name>:/data alpine:3.20 \
+    chown -R 65532:65532 /data
+  ```
+  Then restart the container. Kubernetes deployments using the Helm chart with `persistence.enabled: true` should bump `podSecurityContext.fsGroup` to 65532 in `values.yaml` (already the default in this release) so new PVC mounts come up with the right ownership.
 - **Audit cookie cascade.** New routes `/api/v1/admin/backup`, `/api/v1/admin/integrity`, `/api/v1/admin/pprof/*` exist. They're gated to system admins; existing default-tenant owners are auto-elevated by migration 0013. Verify with `curl -b "session=<cookie>" .../api/v1/admin/integrity` — should return `{"ok":true,...}`.
 
 Recommended config additions (none mandatory — defaults are off):
