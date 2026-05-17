@@ -8,8 +8,11 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver
@@ -128,4 +131,69 @@ func (s *Store) Close() error {
 		return nil
 	}
 	return s.DB.Close()
+}
+
+// Backup writes a consistent snapshot of the database to dst. Uses
+// SQLite's VACUUM INTO under the hood, which is atomic and works
+// while writers are active — readers and writers see no interruption.
+// The produced file is itself a valid SQLite database, openable by
+// the same driver. dst must be on the same filesystem as a writable
+// temp dir; the function does NOT create parent directories.
+//
+// Only meaningful on the SQLite backend. Postgres callers receive an
+// error so the operator hits this in dev rather than trusting a silent
+// no-op.
+func (s *Store) Backup(ctx context.Context, dst string) error {
+	if s == nil || s.DB == nil {
+		return errors.New("storage: backup called on nil store")
+	}
+	if s.dialect != DialectSQLite {
+		return errors.New("storage: Backup only supports SQLite")
+	}
+	if strings.TrimSpace(dst) == "" {
+		return errors.New("storage: backup destination required")
+	}
+	// Refuse to overwrite an existing file — the operator may not
+	// realise they're clobbering a previous snapshot.
+	if _, err := os.Stat(dst); err == nil {
+		return fmt.Errorf("storage: backup destination already exists: %s", dst)
+	}
+	// VACUUM INTO doesn't accept bound parameters, so we escape the
+	// path by replacing single quotes (filenames containing them are
+	// rare; the escape covers the corner case rather than rejecting it).
+	escaped := strings.ReplaceAll(dst, "'", "''")
+	_, err := s.DB.ExecContext(ctx, "VACUUM INTO '"+escaped+"'")
+	if err != nil {
+		return fmt.Errorf("storage: VACUUM INTO: %w", err)
+	}
+	return nil
+}
+
+// IntegrityCheck runs SQLite's PRAGMA integrity_check and returns the
+// rows it produces. A healthy database returns exactly one row "ok";
+// anything else is corruption and the operator should restore from
+// backup before any further writes. PRAGMA quick_check is faster but
+// less thorough; we prefer the full check for the on-demand admin
+// endpoint, which is rare-enough to afford the cost.
+func (s *Store) IntegrityCheck(ctx context.Context) ([]string, error) {
+	if s == nil || s.DB == nil {
+		return nil, errors.New("storage: integrity check on nil store")
+	}
+	if s.dialect != DialectSQLite {
+		return nil, errors.New("storage: IntegrityCheck only supports SQLite")
+	}
+	rows, err := s.DB.QueryContext(ctx, "PRAGMA integrity_check")
+	if err != nil {
+		return nil, fmt.Errorf("integrity_check: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }

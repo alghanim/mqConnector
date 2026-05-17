@@ -99,41 +99,102 @@ inline documentation.
 
 ## Backup
 
-`scripts/backup.sh` makes a transactionally-consistent snapshot via
-`sqlite3 .backup` (safe to run while the bridge is actively
-processing) and tars it together with the active TLS cert + key + the
-config that produced it.
+mqConnector ships **three** ways to snapshot the SQLite state. All
+three use SQLite's online `VACUUM INTO` under the hood, which produces
+a transactionally consistent file while writers stay active — there is
+no "stop the binary first" step required.
 
-```sh
-# Default location: ./backups/mqconnector-<UTC-timestamp>.tar.gz
-./scripts/backup.sh
+### 1. Scheduled in-process snapshots (recommended)
 
-# Custom destination
-./scripts/backup.sh /mnt/backups/mqc-prod-2026-05-15.tar.gz
+Set `storage.backup.dir` in `config.yaml`:
+
+```yaml
+storage:
+  dsn: file:./data/mqconnector.db?_pragma=journal_mode(WAL)
+  backup:
+    dir: /var/backups/mqconnector
+    interval: 1h          # default 24h
+    keep: 168             # default 7 (1 week of hourly snapshots)
 ```
 
-The script falls back to a raw file copy if `sqlite3` is not on the
-PATH — in that case stop mqconnector first.
+On a multi-replica deploy only the leader writes — the worker checks
+the leadership lease each tick. Snapshots are named
+`mqconnector-<UTC-timestamp>.db` and the worker auto-prunes older
+files past `keep`.
+
+### 2. CLI subcommand (ad-hoc / external scheduler)
+
+```sh
+# Single file:
+mqconnector backup --to=/mnt/backups/mqc-prod-2026-05-17.db
+
+# Directory mode with rotation (suitable for cron):
+mqconnector backup --to-dir=/var/backups/mqconnector --keep=30
+```
+
+The CLI runs the same `VACUUM INTO` and then verifies the snapshot by
+opening it read-only and running `PRAGMA integrity_check`. Exit code
+`2` means the snapshot was written but failed verification — treat
+the file as suspect and check the source DB.
+
+### 3. HTTP endpoint (one-off / from a dashboard)
+
+```sh
+curl -sS --cacert ca.pem \
+     -b "session=<cookie>" \
+     -o snapshot.db \
+     https://mqc.svc:8443/api/v1/admin/backup
+```
+
+System-admin only. Streams the snapshot back as
+`application/octet-stream` with a timestamped `Content-Disposition`.
+Useful for one-off "grab the state to a laptop" operations — for
+real DR, use options 1 or 2 with a path on a separate volume / off-host.
+
+### Legacy script
+
+`scripts/backup.sh` (raw file copy + tar of TLS material) still works
+and is harmless to keep in cron. Switch to options 1/2/3 when
+convenient.
 
 **Recommended cadence**: hourly to local disk, daily off-host. The
 state is small (≤ a few hundred MB even with a year of audit + DLQ
 history at typical bridge throughput), so daily snapshots can be
 retained for months at trivial cost.
 
-## Restore
+### Integrity check
+
+Quick sanity check on the live database:
 
 ```sh
-./scripts/restore.sh /mnt/backups/mqc-prod-2026-05-15.tar.gz
+curl -sS --cacert ca.pem -b "session=<cookie>" \
+     https://mqc.svc:8443/api/v1/admin/integrity
+# → {"ok": true, "duration_ms": 142}
 ```
 
-The script extracts the archive into a fresh directory and prints next
-steps. The actual write to the live data dir is left as a manual step
-to avoid clobbering a running instance.
+`{"ok": false, "errors": [...]}` indicates corruption — stop writes
+and restore from the most recent good snapshot (see below). System-
+admin only.
 
-In-situ restore procedure:
+## Restore
+
+A snapshot from any of the three backup paths is itself a valid SQLite
+database. Restore is just a file swap:
 
 ```sh
 sudo systemctl stop mqconnector
+sudo cp /var/backups/mqconnector/mqconnector-20260517T030000Z.db \
+        /var/lib/mqconnector/mqconnector.db
+sudo chown mqconnector:mqconnector /var/lib/mqconnector/mqconnector.db
+sudo systemctl start mqconnector
+# Verify the integrity of the restored database
+curl -sS --cacert ca.pem -b "session=<cookie>" \
+     https://mqc.svc:8443/api/v1/admin/integrity
+```
+
+For the legacy tarball format:
+
+```sh
 ./scripts/restore.sh /backups/<tar.gz> /tmp/mqc-restore
 sudo cp /tmp/mqc-restore/mqconnector.db /var/lib/mqconnector/
 sudo cp /tmp/mqc-restore/server.crt /etc/mqconnector/tls/

@@ -52,6 +52,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "backup":
+			if err := backupCmd(); err != nil {
+				fmt.Fprintf(os.Stderr, "backup: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
 	}
 
@@ -284,6 +290,31 @@ func run(configPath string) error {
 		if _, err := mgr.Reload(rootCtx); err != nil {
 			logger.Warn("initial pipeline reload failed", "err", err)
 		}
+	}
+
+	// Scheduled backups. Off by default; the operator opts in by
+	// setting storage.backup.dir. On multi-replica deploys only the
+	// leader actually snapshots so the destination directory doesn't
+	// get duplicated entries. See OPERATIONS.md for the restore
+	// procedure.
+	if cfg.Storage.Backup.Dir != "" {
+		isLeader := func() bool { return true }
+		if leaseRunner != nil {
+			isLeader = func() bool { return leaseRunner.Snapshot().IsLeader }
+		}
+		bw := &storage.BackupWorker{
+			Store:    store,
+			Dir:      cfg.Storage.Backup.Dir,
+			Interval: cfg.Storage.Backup.Interval,
+			Keep:     cfg.Storage.Backup.Keep,
+			IsLeader: isLeader,
+			Logger:   logger,
+		}
+		go bw.Run(rootCtx)
+		logger.Info("scheduled backups enabled",
+			"dir", cfg.Storage.Backup.Dir,
+			"interval", cfg.Storage.Backup.Interval,
+			"keep", cfg.Storage.Backup.Keep)
 	}
 
 	// Health

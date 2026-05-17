@@ -1314,6 +1314,52 @@ paths:
         '200': { description: Rotation complete. Returns rewrap counts. }
         '403': { description: Not an admin. }
 
+  /api/v1/admin/backup:
+    get:
+      tags: [admin]
+      summary: Stream a snapshot of the SQLite database (VACUUM INTO). System-admin only.
+      description: |
+        Produces a consistent point-in-time snapshot of the live
+        database and streams it as `application/octet-stream`. The
+        snapshot is itself a valid SQLite database — copy it over the
+        live one (with the binary stopped) to restore. See
+        OPERATIONS.md for the full restore procedure.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Snapshot bytes.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '403': { description: Not a system-admin. }
+        '500': { description: Snapshot failed (disk full, permission, etc.). }
+
+  /api/v1/admin/integrity:
+    get:
+      tags: [admin]
+      summary: Run PRAGMA integrity_check on the live database. System-admin only.
+      description: |
+        Read-only but not free — a multi-GB database can take minutes.
+        Returns 200 in both cases; the `ok` field discriminates clean
+        from corrupted. On `ok=false` stop writes and restore from the
+        most recent good snapshot.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Check completed. Body describes result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  duration_ms: { type: integer }
+                  errors:
+                    type: array
+                    items: { type: string }
+                    description: Present only when ok is false.
+        '403': { description: Not a system-admin. }
+
   /api/v1/pipelines/{id}/replay:
     parameters:
       - $ref: '#/components/parameters/pathID'

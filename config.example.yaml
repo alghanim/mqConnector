@@ -39,6 +39,14 @@ storage:
   max_open_conns: 8
   # Max idle connections held in pool.
   max_idle_conns: 4
+  # In-process scheduled backup worker. Off by default — set dir to enable.
+  # Snapshots use SQLite's online VACUUM INTO (no service interruption).
+  # On multi-replica deploys only the leader writes; followers stay idle.
+  # See OPERATIONS.md for the restore procedure.
+  backup:
+    dir: ""           # e.g. /var/backups/mqconnector
+    interval: 24h     # how often to snapshot
+    keep: 7           # keep the most recent N snapshots, prune older
 
 auth:
   # SimpleAuth server URL (issues and validates JWTs). Required in prod mode.

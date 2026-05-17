@@ -78,6 +78,14 @@ func (s *Server) routes() http.Handler {
 		r.Get("/api/v1/secrets/status", s.handleSecretsStatus)
 		r.Post("/api/v1/secrets/rotate", s.handleRotateSecrets)
 
+		// Disaster-recovery hooks. /admin/backup snapshots the SQLite
+		// file (VACUUM INTO) and streams it back to the caller;
+		// /admin/integrity runs PRAGMA integrity_check on the live
+		// database. Both are system-admin only — the snapshot is the
+		// entire state of the bridge including encrypted secrets.
+		r.Get("/api/v1/admin/backup", s.handleAdminBackup)
+		r.Get("/api/v1/admin/integrity", s.handleAdminIntegrity)
+
 		// API tokens (headless / CI auth). Scoped to the caller's
 		// tenant; the secret is shown exactly once at creation.
 		r.Get("/api/v1/tokens", s.handleListTokens)

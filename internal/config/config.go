@@ -90,6 +90,27 @@ type StorageConfig struct {
 	DSN          string `yaml:"dsn"`
 	MaxOpenConns int    `yaml:"max_open_conns"`
 	MaxIdleConns int    `yaml:"max_idle_conns"`
+	// Backup runs an in-process snapshot worker that writes
+	// VACUUM-INTO copies of the SQLite file at a fixed interval.
+	// Optional; recommended on production deploys where there's no
+	// external backup orchestrator. Empty Dir disables.
+	Backup BackupConfig `yaml:"backup"`
+}
+
+// BackupConfig drives the in-process scheduled-backup worker. The
+// worker runs only on the leader (so multi-replica deploys don't
+// duplicate snapshots) and rotates older files past Keep.
+type BackupConfig struct {
+	// Dir is the destination directory for snapshots. Empty disables
+	// the in-process worker entirely — operators using cron / a
+	// sidecar to drive `mqconnector backup` should leave this off.
+	Dir string `yaml:"dir"`
+	// Interval is how often a snapshot runs. Defaults to 24h when
+	// Dir is set and Interval is unset.
+	Interval time.Duration `yaml:"interval"`
+	// Keep is the number of recent snapshots to retain. Older files
+	// matching mqconnector-*.db are deleted. Defaults to 7.
+	Keep int `yaml:"keep"`
 }
 
 type AuthConfig struct {
