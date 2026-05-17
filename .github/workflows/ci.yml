@@ -194,7 +194,12 @@ jobs:
       # the GitHub Security tab so issues are tracked alongside code
       # scanning.
       - name: Image vulnerability scan (Trivy)
-        uses: aquasecurity/trivy-action@0.30.0
+        # v0.35.0 is the first GitHub-immutable-releases-protected
+        # tag and the recommended safe version after the
+        # aquasecurity/trivy-action supply-chain incident of
+        # 2026-03-19. Anything below 0.35.0 is in the
+        # tag-hijack window.
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: mqconnector:ci
           format: sarif
