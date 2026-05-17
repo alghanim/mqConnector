@@ -20,7 +20,7 @@ func TestTokens_CreateThenUseAsBearer(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tokens", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: status=%d body=%s", rec.Code, rec.Body)
@@ -54,7 +54,7 @@ func TestTokens_CreateThenUseAsBearer(t *testing.T) {
 	// 3. Revoke the token.
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodDelete, "/api/v1/tokens/"+out.Token.ID, nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("revoke: status=%d body=%s", rec.Code, rec.Body)
@@ -90,7 +90,7 @@ func TestTokens_CannotMintHigherRole(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tokens", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("owner minting an owner token should succeed: status=%d body=%s", rec.Code, rec.Body)
@@ -106,7 +106,7 @@ func TestTokens_GarbledBearerFallsThrough(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
 	req.Header.Set("Authorization", "Bearer mqct_garbage-not-real")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("garbled bearer with valid cookie should succeed via cookie: status=%d", rec.Code)

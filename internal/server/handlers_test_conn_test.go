@@ -20,7 +20,7 @@ func TestTestConnection_ReachableHandler_FailureShape(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/"+conn.ID+"/test", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -47,7 +47,7 @@ func TestTestConnection_UnknownIDReturns404(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/nope/test", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)

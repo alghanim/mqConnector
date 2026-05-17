@@ -110,7 +110,7 @@ func TestLogout_ClearsBothCookies(t *testing.T) {
 	cookie := loginCookie(t, h, "alice", "wonderland")
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("logout: %d", rec.Code)

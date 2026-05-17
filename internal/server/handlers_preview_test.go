@@ -23,7 +23,7 @@ func TestPreview_InlineDraft_FilterStrips(t *testing.T) {
 	}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/preview", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -64,7 +64,7 @@ func TestPreview_InlineDraft_TranslateJSONtoXML(t *testing.T) {
 	}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/preview", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -95,7 +95,7 @@ func TestPreview_FromSavedPipelineID(t *testing.T) {
 	pipeBody := `{"name":"prev","source_id":"` + src.ID + `","destination_id":"` + dst.ID + `","output_format":"same","filter_paths":[],"enabled":true}`
 	pReq := httptest.NewRequest(http.MethodPost, "/api/v1/pipelines", strings.NewReader(pipeBody))
 	pReq.Header.Set("Content-Type", "application/json")
-	pReq.AddCookie(cookie)
+	attachSession(pReq, cookie)
 	pRec := httptest.NewRecorder()
 	h.ServeHTTP(pRec, pReq)
 	if pRec.Code != http.StatusCreated && pRec.Code != http.StatusOK {
@@ -112,7 +112,7 @@ func TestPreview_FromSavedPipelineID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/pipelines/"+p.ID+"/stages",
 		strings.NewReader(stagesBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -122,7 +122,7 @@ func TestPreview_FromSavedPipelineID(t *testing.T) {
 	body := `{"pipeline_id":"` + p.ID + `","sample":"{\"id\":\"x\",\"secret\":\"hush\"}"}`
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/preview", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -146,7 +146,7 @@ func TestPreview_MissingSample_400(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/preview",
 		strings.NewReader(`{"stages":[]}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {

@@ -22,7 +22,7 @@ func TestAudit_MutationsRecordedWithActor(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/connections/"+conn.ID, nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete: %d", rec.Code)
@@ -64,7 +64,7 @@ func TestAudit_ReadOnlyRequestsNotLogged(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
-		req.AddCookie(cookie)
+		attachSession(req, cookie)
 		h.ServeHTTP(rec, req)
 	}
 	// Brief settle — the audit insert is async.
@@ -86,7 +86,7 @@ func TestAudit_HTTPEndpoint(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/audit?per_page=10", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit list: %d %s", rec.Code, rec.Body)

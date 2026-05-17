@@ -9,6 +9,24 @@ export interface ApiError {
 
 const BASE = '/api';
 
+// readCookie reads a non-HttpOnly cookie value from the browser by
+// name. Returns null when the cookie is absent (e.g. before login or
+// in the rare case where document.cookie isn't available — SSR /
+// jsdom). Used for the CSRF double-submit token.
+function readCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const target = name + '=';
+  for (const c of document.cookie.split(';')) {
+    const trimmed = c.trim();
+    if (trimmed.startsWith(target)) return trimmed.slice(target.length);
+  }
+  return null;
+}
+
+const CSRF_COOKIE = 'mqc_csrf';
+const CSRF_HEADER = 'X-CSRF-Token';
+const STATE_CHANGING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
 async function request<T>(
   method: string,
   path: string,
@@ -21,6 +39,13 @@ async function request<T>(
   };
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
+  }
+  // CSRF double-submit: echo the server-issued cookie in a header.
+  // The server compares them in constant time; missing or mismatched
+  // tokens get a 403 from requireCSRF before the handler runs.
+  if (STATE_CHANGING.has(method.toUpperCase())) {
+    const tok = readCookie(CSRF_COOKIE);
+    if (tok) headers[CSRF_HEADER] = tok;
   }
 
   const res = await fetch(`${BASE}${path}`, {
@@ -54,10 +79,16 @@ async function request<T>(
  * Content-Type the server should see.
  */
 async function postRaw<T>(path: string, body: string, contentType: string): Promise<T> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'Content-Type': contentType
+  };
+  const tok = readCookie(CSRF_COOKIE);
+  if (tok) headers[CSRF_HEADER] = tok;
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     credentials: 'include',
-    headers: { Accept: 'application/json', 'Content-Type': contentType },
+    headers,
     body
   });
   const isJSON = (res.headers.get('content-type') || '').includes('application/json');

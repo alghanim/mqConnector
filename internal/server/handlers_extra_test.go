@@ -36,7 +36,7 @@ func TestPipelines_FullCRUDFlow(t *testing.T) {
 		`","output_format":"same","filter_paths":["a.b"],"enabled":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipelines", body)
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create pipeline: %d %s", rec.Code, rec.Body)
@@ -47,7 +47,7 @@ func TestPipelines_FullCRUDFlow(t *testing.T) {
 	// LIST
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/pipelines", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: %d", rec.Code)
@@ -63,7 +63,7 @@ func TestPipelines_FullCRUDFlow(t *testing.T) {
 	body = strings.NewReader(`[{"stage_order":1,"stage_type":"filter","stage_config":"{}","enabled":true}]`)
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/pipelines/"+pipe.ID+"/stages", body)
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("replace stages: %d %s", rec.Code, rec.Body)
@@ -74,7 +74,7 @@ func TestPipelines_FullCRUDFlow(t *testing.T) {
 	body = strings.NewReader(`[{"transform_type":"rename","source_path":"a","target_path":"b","order":1}]`)
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/pipelines/"+pipe.ID+"/transforms", body)
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("replace transforms: %d %s", rec.Code, rec.Body)
@@ -83,7 +83,7 @@ func TestPipelines_FullCRUDFlow(t *testing.T) {
 	// LIST STAGES
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/pipelines/"+pipe.ID+"/stages", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list stages: %d", rec.Code)
@@ -92,7 +92,7 @@ func TestPipelines_FullCRUDFlow(t *testing.T) {
 	// RELOAD
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/reload", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("reload: %d %s", rec.Code, rec.Body)
@@ -101,7 +101,7 @@ func TestPipelines_FullCRUDFlow(t *testing.T) {
 	// DELETE
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodDelete, "/api/v1/pipelines/"+pipe.ID, nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("delete: %d", rec.Code)
@@ -115,7 +115,7 @@ func TestPipelines_CreateRejectsMissingFields(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipelines",
 		strings.NewReader(`{"name":""}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: %d, want 400", rec.Code)
@@ -129,7 +129,7 @@ func TestConnections_CreateRejectsBadType(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		strings.NewReader(`{"name":"bad","type":"gibberish"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: %d, want 400", rec.Code)
@@ -145,7 +145,7 @@ func TestDLQ_ListEmptyOK(t *testing.T) {
 	cookie, _ := withAuth(t, h)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/dlq", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dlq list: %d", rec.Code)
@@ -157,7 +157,7 @@ func TestDLQ_RetryUnknownIs404(t *testing.T) {
 	cookie, _ := withAuth(t, h)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/dlq/nope/retry", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound && rec.Code != http.StatusInternalServerError {
 		t.Errorf("unexpected status: %d %s", rec.Code, rec.Body)
@@ -176,7 +176,7 @@ func TestScripts_CRUDViaHTTP(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/scripts",
 		strings.NewReader(`{"name":"noop","body":"msg.x = 1","enabled":true}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
@@ -186,7 +186,7 @@ func TestScripts_CRUDViaHTTP(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/scripts", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: %d", rec.Code)
@@ -194,7 +194,7 @@ func TestScripts_CRUDViaHTTP(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodDelete, "/api/v1/scripts/"+sc.ID, nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("delete: %d", rec.Code)
@@ -222,7 +222,7 @@ func TestBridgePublish_PublishesToConnection(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/bridge/publish/"+conn.ID,
 		strings.NewReader(`{"event":"hello"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("publish: %d %s", rec.Code, rec.Body)
@@ -246,7 +246,7 @@ func TestBridgeConsume_ReceivesFromConnection(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/bridge/consume/"+conn.ID, nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("consume: %d", rec.Code)
@@ -265,7 +265,7 @@ func postConn(t *testing.T, h http.Handler, cookie *http.Cookie, body string) st
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("seed conn: %d %s", rec.Code, rec.Body)

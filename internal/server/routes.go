@@ -57,6 +57,11 @@ func (s *Server) routes() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth.RequireSession)
 		r.Use(s.rateLimitTenant)
+		// CSRF gate sits AFTER session validation (so 401 is preferred
+		// over 403 for missing-cookie cases) and BEFORE audit
+		// recording (a CSRF reject shouldn't generate an audit row).
+		// Bearer-token (API token) callers pass straight through.
+		r.Use(s.requireCSRF)
 		r.Use(s.AuditAdminActions)
 
 		r.Post("/api/auth/logout", s.handleLogout)
@@ -76,7 +81,8 @@ func (s *Server) routes() http.Handler {
 		// is system-admin only and additionally rewraps every stored
 		// connection password under the new key.
 		r.Get("/api/v1/secrets/status", s.handleSecretsStatus)
-		r.Post("/api/v1/secrets/rotate", s.handleRotateSecrets)
+		r.With(s.rateLimitSensitive("/api/v1/secrets/rotate")).
+			Post("/api/v1/secrets/rotate", s.handleRotateSecrets)
 
 		// Disaster-recovery hooks. /admin/backup snapshots the SQLite
 		// file (VACUUM INTO) and streams it back to the caller;
@@ -105,7 +111,8 @@ func (s *Server) routes() http.Handler {
 		// JSON on Accept: application/json or ?format=json. Import
 		// requires admin (enforced inside the handler).
 		r.Get("/api/v1/config/export", s.handleExportConfig)
-		r.Post("/api/v1/config/import", s.handleImportConfig)
+		r.With(s.rateLimitSensitive("/api/v1/config/import")).
+			Post("/api/v1/config/import", s.handleImportConfig)
 
 		// Server-Sent Events — long-lived stream. The RequestContextTimeout
 		// middleware detects "Accept: text/event-stream" and skips the
@@ -183,12 +190,15 @@ func (s *Server) routes() http.Handler {
 		// Sample upload + path extraction. Lets the pipeline editor's
 		// path-picker show what's actually in the operator's data without
 		// hand-typing every field name.
-		r.Post("/api/v1/samples/extract", s.handleExtractSample)
+		r.With(s.rateLimitSensitive("/api/v1/samples/extract")).
+			Post("/api/v1/samples/extract", s.handleExtractSample)
 
 		// Pipeline preview — drive a sample message through a saved
 		// pipeline or an inline draft, return what would be sent
-		// downstream. No brokers are touched.
-		r.Post("/api/v1/preview", s.handlePreview)
+		// downstream. No brokers are touched but the stage chain may
+		// run arbitrary JS scripts, so a tight rate limit is warranted.
+		r.With(s.rateLimitSensitive("/api/v1/preview")).
+			Post("/api/v1/preview", s.handlePreview)
 	})
 
 	// Static UI catch-all — must be last.

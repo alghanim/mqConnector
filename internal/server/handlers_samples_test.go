@@ -18,7 +18,7 @@ func TestExtractSample_RawJSONBody(t *testing.T) {
 	body := strings.NewReader(`{"id":"x","nested":{"a":1,"b":2}}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/samples/extract", body)
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -58,7 +58,7 @@ func TestExtractSample_MultipartXML(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/samples/extract", body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -83,7 +83,7 @@ func TestExtractSample_EmptyBody_400(t *testing.T) {
 	cookie := loginCookie(t, h, "alice", "wonderland")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/samples/extract", strings.NewReader(""))
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {

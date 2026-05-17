@@ -27,7 +27,7 @@ func TestConfig_ExportThenImport_RoundTrips(t *testing.T) {
 	body := `{"name":"main","source_id":"` + src.ID + `","destination_id":"` + dst.ID + `","output_format":"same","filter_paths":[],"enabled":true}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipelines", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
 		t.Fatalf("create pipeline: status=%d body=%s", rec.Code, rec.Body)
@@ -36,7 +36,7 @@ func TestConfig_ExportThenImport_RoundTrips(t *testing.T) {
 	// 2. Export. Both YAML (default) and JSON should work.
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/config/export?format=json", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export json: status=%d body=%s", rec.Code, rec.Body)
@@ -49,7 +49,7 @@ func TestConfig_ExportThenImport_RoundTrips(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/config/export", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export yaml: status=%d body=%s", rec.Code, rec.Body)
@@ -77,7 +77,7 @@ func TestConfig_ExportThenImport_RoundTrips(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/config/import", strings.NewReader(string(exportedYAML)))
 	req.Header.Set("Content-Type", "application/yaml")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("import: status=%d body=%s", rec.Code, rec.Body)
@@ -86,7 +86,7 @@ func TestConfig_ExportThenImport_RoundTrips(t *testing.T) {
 	// 5. Verify the names came back.
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	var conns []map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &conns)
@@ -120,7 +120,7 @@ func TestConfig_ImportRejectsConflicts(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/config/import", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409 conflict, got status=%d body=%s", rec.Code, rec.Body)
@@ -141,7 +141,7 @@ func TestConfig_ImportDryRunDoesntWrite(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/config/import?dry_run=true", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dry run: status=%d body=%s", rec.Code, rec.Body)
@@ -150,7 +150,7 @@ func TestConfig_ImportDryRunDoesntWrite(t *testing.T) {
 	// Confirm no rows landed.
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if strings.Contains(rec.Body.String(), `"name":"new-conn"`) {
 		t.Fatalf("dry run wrote rows: %s", rec.Body)
@@ -163,7 +163,7 @@ func getFirstPipelineID(t *testing.T, h http.Handler, cookie *http.Cookie) strin
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/pipelines", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	var list []map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &list)
@@ -181,7 +181,7 @@ func deleteEntity(t *testing.T, h http.Handler, cookie *http.Cookie, path string
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, path, nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
 		t.Fatalf("delete %s: status=%d body=%s", path, rec.Code, rec.Body)

@@ -45,10 +45,11 @@ type Server struct {
 	health       *health.Checker
 	leadership    *leadership.Lease // nil when not enabled
 	sealer        *secrets.Service  // nil when MQC_MASTER_KEY is unset
-	loginLimiter  *loginLimiter
-	tenantLimiter *tenantLimiter
-	stopGC        chan struct{}
-	stopGCOnce    sync.Once
+	loginLimiter     *loginLimiter
+	tenantLimiter    *tenantLimiter
+	sensitiveLimiter *sensitiveLimiter
+	stopGC           chan struct{}
+	stopGCOnce       sync.Once
 }
 
 // shutdownGC signals the rate-limiter's GC loop to exit. Idempotent — both
@@ -93,12 +94,14 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		health:       deps.Health,
 		leadership:   deps.Leadership,
 		sealer:        deps.Sealer,
-		loginLimiter:  newLoginLimiter(10, time.Minute),
-		tenantLimiter: newTenantLimiter(120, time.Minute, tenantOverrideFromStore(deps.Store)),
-		stopGC:        make(chan struct{}),
+		loginLimiter:     newLoginLimiter(10, time.Minute),
+		tenantLimiter:    newTenantLimiter(120, time.Minute, tenantOverrideFromStore(deps.Store)),
+		sensitiveLimiter: newSensitiveLimiter(6, time.Minute),
+		stopGC:           make(chan struct{}),
 	}
 	go s.loginLimiter.gc(s.stopGC)
 	go s.tenantLimiter.gc(s.stopGC)
+	go s.sensitiveLimiter.gc(s.stopGC)
 
 	// Install the memberships-backed tenant resolver onto the auth
 	// service. Without this, RequireSession falls back to the legacy

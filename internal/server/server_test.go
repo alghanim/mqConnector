@@ -138,6 +138,19 @@ func loginCookie(t *testing.T, h http.Handler, username, password string) *http.
 	return nil
 }
 
+// attachSession adds the session cookie AND a matching CSRF
+// (cookie + header) pair so a state-changing request makes it past
+// the requireCSRF middleware. Tests should use this everywhere
+// instead of req.AddCookie(cookie). The double-submit middleware
+// only checks cookie == header, so tests can synthesize any
+// matching value rather than threading a real login-issued token.
+func attachSession(req *http.Request, cookie *http.Cookie) {
+	req.AddCookie(cookie)
+	const csrf = "test-csrf-token"
+	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: csrf})
+	req.Header.Set(csrfHeaderName, csrf)
+}
+
 // ----------------------------------------------------------------------------
 // Public endpoints
 // ----------------------------------------------------------------------------
@@ -197,7 +210,7 @@ func TestConnections_FullCRUD(t *testing.T) {
 	// LIST → empty
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: %d %s", rec.Code, rec.Body)
@@ -208,7 +221,7 @@ func TestConnections_FullCRUD(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/connections",
 		strings.NewReader(`{"name":"rab1","type":"rabbitmq","url":"amqp://x","queue_name":"q"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
@@ -224,7 +237,7 @@ func TestConnections_FullCRUD(t *testing.T) {
 	// GET
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+created.ID, nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get: %d", rec.Code)
@@ -235,7 +248,7 @@ func TestConnections_FullCRUD(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPut, "/api/v1/connections/"+created.ID,
 		strings.NewReader(`{"name":"renamed","type":"rabbitmq","url":"amqp://x","queue_name":"q"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update: %d %s", rec.Code, rec.Body)
@@ -244,7 +257,7 @@ func TestConnections_FullCRUD(t *testing.T) {
 	// DELETE
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodDelete, "/api/v1/connections/"+created.ID, nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete: %d", rec.Code)
@@ -253,7 +266,7 @@ func TestConnections_FullCRUD(t *testing.T) {
 	// GET after delete → 404
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/connections/"+created.ID, nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("get after delete: %d, want 404", rec.Code)
@@ -274,7 +287,7 @@ func TestMetricsPrometheus_Authenticated_OK(t *testing.T) {
 	cookie := loginCookie(t, h, "alice", "wonderland")
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/metrics/prometheus", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d", rec.Code)
@@ -311,7 +324,7 @@ func TestLogout_ClearsCookie(t *testing.T) {
 	cookie := loginCookie(t, h, "alice", "wonderland")
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("logout: %d", rec.Code)
@@ -332,7 +345,7 @@ func TestMe_ReturnsUser(t *testing.T) {
 	cookie := loginCookie(t, h, "alice", "wonderland")
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
-	req.AddCookie(cookie)
+	attachSession(req, cookie)
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("me: %d %s", rec.Code, rec.Body)

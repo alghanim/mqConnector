@@ -122,7 +122,7 @@ func (f isolationFixture) do(t *testing.T, asTenant, method, path, body string) 
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("X-Test-Tenant", asTenant)
-	req.AddCookie(f.cookie)
+	attachSession(req, f.cookie)
 	f.h.ServeHTTP(rec, req)
 	return rec
 }

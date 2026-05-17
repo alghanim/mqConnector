@@ -30,6 +30,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if refresh != "" {
 		s.auth.SetRefreshCookie(w, refresh)
 	}
+	// Issue a fresh CSRF token alongside the session — the SPA reads
+	// it from document.cookie for the double-submit pattern. Rotating
+	// per login means a long-lived browser tab eventually rolls its
+	// CSRF secret even if the SPA never explicitly logs out.
+	s.EnsureCSRFCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -62,6 +67,9 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auth.SetCookie(w, access)
 	s.auth.SetRefreshCookie(w, refresh)
+	// Re-issue the CSRF token on refresh too so a long-lived SPA
+	// session keeps the cookie alive past the access token's TTL.
+	s.EnsureCSRFCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
