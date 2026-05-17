@@ -4,12 +4,14 @@ package mq
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nats-io/nats.go"
 )
 
 // TestIntegration_NATS_CorePublishConsume drives a single message
@@ -105,6 +107,14 @@ func TestIntegration_NATS_JetStreamPullAck(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Self-bootstrap: ensure the JetStream stream exists and covers
+	// our test subject pattern. This lets CI bring up a vanilla NATS
+	// container (no pre-seeded streams) and have the test wire its
+	// own fixtures without a fragile out-of-band CLI step.
+	if err := ensureJetStreamStream(url, stream, "mqctest.>"); err != nil {
+		t.Fatalf("ensure stream: %v", err)
+	}
+
 	sub, err := New(cfg)
 	if err != nil {
 		t.Fatalf("new sub: %v", err)
@@ -135,4 +145,38 @@ func TestIntegration_NATS_JetStreamPullAck(t *testing.T) {
 	if string(got) != string(payload) {
 		t.Fatalf("payload mismatch:\n got  %s\n want %s", got, payload)
 	}
+}
+
+// ensureJetStreamStream creates the named stream with the given
+// subject filter if it doesn't already exist. Idempotent — a second
+// call with the same name is a no-op. Memory storage keeps CI fast
+// and side-effect-free.
+func ensureJetStreamStream(url, name, subjectPattern string) error {
+	nc, err := nats.Connect(url, nats.Timeout(5*time.Second))
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer nc.Close()
+	js, err := nc.JetStream()
+	if err != nil {
+		return fmt.Errorf("jetstream: %w", err)
+	}
+	_, err = js.StreamInfo(name)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, nats.ErrStreamNotFound) {
+		return fmt.Errorf("stream info: %w", err)
+	}
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:      name,
+		Subjects:  []string{subjectPattern},
+		Storage:   nats.MemoryStorage,
+		Retention: nats.LimitsPolicy,
+		Replicas:  1,
+	})
+	if err != nil {
+		return fmt.Errorf("add stream: %w", err)
+	}
+	return nil
 }

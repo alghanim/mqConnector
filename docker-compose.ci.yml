@@ -1,0 +1,73 @@
+# docker-compose.ci.yml — broker fixtures for the integration test suite.
+#
+# Used by the CI "integration" job and by anyone running:
+#
+#   docker compose -f docker-compose.ci.yml up -d
+#   RABBIT_URL=amqp://mqc:mqc-dev@localhost:5672 \
+#   KAFKA_BROKERS=localhost:9092 \
+#   NATS_URL=nats://localhost:4222 NATS_STREAM=mqctest \
+#     go test -tags integration ./...
+#
+# Different from docker-compose.yml: no mqconnector, no SimpleAuth, no
+# TLS, no UI — just the three brokers the integration tests target,
+# wired with conservative resource settings and aggressive healthchecks
+# so CI doesn't waste minutes waiting for slow-start.
+
+name: mqconnector-ci
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: mqc
+      RABBITMQ_DEFAULT_PASS: mqc-dev
+    ports:
+      - "5672:5672"
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  kafka:
+    image: apache/kafka:3.8.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      # Single listener on 9092, advertised as localhost:9092 so tests
+      # running on the host hit the broker through the published port
+      # without an extra hostname mapping.
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: mqc-ci-cluster
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  nats:
+    image: nats:2.10-alpine
+    # -js enables JetStream, -sd points the on-disk store at a writable
+    # tmpfs-friendly path so the container doesn't depend on volumes.
+    command: ["-js", "-sd", "/tmp/nats", "-m", "8222"]
+    ports:
+      - "4222:4222"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s

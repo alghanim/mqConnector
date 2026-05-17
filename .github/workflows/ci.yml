@@ -96,6 +96,68 @@ jobs:
         working-directory: web
         run: npm run build
 
+  integration:
+    name: Integration (real brokers)
+    runs-on: ubuntu-latest
+    # Each broker has shipped with its own zero-test bug in the past
+    # (Kafka partition-0 OffsetNewest, RabbitMQ at-most-once,
+    # JetStream ack-timing) — running real brokers in CI is the only
+    # path that catches them before prod.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Provide SimpleAuth SDK
+        run: |
+          git clone --depth 1 https://github.com/bodaay/SimpleAuth.git /tmp/SimpleAuth
+          sed -i 's|=> ../SimpleAuth/sdk/go|=> /tmp/SimpleAuth/sdk/go|' go.mod
+          go mod download
+
+      - name: Bring brokers up
+        run: docker compose -f docker-compose.ci.yml up -d
+
+      - name: Wait for brokers healthy
+        # `docker compose ps --format json` reports each service's
+        # health; loop until all three are healthy or we hit the cap.
+        run: |
+          set -e
+          deadline=$((SECONDS + 180))
+          while [ $SECONDS -lt $deadline ]; do
+            statuses=$(docker compose -f docker-compose.ci.yml ps --format '{{.Name}} {{.Health}}')
+            echo "$statuses"
+            if ! echo "$statuses" | grep -v 'healthy' | grep -q .; then
+              echo "all brokers healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "brokers never reached healthy state"
+          docker compose -f docker-compose.ci.yml logs --tail=200
+          exit 1
+
+      - name: go test -tags integration
+        env:
+          GOWORK: off
+          RABBIT_URL: amqp://mqc:mqc-dev@localhost:5672
+          KAFKA_BROKERS: localhost:9092
+          NATS_URL: nats://localhost:4222
+          NATS_STREAM: mqctest
+        # The JetStream test self-bootstraps its stream via the Go
+        # client, so CI doesn't need a pre-seed step.
+        run: go test -tags integration -timeout 5m -count 1 ./...
+
+      - name: Broker logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.ci.yml logs --tail=300
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.ci.yml down -v
+
   docker:
     name: Docker image
     runs-on: ubuntu-latest
