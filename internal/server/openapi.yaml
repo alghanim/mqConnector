@@ -1131,3 +1131,254 @@ paths:
             application/json: {}
             application/xml: {}
             application/octet-stream: {}
+
+  /api/openapi.yaml:
+    get:
+      tags: [meta]
+      summary: Serve this spec. Public — no auth required.
+      responses:
+        '200':
+          description: OpenAPI 3.0 YAML.
+          content:
+            application/yaml: {}
+
+  /api/v1/audit/verify:
+    get:
+      tags: [audit]
+      summary: Walk the hash chain and report tampering / gaps.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Verification result with first-broken row if any.
+          content:
+            application/json: {}
+
+  /api/v1/audit/{id}/diff:
+    parameters:
+      - $ref: '#/components/parameters/pathID'
+    get:
+      tags: [audit]
+      summary: Resource diff for the named audit row (before → after JSON).
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Diff payload. }
+        '404': { description: Audit row not found. }
+
+  /api/v1/tokens:
+    get:
+      tags: [tokens]
+      summary: List API tokens for the caller's tenant.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Token list (hash + metadata; never the secret). }
+    post:
+      tags: [tokens]
+      summary: Mint a new API token. The plaintext secret is returned ONCE.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json: {}
+      responses:
+        '201': { description: Created. Includes the plaintext secret. }
+
+  /api/v1/tokens/{id}:
+    parameters:
+      - $ref: '#/components/parameters/pathID'
+    delete:
+      tags: [tokens]
+      summary: Revoke an API token.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '204': { description: Revoked. }
+        '404': { description: Not found. }
+
+  /api/v1/webhooks:
+    get:
+      tags: [webhooks]
+      summary: List outbound webhook endpoints for the caller's tenant.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Webhook list. }
+    post:
+      tags: [webhooks]
+      summary: Create a webhook (URL + event-type filters + HMAC secret).
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json: {}
+      responses:
+        '201': { description: Created. }
+
+  /api/v1/webhooks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/pathID'
+    put:
+      tags: [webhooks]
+      summary: Replace a webhook's URL / filters / enabled state.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json: {}
+      responses:
+        '200': { description: Updated. }
+        '404': { description: Not found. }
+    delete:
+      tags: [webhooks]
+      summary: Delete a webhook.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '204': { description: Deleted. }
+        '404': { description: Not found. }
+
+  /api/v1/config/export:
+    get:
+      tags: [config]
+      summary: Export the tenant's connections, schemas, scripts, and pipelines.
+      description: |
+        YAML by default. Send `Accept: application/json` (or `?format=json`)
+        for the JSON representation the gitops client uses.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Bundle.
+          content:
+            application/yaml: {}
+            application/json: {}
+
+  /api/v1/config/import:
+    post:
+      tags: [config]
+      summary: Apply a desired-state bundle. Admin only.
+      description: |
+        Accepts the same shape /api/v1/config/export emits. Upserts by
+        name within the bundle's tenant. Deletions are not honoured —
+        operators remove records explicitly.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/yaml: {}
+          application/json: {}
+      responses:
+        '200': { description: Applied. Returns per-kind counts. }
+        '403': { description: Not an admin. }
+
+  /api/v1/events:
+    get:
+      tags: [events]
+      summary: Server-sent stream of lifecycle events for the caller's tenant.
+      description: |
+        Long-lived `text/event-stream` connection. Emits pipeline started /
+        stopped / reloaded, DLQ pushes, and similar lifecycle hooks. The
+        admin UI uses this to keep dashboards live without polling.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Event stream.
+          content:
+            text/event-stream: {}
+
+  /api/v1/leadership:
+    get:
+      tags: [meta]
+      summary: Report this instance's role in the leader-election dance.
+      description: |
+        For multi-replica deploys behind a SQLite-backed lease. The
+        leader runs the DLQ reaper and pipeline executors; followers
+        serve read-only API. Single-replica deploys always report
+        leader=true.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Leadership snapshot (role, leader id, expires_at).
+          content:
+            application/json: {}
+
+  /api/v1/secrets/status:
+    get:
+      tags: [secrets]
+      summary: Current secret-encryption key version + whether any rows are still on an older version.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Key-version summary. }
+
+  /api/v1/secrets/rotate:
+    post:
+      tags: [secrets]
+      summary: Mint a new key version and rewrap all stored passwords. Admin only.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Rotation complete. Returns rewrap counts. }
+        '403': { description: Not an admin. }
+
+  /api/v1/pipelines/{id}/replay:
+    parameters:
+      - $ref: '#/components/parameters/pathID'
+    post:
+      tags: [pipelines]
+      summary: Re-run a historical time window through this pipeline.
+      description: |
+        Supported on Kafka and NATS JetStream sources. The replay opens
+        a throwaway consumer scoped to `since..until` and pushes through
+        the same stage chain as the live pipeline. Returns counts of
+        messages read, sent, and dropped. Returns 400 for sources that
+        don't retain consumed messages (RabbitMQ, MQTT, core NATS,
+        AMQP 1.0).
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [since, until]
+              properties:
+                since: { type: string, format: date-time }
+                until: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Replay summary.
+          content:
+            application/json: {}
+        '400': { description: Source broker does not support replay, or window invalid. }
+
+  /api/v1/preview:
+    post:
+      tags: [pipelines]
+      summary: Dry-run a stage chain against a literal payload.
+      description: |
+        The pipeline editor uses this to show how each stage would
+        transform a sample message before saving. No persistence, no
+        side effects.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json: {}
+      responses:
+        '200': { description: Stage-by-stage trace + final output. }
+
+  /api/v1/samples/extract:
+    post:
+      tags: [pipelines]
+      summary: Pull one live message off a source connection and return it (no ack).
+      description: |
+        Used by the pipeline editor's "load a real sample" button.
+        Reads a single message from the source so the operator can wire
+        validate / filter / transform stages against actual traffic
+        without seeding a fixture.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json: {}
+      responses:
+        '200':
+          description: Captured sample (Content-Type matches detected format).
+          content:
+            application/json: {}
+            application/xml: {}
+            application/octet-stream: {}

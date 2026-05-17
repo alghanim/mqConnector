@@ -3,9 +3,10 @@
 // POST /api/v1/pipelines/{id}/replay
 //   body: {"since": "2026-05-16T13:00:00Z", "until": "2026-05-16T13:30:00Z"}
 //
-// Currently supported on Kafka sources only; NATS JetStream is planned.
-// RabbitMQ / MQTT / AMQP 1.0 don't retain consumed messages so replay
-// isn't meaningful there — the handler returns 400 with a clear reason.
+// Supported on Kafka and NATS JetStream sources (anything that retains
+// committed messages broker-side). RabbitMQ / MQTT / core NATS / AMQP
+// 1.0 don't retain consumed messages so replay isn't meaningful there —
+// the handler returns 400 with a clear reason.
 
 package server
 

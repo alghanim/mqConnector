@@ -26,9 +26,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/nats-io/nats.go"
 
 	"mqConnector/internal/mq"
 	"mqConnector/internal/mqcfg"
@@ -85,14 +87,177 @@ func (m *Manager) Replay(ctx context.Context, pipelineID string, win ReplayWindo
 	case mq.TypeKafka:
 		return m.replayKafka(ctx, pipe, srcCfg, dstCfg, win)
 	case mq.TypeNATS:
-		// JetStream replay is documented but not yet implemented at
-		// this layer — operators can drive it manually via the nats
-		// CLI today. Track here so the API can return a clean error
-		// rather than a 500 from a nil pointer.
-		return nil, fmt.Errorf("replay: NATS JetStream replay not yet implemented at the manager layer; planned")
+		// Core NATS retains nothing — only JetStream replay makes
+		// sense. The connector's StreamName populates Config.StreamName;
+		// reject up-front if it's missing rather than failing inside
+		// the replay loop with a confusing error.
+		if strings.TrimSpace(srcCfg.StreamName) == "" {
+			return nil, fmt.Errorf("%w: core NATS (set stream_name on the source connection for JetStream replay)",
+				ErrReplayNotSupported)
+		}
+		return m.replayJetStream(ctx, pipe, srcCfg, dstCfg, win)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrReplayNotSupported, srcCfg.Type)
 	}
+}
+
+// replayJetStream drives a JetStream replay. We open a throwaway
+// (non-durable, ephemeral) pull-subscription against the configured
+// stream with DeliverByStartTime = win.Since, then drain forward until
+// we see a message whose JetStream metadata Timestamp passes win.Until
+// (or until idle silence implies the broker has nothing else to send).
+// The live pipeline's durable consumer is untouched because the
+// ephemeral subscription's name doesn't collide.
+func (m *Manager) replayJetStream(
+	ctx context.Context,
+	pipe *storage.Pipeline,
+	srcCfg, dstCfg mq.Config,
+	win ReplayWindow,
+) (*ReplayResult, error) {
+	opts := []nats.Option{
+		nats.Name("mqconnector-replay-" + pipe.ID),
+		nats.Timeout(10 * time.Second),
+		nats.MaxReconnects(3),
+	}
+	if srcCfg.Username != "" || srcCfg.Password != "" {
+		opts = append(opts, nats.UserInfo(srcCfg.Username, srcCfg.Password))
+	}
+	if srcCfg.TLS.Enabled() {
+		tlsCfg, err := mq.BuildTLSConfig(srcCfg.TLS)
+		if err != nil {
+			return nil, fmt.Errorf("replay: NATS TLS: %w", err)
+		}
+		opts = append(opts, nats.Secure(tlsCfg))
+	}
+	nc, err := nats.Connect(srcCfg.URL, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("replay: NATS connect: %w", err)
+	}
+	defer nc.Close()
+
+	js, err := nc.JetStream()
+	if err != nil {
+		return nil, fmt.Errorf("replay: JetStream context: %w", err)
+	}
+
+	subject := srcCfg.Topic
+	if subject == "" {
+		subject = srcCfg.QueueName
+	}
+	if subject == "" {
+		return nil, errors.New("replay: source subject (topic/queue_name) is required")
+	}
+
+	// Ephemeral pull subscription — no durable name → the broker
+	// garbage-collects the consumer when we disconnect, so we don't
+	// accumulate replay consumers on the stream.
+	sub, err := js.PullSubscribe(subject, "",
+		nats.BindStream(srcCfg.StreamName),
+		nats.StartTime(win.Since),
+		nats.AckExplicit(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("replay: JetStream pull subscribe: %w", err)
+	}
+	defer func() { _ = sub.Unsubscribe() }()
+
+	// Build the same stages the live executor uses.
+	stageRows, _ := m.store.Stages.ListByPipelineUnsafe(ctx, pipe.ID)
+	transforms, _ := m.store.Transforms.ListByPipelineUnsafe(ctx, pipe.ID)
+	routingRules, _ := m.store.RoutingRules.ListByPipelineUnsafe(ctx, pipe.ID)
+	schemas, _ := m.loadSchemasForBuild(ctx, pipe)
+	stages, err := Build(BuildContext{
+		Pipeline:     pipe,
+		StageRows:    stageRows,
+		Transforms:   transforms,
+		RoutingRules: routingRules,
+		Schemas:      schemas,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("replay: build stages: %w", err)
+	}
+
+	logger := m.logger.With(
+		"pipeline_id", pipe.ID,
+		"replay_since", win.Since.Format(time.RFC3339),
+		"replay_until", win.Until.Format(time.RFC3339),
+		"stream", srcCfg.StreamName,
+	)
+	logger.Info("replay starting (JetStream)")
+
+	start := time.Now()
+	result := &ReplayResult{}
+	// Fetch batch + per-fetch timeout. JetStream's pull-fetch returns
+	// nats.ErrTimeout when there's nothing to send; we treat that as
+	// "the broker has caught up with us" and exit cleanly. Without it,
+	// a window that ends in the future would block until ctx cancel.
+	const fetchTimeout = 2 * time.Second
+	for {
+		select {
+		case <-ctx.Done():
+			result.Duration = time.Since(start)
+			logger.Warn("replay cancelled", "err", ctx.Err())
+			return result, ctx.Err()
+		default:
+		}
+		batch, err := sub.Fetch(16, nats.MaxWait(fetchTimeout))
+		if err != nil {
+			if errors.Is(err, nats.ErrTimeout) {
+				// Idle — assume drained.
+				break
+			}
+			return result, fmt.Errorf("replay: JetStream fetch: %w", err)
+		}
+		done := false
+		for _, msg := range batch {
+			meta, mErr := msg.Metadata()
+			if mErr != nil {
+				logger.Warn("replay: metadata read failed", "err", mErr)
+				_ = msg.Ack()
+				continue
+			}
+			if meta.Timestamp.After(win.Until) {
+				// Past the window — acknowledge so the consumer's
+				// pending list is clean before we tear it down, then
+				// stop.
+				_ = msg.Ack()
+				done = true
+				break
+			}
+			result.MessagesRead++
+			outcome, runErr := RunStages(ctx, stages, msg.Data)
+			if runErr != nil {
+				logger.Warn("replay: stage failed",
+					"err", runErr,
+					"seq", meta.Sequence.Stream)
+				result.MessagesDropped++
+				_ = msg.Ack()
+				continue
+			}
+			if err := m.replaySend(ctx, dstCfg, outcome.Body); err != nil {
+				logger.Warn("replay: send failed",
+					"err", err,
+					"seq", meta.Sequence.Stream)
+				result.MessagesDropped++
+				_ = msg.Ack()
+				continue
+			}
+			result.MessagesSent++
+			_ = msg.Ack()
+		}
+		if done {
+			break
+		}
+	}
+
+	result.Duration = time.Since(start)
+	logger.Info("replay complete (JetStream)",
+		"read", result.MessagesRead,
+		"sent", result.MessagesSent,
+		"dropped", result.MessagesDropped,
+		"duration_ms", result.Duration.Milliseconds(),
+	)
+	return result, nil
 }
 
 // replayKafka drives the actual Kafka replay. Uses sarama's offset-for-

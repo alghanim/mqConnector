@@ -36,34 +36,10 @@ func TestOpenAPIDrift(t *testing.T) {
 
 	// Routes intentionally outside the public REST API spec:
 	//   - "GET /*" is the embedded SvelteKit static handler.
-	// Everything below is *known tech debt* — phase-22-and-later
-	// endpoints that were added before openapi.yaml caught up. The
-	// allowlist makes the gap explicit and shrinks as routes are
-	// documented; any NEW undocumented route trips this test.
+	// Any other undocumented route trips this test — add it to
+	// internal/server/openapi.yaml.
 	allowChiOnly := map[string]bool{
 		"GET /*": true,
-		// TODO(openapi): document the following endpoints. Once a route
-		// is added to internal/server/openapi.yaml, delete it from this
-		// list — the drift test will then guard it against regression.
-		"DELETE /api/v1/tokens/{id}":          true,
-		"DELETE /api/v1/webhooks/{id}":        true,
-		"GET /api/openapi.yaml":               true,
-		"GET /api/v1/audit/verify":            true,
-		"GET /api/v1/audit/{id}/diff":         true,
-		"GET /api/v1/config/export":           true,
-		"GET /api/v1/events":                  true,
-		"GET /api/v1/leadership":              true,
-		"GET /api/v1/secrets/status":          true,
-		"GET /api/v1/tokens":                  true,
-		"GET /api/v1/webhooks":                true,
-		"POST /api/v1/config/import":          true,
-		"POST /api/v1/pipelines/{id}/replay":  true,
-		"POST /api/v1/preview":                true,
-		"POST /api/v1/samples/extract":        true,
-		"POST /api/v1/secrets/rotate":         true,
-		"POST /api/v1/tokens":                 true,
-		"POST /api/v1/webhooks":               true,
-		"PUT /api/v1/webhooks/{id}":           true,
 	}
 
 	var missingFromSpec, missingFromChi []string
