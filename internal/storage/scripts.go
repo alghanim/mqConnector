@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type ScriptRepo struct{ db *sql.DB }
+type ScriptRepo struct{ db *dbWrap }
 
 func (r *ScriptRepo) Create(ctx context.Context, tenantID string, s *Script) error {
 	if tenantID == "" {
@@ -105,7 +105,7 @@ func (r *ScriptRepo) List(ctx context.Context, tenantID string) ([]*Script, erro
 	return out, rows.Err()
 }
 
-type SchemaRepo struct{ db *sql.DB }
+type SchemaRepo struct{ db *dbWrap }
 
 func (r *SchemaRepo) Create(ctx context.Context, tenantID string, s *Schema) error {
 	if tenantID == "" {

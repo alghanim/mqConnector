@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type StageRepo struct{ db *sql.DB }
+type StageRepo struct{ db *dbWrap }
 
 func (r *StageRepo) ListByPipeline(ctx context.Context, tenantID, pipelineID string) ([]*Stage, error) {
 	if tenantID == "" {

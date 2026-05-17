@@ -27,7 +27,7 @@ type Plugin struct {
 	Blob []byte `json:"-"`
 }
 
-type PluginRepo struct{ db *sql.DB }
+type PluginRepo struct{ db *dbWrap }
 
 // Upsert inserts the plugin or replaces it if a row already exists
 // for (tenant_id, name). The sha256 + blob get refreshed on every

@@ -36,6 +36,19 @@ var migrations = []string{
 	);
 	CREATE INDEX IF NOT EXISTS idx_connections_name ON connections(name);
 
+	-- schemas is declared before pipelines so the pipelines.schema_id
+	-- FK resolves without a forward reference. SQLite tolerates
+	-- forward FKs; Postgres validates at CREATE TABLE time. Order
+	-- here makes both backends happy.
+	CREATE TABLE IF NOT EXISTS schemas (
+		id          TEXT PRIMARY KEY,
+		name        TEXT NOT NULL,
+		schema_type TEXT NOT NULL CHECK(schema_type IN ('json_schema','xsd')),
+		content     TEXT NOT NULL DEFAULT '',
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE TABLE IF NOT EXISTS pipelines (
 		id              TEXT PRIMARY KEY,
 		name            TEXT NOT NULL,
@@ -91,15 +104,6 @@ var migrations = []string{
 		description TEXT NOT NULL DEFAULT '',
 		body        TEXT NOT NULL DEFAULT '',
 		enabled     INTEGER NOT NULL DEFAULT 1,
-		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);
-
-	CREATE TABLE IF NOT EXISTS schemas (
-		id          TEXT PRIMARY KEY,
-		name        TEXT NOT NULL,
-		schema_type TEXT NOT NULL CHECK(schema_type IN ('json_schema','xsd')),
-		content     TEXT NOT NULL DEFAULT '',
 		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
@@ -650,47 +654,77 @@ func migrate(db *sql.DB, dialect Dialect) error {
 // of the SQL verbatim. The replacements below are the items that
 // don't translate without help:
 //
-//   - INSERT OR IGNORE → INSERT … ON CONFLICT DO NOTHING
-//   - BLOB → bytea (postgres column type)
+//   - INSERT OR IGNORE INTO X ... VALUES (...);
+//       → INSERT INTO X ... VALUES (...) ON CONFLICT DO NOTHING;
+//   - BLOB → bytea (postgres binary column type)
+//   - DATETIME → TIMESTAMP (canonical postgres name; pgx round-trip
+//     of time.Time works cleanly through TIMESTAMP)
 //
-// CHECK constraints, DATETIME columns, CURRENT_TIMESTAMP defaults,
-// INTEGER NOT NULL DEFAULT 0|1 booleans, and the recreate-and-copy
-// table patterns all work on Postgres as-is.
-//
-// More complex divergences (column rename, JSON columns) are not
-// yet used by any migration; future migrations using them need to
-// add their own branch here.
+// CHECK constraints, CURRENT_TIMESTAMP defaults, INTEGER NOT NULL
+// DEFAULT 0|1 booleans, and the recreate-and-copy table patterns
+// all work on Postgres as-is.
 func translateMigrationToDialect(sql string, dialect Dialect) string {
 	if dialect != DialectPostgres {
 		return sql
 	}
-	// `INSERT OR IGNORE INTO foo (cols) VALUES (...)` → on conflict do nothing.
-	// We don't have UPSERT-with-update in migrations; the simple form is enough.
-	sql = strings.ReplaceAll(sql, "INSERT OR IGNORE INTO", "INSERT INTO")
-	if strings.Contains(sql, "ON CONFLICT") {
-		// Already has explicit ON CONFLICT clauses (e.g. migration
-		// 0009-style upsert paths); leave alone.
-	} else {
-		// Naive insertion of ON CONFLICT DO NOTHING for the simple
-		// upsert is not safe — we'd need to know the conflict
-		// target. The two SQLite INSERT-OR-IGNORE statements in our
-		// migrations both insert seed rows where the conflict is on
-		// PRIMARY KEY, which Postgres handles cleanly when we just
-		// add a generic ON CONFLICT DO NOTHING (no target specified
-		// = matches any unique constraint).
-		sql = strings.ReplaceAll(sql, ";\n", " ON CONFLICT DO NOTHING;\n")
-		// Revert the over-zealous insertion — we only want it on
-		// statements that started life as INSERT OR IGNORE. Detect
-		// by looking for the pattern we substituted just above.
-		// (Future iterations should track this with a more precise
-		// approach — see POSTGRES_MIGRATION.md for the cleanup
-		// path.)
-		sql = strings.ReplaceAll(sql,
-			"ON CONFLICT DO NOTHING ON CONFLICT DO NOTHING",
-			"ON CONFLICT DO NOTHING")
+	// Per-statement scan: rewrite each statement up to its `;`
+	// independently. The earlier naive global-replace approach
+	// over-applied ON CONFLICT to every statement including
+	// CREATE TABLE, which then errored at apply time.
+	var out []byte
+	for len(sql) > 0 {
+		idx := indexStatementEnd(sql)
+		var stmt string
+		if idx < 0 {
+			stmt = sql
+			sql = ""
+		} else {
+			stmt = sql[:idx+1]
+			sql = sql[idx+1:]
+		}
+		out = append(out, translatePostgresStatement(stmt)...)
 	}
-	// BLOB → bytea (Postgres binary column).
-	sql = strings.ReplaceAll(sql, "BLOB NOT NULL", "bytea NOT NULL")
-	sql = strings.ReplaceAll(sql, "BLOB,", "bytea,")
-	return sql
+	return string(out)
+}
+
+// indexStatementEnd returns the index of the next `;` outside of
+// quoted strings. Returns -1 when there's no terminator.
+func indexStatementEnd(s string) int {
+	inSingle, inDouble := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		case c == ';' && !inSingle && !inDouble:
+			return i
+		}
+	}
+	return -1
+}
+
+// translatePostgresStatement applies postgres substitutions to a
+// single SQL statement. Pure string transform; unit-testable.
+func translatePostgresStatement(stmt string) string {
+	upper := strings.ToUpper(stmt)
+	insertIgnore := strings.Contains(upper, "INSERT OR IGNORE INTO")
+	stmt = strings.ReplaceAll(stmt, "INSERT OR IGNORE INTO", "INSERT INTO")
+	if insertIgnore && !strings.Contains(strings.ToUpper(stmt), "ON CONFLICT") {
+		if semi := strings.LastIndex(stmt, ";"); semi >= 0 {
+			stmt = stmt[:semi] + " ON CONFLICT DO NOTHING" + stmt[semi:]
+		}
+	}
+	// BLOB → bytea (binary).
+	stmt = strings.ReplaceAll(stmt, "BLOB NOT NULL", "bytea NOT NULL")
+	stmt = strings.ReplaceAll(stmt, " BLOB,", " bytea,")
+	stmt = strings.ReplaceAll(stmt, " BLOB\n", " bytea\n")
+	// DATETIME → TIMESTAMP.
+	stmt = strings.ReplaceAll(stmt, "DATETIME NOT NULL", "TIMESTAMP NOT NULL")
+	stmt = strings.ReplaceAll(stmt, "DATETIME NULL", "TIMESTAMP NULL")
+	stmt = strings.ReplaceAll(stmt, "DATETIME,", "TIMESTAMP,")
+	stmt = strings.ReplaceAll(stmt, "DATETIME\n", "TIMESTAMP\n")
+	stmt = strings.ReplaceAll(stmt, "DATETIME ", "TIMESTAMP ")
+	return stmt
 }

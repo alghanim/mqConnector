@@ -61,7 +61,7 @@ type Membership struct {
 }
 
 // MembershipRepo manages the tenant_memberships table.
-type MembershipRepo struct{ db *sql.DB }
+type MembershipRepo struct{ db *dbWrap }
 
 // Upsert inserts or replaces a membership row.
 func (r *MembershipRepo) Upsert(ctx context.Context, m *Membership) error {

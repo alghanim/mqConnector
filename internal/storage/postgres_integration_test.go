@@ -5,7 +5,9 @@ package storage
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
+	"time"
 )
 
 // TestPostgresOpen_AppliesMigrations proves the Postgres dispatch
@@ -68,5 +70,94 @@ func TestPostgresOpen_AppliesMigrations(t *testing.T) {
 	if _, err := s.DB.ExecContext(context.Background(),
 		`SELECT id FROM connections LIMIT 1`); err != nil {
 		t.Errorf("connections table missing or unqueryable: %v", err)
+	}
+}
+
+// TestPostgresCRUD_Connections proves the placeholder-rewriter is
+// doing its job: a repo method that issues `?`-placeholder SQL hits
+// pgx, which would normally reject it, but the dbWrap converts it
+// to `$N` form before the driver sees it.
+func TestPostgresCRUD_Connections(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("set POSTGRES_DSN to run")
+	}
+	s, err := Open(dsn, 4, 2)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	// Clean slate.
+	_, _ = s.DB.ExecContext(context.Background(), `DELETE FROM connections`)
+
+	ctx := context.Background()
+	c := &Connection{Name: "pg-test", Type: "rabbitmq", URL: "amqp://x", QueueName: "q"}
+	if err := s.Connections.Create(ctx, DefaultTenantID, c); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if c.ID == "" {
+		t.Fatal("Create should populate ID")
+	}
+	got, err := s.Connections.Get(ctx, DefaultTenantID, c.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Name != "pg-test" {
+		t.Errorf("Get name = %q, want pg-test", got.Name)
+	}
+	got.Name = "renamed"
+	if err := s.Connections.Update(ctx, DefaultTenantID, got); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if err := s.Connections.Delete(ctx, DefaultTenantID, c.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+}
+
+// TestPostgresAudit_SerialisableChain verifies the serialisable
+// audit path: even with concurrent inserts on Postgres the chain
+// stays linear (each row's prev_hash matches an earlier row's hash).
+// The retry loop in insertSerialised should handle 40001 conflicts
+// transparently.
+func TestPostgresAudit_SerialisableChain(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("set POSTGRES_DSN to run")
+	}
+	s, err := Open(dsn, 8, 4)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	_, _ = s.DB.ExecContext(context.Background(),
+		`DELETE FROM audit_log WHERE tenant_id = $1`, DefaultTenantID)
+
+	ctx := context.Background()
+	const writers = 8
+	const perWriter = 10
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	for w := 0; w < writers; w++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perWriter; i++ {
+				_ = s.Audit.Insert(ctx, &AuditEntry{
+					Actor:    "concurrent-writer",
+					Action:   "POST",
+					Resource: "/x",
+					At:       time.Now().UTC(),
+				})
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Verify the chain is intact.
+	statuses, err := s.Audit.Verify(ctx, DefaultTenantID)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(statuses) != 1 || statuses[0].Status != "ok" {
+		t.Errorf("audit chain broken under concurrent writes: %+v", statuses)
 	}
 }

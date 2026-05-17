@@ -29,7 +29,7 @@ type PasswordRewrapper interface {
 }
 
 type ConnectionRepo struct {
-	db     *sql.DB
+	db     *dbWrap
 	sealer Sealer // optional; nil means store plaintext
 }
 

@@ -108,23 +108,27 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	// Wrap *sql.DB so repos see placeholder-rewritten queries
+	// transparently. Each repo holds *dbWrap; call sites are
+	// unchanged.
+	wrap := &dbWrap{db: db, dialect: dialect}
 	return &Store{
 		DB:           db,
 		dialect:      dialect,
-		Connections:  &ConnectionRepo{db: db},
-		Pipelines:    &PipelineRepo{db: db},
-		Stages:       &StageRepo{db: db},
-		Transforms:   &TransformRepo{db: db},
-		RoutingRules: &RoutingRuleRepo{db: db},
-		DLQ:          &DLQRepo{db: db},
-		Scripts:      &ScriptRepo{db: db},
-		Schemas:      &SchemaRepo{db: db},
-		Audit:        &AuditRepo{db: db},
-		Tenants:      &TenantRepo{db: db},
-		Memberships:  &MembershipRepo{db: db},
-		APITokens:    &APITokenRepo{db: db},
-		Webhooks:     &WebhookRepo{db: db},
-		Plugins:      &PluginRepo{db: db},
+		Connections:  &ConnectionRepo{db: wrap},
+		Pipelines:    &PipelineRepo{db: wrap},
+		Stages:       &StageRepo{db: wrap},
+		Transforms:   &TransformRepo{db: wrap},
+		RoutingRules: &RoutingRuleRepo{db: wrap},
+		DLQ:          &DLQRepo{db: wrap},
+		Scripts:      &ScriptRepo{db: wrap},
+		Schemas:      &SchemaRepo{db: wrap},
+		Audit:        &AuditRepo{db: wrap},
+		Tenants:      &TenantRepo{db: wrap},
+		Memberships:  &MembershipRepo{db: wrap},
+		APITokens:    &APITokenRepo{db: wrap},
+		Webhooks:     &WebhookRepo{db: wrap},
+		Plugins:      &PluginRepo{db: wrap},
 	}, nil
 }
 

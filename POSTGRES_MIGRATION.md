@@ -155,16 +155,22 @@ Add a `make load-test` target that runs k6 against both backends with the same w
 | `migrate()` dialect-aware (PRAGMA skip, etc.) | ✅ done      |
 | Inline SQL translation (BLOB→bytea, etc.)     | ✅ done      |
 | Integration test: Open + migrate              | ✅ done (`internal/storage/postgres_integration_test.go`, env-gated by `POSTGRES_DSN`) |
-| Repo-level placeholder rewriting              | ⏳ TODO — every repo's `?` queries need passing through `rewritePlaceholders` |
+| Repo-level placeholder rewriting              | ✅ done via `dbWrap` (all repos converted; call sites unchanged) |
+| Audit chain on serialisable                   | ✅ done (`insertSerialised` + retry on SQLSTATE 40001) |
+| Migrations 0010+ recreate-and-copy            | ⏳ TODO — needs parallel postgres DDL for the table-rename dance |
 | Leadership lease on serialisable / advisory   | ⏳ TODO      |
-| Audit chain on serialisable                   | ⏳ TODO      |
 | Postgres-specific load test                   | ⏳ TODO      |
 
 ### What works right now
 
 - A Postgres DSN (`postgres://…` / `postgresql://…`) is dispatched to the pgx driver.
-- `Open` connects, pings, and runs every shipped migration. The `schema_migrations` bookkeeping table is correctly populated.
-- The integration test confirms migrations apply cleanly against a vanilla `postgres:16` container:
+- `Open` connects + pings.
+- Migrations 0001–0009 apply cleanly on Postgres via the SQL translator (`INSERT OR IGNORE` → `ON CONFLICT DO NOTHING`, `BLOB` → `bytea`, `DATETIME` → `TIMESTAMP`, statement-by-statement scan).
+- Every repository SQL statement now passes through `dbWrap` which rewrites `?` → `$N` transparently. Repo CRUD against Postgres works.
+- The audit chain has a Postgres-specific path: `insertSerialised` opens a `LevelSerializable` transaction, retries up to 5 times on SQLSTATE 40001. Concurrent writers across processes can't fork the chain.
+- Integration tests (`TestPostgresCRUD_Connections`, `TestPostgresAudit_SerialisableChain`) exist but currently fail at migration 0010+ — see "What doesn't work yet" below.
+
+The driver dispatch path:
 
 ```sh
 docker run -d --rm -p 5432:5432 -e POSTGRES_PASSWORD=mqc postgres:16
@@ -174,8 +180,8 @@ POSTGRES_DSN='postgres://postgres:mqc@localhost:5432/postgres?sslmode=disable' \
 
 ### What doesn't work yet
 
-- Every repository SQL statement still uses SQLite-style `?` placeholders. pgx expects `$1, $2, …`. Reads + writes against the repos will fail on Postgres until each repo is converted. The porting is mechanical now that the foundation exists — see "Recommended next steps".
-- The audit chain mutex (`chainMu`) is process-local; multi-replica Postgres deploys need either a serialisable transaction or an advisory lock to keep the chain ordered.
+- **Migrations 0010, 0015, 0016** use the SQLite "recreate-and-copy" idiom (`CREATE TABLE foo_new ...; INSERT INTO foo_new SELECT ... FROM foo; DROP TABLE foo; ALTER TABLE foo_new RENAME TO foo;`). SQLite tolerates this with PRAGMA foreign_keys OFF; Postgres rejects the DROP because other tables still reference the original. The fix is per-migration: explicitly drop the dependent FKs first, recreate the table normally with an `ALTER TABLE ... ADD CONSTRAINT` afterward, OR use a parallel `migrations_postgres.go` file with idiomatic Postgres DDL (`ALTER TABLE ... DROP CONSTRAINT ... CHECK`, then redefine).
+- The migration runner's `applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP` works on Postgres but reads back as `time.Time{}` without timezone — repos that scan it as `time.Time` should be unaffected (database/sql round-trips zero-offset OK).
 
 ### Recommended next steps
 

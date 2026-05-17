@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type PipelineRepo struct{ db *sql.DB }
+type PipelineRepo struct{ db *dbWrap }
 
 func (r *PipelineRepo) Create(ctx context.Context, tenantID string, p *Pipeline) error {
 	if tenantID == "" {

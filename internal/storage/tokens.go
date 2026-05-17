@@ -44,7 +44,7 @@ func (t *APIToken) Active(now time.Time) bool {
 
 // APITokenRepo persists API tokens. The store value is a hash; the
 // plaintext secret is never persisted.
-type APITokenRepo struct{ db *sql.DB }
+type APITokenRepo struct{ db *dbWrap }
 
 // TokenSecretPrefix is the marker every issued token starts with so
 // authentication code can distinguish tokens from other bearer

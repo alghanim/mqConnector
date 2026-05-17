@@ -48,7 +48,7 @@ func (w *Webhook) Matches(eventType string) bool {
 }
 
 // WebhookRepo persists webhook configurations.
-type WebhookRepo struct{ db *sql.DB }
+type WebhookRepo struct{ db *dbWrap }
 
 func (r *WebhookRepo) Create(ctx context.Context, tenantID string, w *Webhook) error {
 	if tenantID == "" {

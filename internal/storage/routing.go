@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type RoutingRuleRepo struct{ db *sql.DB }
+type RoutingRuleRepo struct{ db *dbWrap }
 
 func (r *RoutingRuleRepo) ListByPipeline(ctx context.Context, tenantID, pipelineID string) ([]*RoutingRule, error) {
 	if tenantID == "" {

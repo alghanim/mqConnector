@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type DLQRepo struct{ db *sql.DB }
+type DLQRepo struct{ db *dbWrap }
 
 // Insert writes a DLQ entry. tenantID is required — DLQ entries always
 // originate from a tenant-owned pipeline (or carry the default tenant

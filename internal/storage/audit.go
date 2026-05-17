@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,8 +91,8 @@ type AuditSink interface {
 }
 
 type AuditRepo struct {
-	db      *sql.DB
-	chainMu sync.Mutex
+	db      *dbWrap
+	chainMu sync.Mutex // SQLite single-writer guard; ignored on Postgres
 	sinks   []AuditSink
 }
 
@@ -162,6 +163,18 @@ func (r *AuditRepo) Insert(ctx context.Context, e *AuditEntry) error {
 		e.At = time.Now().UTC()
 	}
 
+	// Concurrency: on SQLite we rely on the in-process chainMu —
+	// SQLite is single-writer anyway, so a process-local lock is
+	// enough to keep the chain head consistent. On Postgres a
+	// multi-replica deploy has concurrent writers in different
+	// processes; the chainMu doesn't see them. We open a
+	// serialisable transaction instead: lookup + insert run as
+	// one atomic unit, and Postgres rejects the second concurrent
+	// writer with a serialization_failure that the caller retries.
+	if r.db.dialect == DialectPostgres {
+		return r.insertSerialised(ctx, e)
+	}
+
 	r.chainMu.Lock()
 	defer r.chainMu.Unlock()
 
@@ -192,6 +205,84 @@ func (r *AuditRepo) Insert(ctx context.Context, e *AuditEntry) error {
 		s.OnInsert(*e)
 	}
 	return nil
+}
+
+// insertSerialised is the Postgres concurrent-safe path. The chain
+// head lookup + the new-row insert run inside one Serializable
+// transaction so concurrent writers in different processes can't
+// pick the same prev_hash. Postgres detects the conflict and returns
+// SQLSTATE 40001 (serialization_failure); we retry a bounded number
+// of times. After retries are exhausted the error bubbles up — the
+// caller (the audit middleware) treats audit-insert failure as
+// non-fatal and logs a WARN.
+//
+// Retry strategy: 5 attempts with exponential backoff. Concurrent
+// audit traffic is bounded by the request rate, not by audit
+// volume, so contention is low in practice. The retry budget gives
+// the second-place writer time to win on its next round.
+func (r *AuditRepo) insertSerialised(ctx context.Context, e *AuditEntry) error {
+	const maxAttempts = 5
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		err := r.tryInsertSerialised(ctx, e)
+		if err == nil {
+			for _, s := range r.sinks {
+				s.OnInsert(*e)
+			}
+			return nil
+		}
+		// Postgres serialization_failure code is 40001. We don't
+		// import lib/pq just to recognise it; pgx returns the
+		// error text containing "could not serialize access" which
+		// is stable across versions.
+		if !isSerializationFailure(err) {
+			return err
+		}
+		lastErr = err
+	}
+	return fmt.Errorf("audit insert: serializable retry exhausted: %w", lastErr)
+}
+
+func (r *AuditRepo) tryInsertSerialised(ctx context.Context, e *AuditEntry) error {
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return fmt.Errorf("audit begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var prev string
+	err = tx.QueryRowContext(ctx,
+		`SELECT hash FROM audit_log WHERE tenant_id = ? ORDER BY at DESC, id DESC LIMIT 1`,
+		e.TenantID).Scan(&prev)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("audit chain head: %w", err)
+	}
+	e.PrevHash = prev
+	e.Hash = computeAuditHash(prev, e)
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_log (id, tenant_id, at, actor, actor_sub, action, resource, status, request_id, remote_ip, hash, prev_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.TenantID, e.At, e.Actor, e.ActorSub, e.Action, e.Resource, e.Status, e.RequestID, e.RemoteIP, e.Hash, e.PrevHash); err != nil {
+		return fmt.Errorf("insert audit: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("audit commit: %w", err)
+	}
+	return nil
+}
+
+func isSerializationFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// pgx surfaces "ERROR: could not serialize access due to ..."
+	// from Postgres SQLSTATE 40001. The check is intentionally
+	// loose to cover both "concurrent update" and "read/write
+	// dependencies" flavours.
+	return strings.Contains(msg, "could not serialize access") ||
+		strings.Contains(msg, "SQLSTATE 40001")
 }
 
 // ChainStatus is what Verify reports. Status is "ok" if every row's

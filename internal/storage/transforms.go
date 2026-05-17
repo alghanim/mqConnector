@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type TransformRepo struct{ db *sql.DB }
+type TransformRepo struct{ db *dbWrap }
 
 func (r *TransformRepo) ListByPipeline(ctx context.Context, tenantID, pipelineID string) ([]*Transform, error) {
 	if tenantID == "" {

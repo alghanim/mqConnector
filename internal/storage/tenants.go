@@ -31,7 +31,7 @@ type Tenant struct {
 }
 
 // TenantRepo persists tenants.
-type TenantRepo struct{ db *sql.DB }
+type TenantRepo struct{ db *dbWrap }
 
 func (r *TenantRepo) Create(ctx context.Context, t *Tenant) error {
 	if t.ID == "" {
