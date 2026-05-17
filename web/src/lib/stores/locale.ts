@@ -9,6 +9,7 @@ const strings: Record<Locale, Record<string, string>> = {
   en: {
     'app.title': 'mqConnector',
     'app.subtitle': 'Message-queue bridge & pipeline runner',
+    'a11y.skipToMain': 'Skip to main content',
     'nav.overview': 'Overview',
     'nav.connections': 'Connections',
     'nav.pipelines': 'Pipelines',
@@ -613,6 +614,7 @@ const strings: Record<Locale, Record<string, string>> = {
   ar: {
     'app.title': 'موصل قوائم الرسائل',
     'app.subtitle': 'جسر قوائم الرسائل ومحرك التدفقات',
+    'a11y.skipToMain': 'الانتقال إلى المحتوى الرئيسي',
     'nav.overview': 'نظرة عامة',
     'nav.connections': 'الاتصالات',
     'nav.pipelines': 'التدفقات',

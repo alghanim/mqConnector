@@ -32,11 +32,27 @@ data:
       dsn: {{ .Values.config.storage.dsn | quote }}
       max_open_conns: {{ .Values.config.storage.maxOpenConns }}
       max_idle_conns: {{ .Values.config.storage.maxIdleConns }}
+      {{- with .Values.config.storage.backup }}
+      backup:
+        dir: {{ .dir | quote }}
+        interval: {{ .interval }}
+        keep: {{ .keep }}
+      {{- end }}
 
     audit:
       archive_dir: {{ .Values.config.audit.archiveDir | quote }}
       max_age: {{ .Values.config.audit.maxAge }}
       sweep_interval: {{ .Values.config.audit.sweepInterval }}
+      {{- with .Values.config.audit.s3 }}
+      s3:
+        endpoint: {{ .endpoint | quote }}
+        region: {{ .region | quote }}
+        bucket: {{ .bucket | quote }}
+        prefix: {{ .prefix | quote }}
+        access_key: {{ .accessKey | quote }}
+        secret_key: {{ .secretKey | quote }}
+        delete_after_upload: {{ .deleteAfterUpload }}
+      {{- end }}
 
     leadership:
       enabled: {{ .Values.config.leadership.enabled }}

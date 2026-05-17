@@ -92,6 +92,14 @@ func (s *Server) routes() http.Handler {
 		r.Get("/api/v1/admin/backup", s.handleAdminBackup)
 		r.Get("/api/v1/admin/integrity", s.handleAdminIntegrity)
 
+		// Runtime profiling for production debugging. net/http/pprof
+		// registers handlers like /debug/pprof/heap, /goroutine,
+		// /profile, /trace, etc. We mount them under
+		// /api/v1/admin/pprof/* so the regular auth + system-admin
+		// gate applies — pprof endpoints leak goroutine stacks and
+		// CPU samples and absolutely must not be public.
+		s.mountPprof(r)
+
 		// API tokens (headless / CI auth). Scoped to the caller's
 		// tenant; the secret is shown exactly once at creation.
 		r.Get("/api/v1/tokens", s.handleListTokens)

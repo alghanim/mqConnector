@@ -21,10 +21,29 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username and password are required")
 		return
 	}
+	// Account lockout (per-username) — sits in front of the
+	// credential check so a locked account doesn't get its password
+	// tested at all, even if the attacker rotates the password
+	// across attempts. A 423 Locked tells the legitimate user (via
+	// the UI) to wait; the Retry-After header gives the duration.
+	if s.accountLockout != nil {
+		if ok, retryAfter := s.accountLockout.allow(req.Username); !ok {
+			w.Header().Set("Retry-After", retryAfterSeconds(retryAfter))
+			writeError(w, http.StatusLocked,
+				"account temporarily locked due to repeated failed attempts")
+			return
+		}
+	}
 	access, refresh, err := s.auth.LoginWithRefresh(r.Context(), req.Username, req.Password)
 	if err != nil {
+		if s.accountLockout != nil {
+			s.accountLockout.recordFailure(req.Username)
+		}
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
+	}
+	if s.accountLockout != nil {
+		s.accountLockout.recordSuccess(req.Username)
 	}
 	s.auth.SetCookie(w, access)
 	if refresh != "" {

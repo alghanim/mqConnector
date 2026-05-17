@@ -1334,6 +1334,85 @@ paths:
         '403': { description: Not a system-admin. }
         '500': { description: Snapshot failed (disk full, permission, etc.). }
 
+  /api/v1/admin/pprof:
+    get:
+      tags: [admin]
+      summary: Runtime profiling index. System-admin only.
+      description: |
+        Net/http/pprof index page. Followed by per-profile endpoints
+        documented separately. Used for production performance
+        debugging via `go tool pprof`.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: HTML index of available profiles. }
+        '403': { description: Not a system-admin. }
+
+  /api/v1/admin/pprof/cmdline:
+    get:
+      tags: [admin]
+      summary: Process command-line. System-admin only.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: text/plain command-line. }
+
+  /api/v1/admin/pprof/profile:
+    get:
+      tags: [admin]
+      summary: 30-second CPU profile (binary). System-admin only.
+      description: |
+        Blocks for the duration of the profile (default 30s, query
+        param ?seconds=N). Server timeouts must accommodate.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Binary protobuf profile.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  /api/v1/admin/pprof/trace:
+    get:
+      tags: [admin]
+      summary: Execution trace (binary). System-admin only.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Binary trace data.
+          content:
+            application/octet-stream: {}
+
+  /api/v1/admin/pprof/symbol:
+    get:
+      tags: [admin]
+      summary: Symbol lookup. System-admin only.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Symbol map. }
+    post:
+      tags: [admin]
+      summary: Symbol lookup (POST form). System-admin only.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Symbol map. }
+
+  /api/v1/admin/pprof/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [heap, goroutine, allocs, mutex, block, threadcreate]
+    get:
+      tags: [admin]
+      summary: Named profile (heap, goroutine, etc.). System-admin only.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Binary profile.
+          content:
+            application/octet-stream: {}
+
   /api/v1/admin/integrity:
     get:
       tags: [admin]

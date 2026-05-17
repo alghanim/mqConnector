@@ -76,43 +76,71 @@ RUN CGO_ENABLED=${CGO_ENABLED_VALUE} go build \
       ./cmd/mqconnector
 
 # -----------------------------------------------------------------------------
-# Stage 3: minimal runtime image
+# Stage 3a: prep the runtime filesystem
 # -----------------------------------------------------------------------------
-FROM alpine:3.20
+# Distroless images don't have a shell, useradd, mkdir, or chown — they
+# are intentionally minimal. We do all the filesystem prep in an
+# intermediate alpine image and then COPY the result into distroless.
+FROM alpine:3.20 AS runtime-prep
+
+# ca-certificates + tzdata come from alpine and get copied into the
+# distroless final stage via their well-known paths.
+RUN apk add --no-cache ca-certificates tzdata
+
+# Create the data dir and config dir with a known UID/GID matching
+# the distroless `nonroot` user (65532:65532). Distroless ships with
+# that user predefined; we just have to own the directories with the
+# matching numeric IDs since distroless has no shell to chown later.
+RUN mkdir -p /out/var/lib/mqconnector /out/etc/mqconnector && \
+    chown -R 65532:65532 /out/var/lib/mqconnector
+
+# -----------------------------------------------------------------------------
+# Stage 3b: final runtime image — distroless static
+# -----------------------------------------------------------------------------
+# gcr.io/distroless/static-debian12:nonroot ships:
+#   - a single static-binary entrypoint slot,
+#   - the nonroot user (65532:65532),
+#   - ca-certificates (we still bring in alpine's copy for parity),
+#   - tzdata,
+#   - NO shell, NO package manager, NO wget. Attack surface is the
+#     Go binary plus the kernel.
+FROM gcr.io/distroless/static-debian12:nonroot
 
 LABEL org.opencontainers.image.title="mqConnector" \
       org.opencontainers.image.description="Production message-queue bridge: IBM MQ / RabbitMQ / Kafka / NATS / MQTT / AMQP 1.0 with pipeline, DLQ, and admin UI" \
       org.opencontainers.image.vendor="Department" \
       org.opencontainers.image.source="https://github.com/alghanim/mqConnector" \
       org.opencontainers.image.documentation="https://github.com/alghanim/mqConnector/blob/main/OPERATIONS.md" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.base.name="gcr.io/distroless/static-debian12:nonroot"
 
-# ca-certificates: outbound TLS to SimpleAuth and to MQ brokers.
-# tzdata: log timestamps with the operator's local timezone if TZ is set.
-RUN apk add --no-cache ca-certificates tzdata
+# Pull TLS roots + timezone DB from the alpine prep stage. Distroless
+# does include these, but pinning to alpine's matches local-dev
+# expectations and makes upgrades visible.
+COPY --from=runtime-prep /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=runtime-prep /usr/share/zoneinfo /usr/share/zoneinfo
 
-RUN addgroup -S mqconnector && \
-    adduser -S -G mqconnector -h /var/lib/mqconnector -s /sbin/nologin mqconnector
+# Persistent paths with the right ownership (65532:65532 → nonroot).
+COPY --from=runtime-prep /out/var/lib/mqconnector /var/lib/mqconnector
+COPY --from=runtime-prep /out/etc/mqconnector /etc/mqconnector
+COPY --chown=65532:65532 config.example.yaml /etc/mqconnector/config.example.yaml
 
-# Persistent paths: data (SQLite) and config + TLS cert mounts.
-RUN mkdir -p /var/lib/mqconnector /etc/mqconnector && \
-    chown -R mqconnector:mqconnector /var/lib/mqconnector
-
+# The static binary. CGO_ENABLED=0 + -ldflags "-s -w" + a Go std
+# library — no glibc deps, runs fine on distroless static.
 COPY --from=build /out/mqconnector /usr/local/bin/mqconnector
-COPY --chown=mqconnector:mqconnector config.example.yaml /etc/mqconnector/config.example.yaml
 
 EXPOSE 8443
-
-USER mqconnector
+USER nonroot:nonroot
 VOLUME /var/lib/mqconnector
 WORKDIR /var/lib/mqconnector
 
-# Healthcheck: hits the public /api/health endpoint. Works over HTTPS via
-# `wget --no-check-certificate` since dev/internal certs may be self-signed.
+# Healthcheck — uses the binary's own `healthcheck` subcommand
+# because distroless has no shell or wget. The probe hits the public
+# /api/health endpoint over HTTPS with InsecureSkipVerify=true so
+# self-signed dev certs work; production deployments either trust
+# the cert or override --insecure=false at the Docker level.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --no-check-certificate --spider -q https://localhost:8443/api/health \
-   || wget --spider -q http://localhost:8443/api/health \
-   || exit 1
+  CMD ["/usr/local/bin/mqconnector", "healthcheck"]
 
-ENTRYPOINT ["mqconnector"]
+ENTRYPOINT ["/usr/local/bin/mqconnector"]
 CMD ["-config", "/etc/mqconnector/config.yaml"]

@@ -209,6 +209,13 @@
 </script>
 
 {#if showChrome}
+  <!--
+    Skip-to-main-content link. Visually hidden but keyboard-focusable
+    via Tab from the top of the page. Required for WCAG 2.1 SC 2.4.1
+    (Bypass Blocks) — screen-reader and keyboard users skip past the
+    sidebar without tabbing through every nav item.
+  -->
+  <a href="#main-content" class="skip-link">{t($locale, 'a11y.skipToMain')}</a>
   <div class="shell">
     <!-- ─── Sidebar ─────────────────────────────────────────────── -->
     <aside class="sidebar">
@@ -323,7 +330,7 @@
         </div>
       </header>
 
-      <main class="page">
+      <main id="main-content" class="page" tabindex="-1">
         <slot />
       </main>
     </div>
@@ -338,6 +345,30 @@
 {/if}
 
 <style>
+  /* ─── Skip link (WCAG 2.1 SC 2.4.1) ─────────────────────────────── */
+  /* Visually hidden until focused. Tab from top-of-page reveals it
+     above everything else so keyboard users can bypass the sidebar. */
+  .skip-link {
+    position: absolute;
+    inset-inline-start: 8px;
+    top: 8px;
+    z-index: 100;
+    padding: 8px 12px;
+    background: var(--accent);
+    color: var(--accent-contrast, var(--bg));
+    text-decoration: none;
+    font-weight: 600;
+    border-radius: 4px;
+    transform: translateY(-150%);
+    transition: transform 0.15s ease;
+  }
+  .skip-link:focus,
+  .skip-link:focus-visible {
+    transform: translateY(0);
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
+  }
+
   /* ─── Shell grid ───────────────────────────────────────────────── */
   .shell {
     min-height: 100vh;

@@ -70,10 +70,11 @@ operator browser ──(HTTPS, session cookie)──▶ mqConnector  ──(TCP,
 ### Denial of service (D)
 
 - **Login rate limiting**: per-source-IP token bucket on `/api/auth/login` and `/api/auth/refresh` (10/minute) — slows credential stuffing.
+- **Account lockout**: per-username sliding-window counter (`accountLockout`, `internal/server/account_lockout.go`). 5 consecutive failures within 5 min triggers a 15-min lockout regardless of source IP — closes the complementary gap of distributed stuffing where the per-IP limiter is bypassed by attacker rotation. Returns HTTP 423 with `Retry-After`. Case-folded so casing tricks don't multiply the budget.
 - **Per-tenant rate limiting**: state-changing requests under cookie auth bucketed per tenant (120/minute default, per-tenant override). Read paths exempt.
 - **Sensitive endpoint rate limit**: tighter per-(tenant, route) bucket (6/minute) for high-blast-radius endpoints — `/config/import`, `/secrets/rotate`, `/preview`, `/samples/extract`. Each can replace full state, run arbitrary stages, or hit a live broker; the bucket is sized for human-driven operator use.
 - **HTTP body cap**: `MaxBodyBytes` middleware refuses requests over the configured limit. Pairs with the 30s `WriteTimeout` and per-request `RequestContextTimeout` so a stuck downstream can't pin a goroutine indefinitely. SSE streams opt out cleanly via the `Accept: text/event-stream` bypass.
-- **Script sandbox**: line-eval script stage caps op count, source size, and post-encode output size (Phase 17b). A runaway script trips `ErrScriptResourceLimit` and the message goes to DLQ rather than crash-looping a worker.
+- **Script sandbox**: line-eval script stage caps op count, source size, in-flight intermediate data size (8 MiB default, checked every 64 ops), and post-encode output size. A runaway script trips `ErrScriptResourceLimit` and the message goes to DLQ rather than crash-looping a worker.
 - **DLQ retry limits**: per-row retry counter; further retries past `MaxRetries` reject with `ErrMaxRetries`.
 - **DLQ retention sweeper**: `dlq.Retention` (`internal/dlq/retention.go`) bounds the DLQ table by age and row count so a sustained outage can't fill the disk. Leader-aware so multi-replica deploys don't over-prune.
 - **Audit retention**: `audit.Archiver` (`internal/audit/archive.go`) streams rows older than `audit.max_age` to daily JSONL files and prunes the live table. Leader-aware.
@@ -82,7 +83,8 @@ operator browser ──(HTTPS, session cookie)──▶ mqConnector  ──(TCP,
 ### Elevation of privilege (E)
 
 - **RBAC**: `viewer < operator < admin < owner` per tenant. Owner-only routes (member management, tenant settings) gate-keep in the handler via the `Role.Rank()` check.
-- **System admin**: currently the owner of the default tenant. Coarse but explicit — used for cross-tenant audit verify and secrets rotation. A proper `system_admin` flag is on the roadmap but the present check is enforced consistently.
+- **System admin**: explicit `tenant_memberships.system_admin` flag (migration 0013). Grants cross-tenant capabilities (create/delete tenants, audit-verify across tenants, rotate the master key, backup/integrity admin endpoints, pprof profiling). Migration backfills the flag for existing default-tenant owners; `MembershipRepo.IsSystemAdmin` / `SetSystemAdmin` manage it going forward.
+- **pprof endpoint** (`internal/server/handlers_pprof.go`): runtime CPU / heap / goroutine profiles mounted under `/api/v1/admin/pprof/*`. System-admin-only — pprof leaks goroutine stacks and CPU samples and absolutely must not be public.
 - **No path traversal in static handler**: `mountStatic` only serves files inside the embedded FS — there is no on-disk lookup that could be tricked into resolving `..`.
 - **No SQL injection**: every query uses `?` placeholders.
 - **No JS sandbox escape**: the script stage is a hand-written line evaluator. No `eval`, no FFI, no I/O — the entire surface is set/delete/copy on a `map[string]any` plus a fixed list of arithmetic operators.
@@ -108,6 +110,8 @@ operator browser ──(HTTPS, session cookie)──▶ mqConnector  ──(TCP,
 
 - **No secrets in logs**: `slog` emitters strip the `password` field before logging. The `MQC_MASTER_KEY` is read once and never serialised. Confirmed by `internal/logging` tests + grep against handler files.
 - **Reproducible binary**: single `go build` produces the entire server + UI; no runtime download or CDN dependency. Strict CSP forbids external script sources.
+- **Distroless runtime image**: production Docker image runs on `gcr.io/distroless/static-debian12:nonroot` (UID 65532). No shell, no package manager, no `wget` — a successful RCE on the binary lands inside a filesystem with effectively no privilege-escalation tools. Healthcheck uses the binary's own `healthcheck` subcommand because there's no shell to spawn.
+- **Release signing**: tag pushes (`v*`) trigger `.github/workflows/release.yml` which builds the image, pushes to ghcr.io, signs keyless with cosign (GitHub OIDC), and attests the CycloneDX SBOM. Verifiers can prove the image was built by this repo's CI on a specific commit without us managing keys.
 - **Air-gapped friendly**: no telemetry, no auto-update, no calling home. SimpleAuth is the only outbound dependency at runtime.
 - **Graceful shutdown**: `mgr.StopAndWait(30 * time.Second)` drains in-flight pipeline messages on SIGTERM before exit. Out-of-budget shutdowns log a warning naming the pipelines still in flight so operators can identify the laggard.
 - **Backup / disaster recovery**: SQLite `VACUUM INTO` snapshots via `mqconnector backup`, scheduled worker (`internal/storage/backup_worker.go`), or `GET /api/v1/admin/backup`. All three verify integrity on the produced snapshot before declaring success. See `OPERATIONS.md` for the restore procedure.
@@ -160,7 +164,11 @@ External (post-release): see `SECURITY.md` of the deployed product for the conta
 - `internal/server/middleware_audit.go` — audit + diff capture
 - `internal/server/middleware_csrf.go` — double-submit CSRF protection
 - `internal/server/ratelimit_sensitive.go` — per-(tenant, route) limiter
+- `internal/server/account_lockout.go` — per-username failed-login lockout
 - `internal/server/handlers_admin.go` — backup / integrity admin endpoints
+- `internal/server/handlers_pprof.go` — runtime profiling, system-admin only
+- `Dockerfile` — distroless static runtime, nonroot user, binary-self healthcheck
+- `.github/workflows/release.yml` — cosign keyless signing + SBOM attestation
 - `internal/audit/archive.go` — audit retention sweep + S3 uploader
 - `internal/dlq/retention.go` — DLQ retention sweep
 - `internal/storage/backup_worker.go` — scheduled snapshot worker

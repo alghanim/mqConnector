@@ -129,6 +129,47 @@ func TestSecurityHeaders_IncludesCSP(t *testing.T) {
 	}
 }
 
+// TestSecurityHeaders_FullSet — comprehensive baseline. Audits the
+// complete set the middleware promises so a regression in any one
+// header trips the test instead of being noticed only by a customer
+// security review.
+func TestSecurityHeaders_FullSet(t *testing.T) {
+	h, _, _ := newTestServer(t)
+
+	// Exercise both a public endpoint (/api/health) and an
+	// authenticated one (/api/v1/connections) — every response should
+	// carry the same security baseline. We don't bother authing the
+	// second one; even a 401 should still carry the headers.
+	for _, path := range []string{"/api/health", "/api/v1/connections"} {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+
+			hdr := rec.Header()
+			must := map[string]string{
+				"X-Content-Type-Options":    "nosniff",
+				"X-Frame-Options":           "DENY",
+				"Referrer-Policy":           "strict-origin-when-cross-origin",
+				"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+			}
+			for k, v := range must {
+				if got := hdr.Get(k); got != v {
+					t.Errorf("%s: %s = %q, want %q", path, k, got, v)
+				}
+			}
+			// Permissions-Policy / CSP can vary in detail; just
+			// confirm they're present + non-trivial.
+			if hdr.Get("Permissions-Policy") == "" {
+				t.Errorf("%s: missing Permissions-Policy", path)
+			}
+			if !strings.Contains(hdr.Get("Content-Security-Policy"), "default-src 'self'") {
+				t.Errorf("%s: CSP missing default-src 'self'", path)
+			}
+		})
+	}
+}
+
 func TestRequestContextTimeout_AppliesDeadline(t *testing.T) {
 	var got context.Context
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -48,6 +48,7 @@ type Server struct {
 	loginLimiter     *loginLimiter
 	tenantLimiter    *tenantLimiter
 	sensitiveLimiter *sensitiveLimiter
+	accountLockout   *accountLockout
 	stopGC           chan struct{}
 	stopGCOnce       sync.Once
 }
@@ -97,11 +98,16 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		loginLimiter:     newLoginLimiter(10, time.Minute),
 		tenantLimiter:    newTenantLimiter(120, time.Minute, tenantOverrideFromStore(deps.Store)),
 		sensitiveLimiter: newSensitiveLimiter(6, time.Minute),
-		stopGC:           make(chan struct{}),
+		// Per-username lockout: 5 consecutive failures within 5 min
+		// → 15 min lockout. Complements the per-IP loginLimiter so
+		// distributed credential stuffing also gets stopped.
+		accountLockout: newAccountLockout(5, 5*time.Minute, 15*time.Minute),
+		stopGC:         make(chan struct{}),
 	}
 	go s.loginLimiter.gc(s.stopGC)
 	go s.tenantLimiter.gc(s.stopGC)
 	go s.sensitiveLimiter.gc(s.stopGC)
+	go s.accountLockout.gc(s.stopGC)
 
 	// Install the memberships-backed tenant resolver onto the auth
 	// service. Without this, RequireSession falls back to the legacy

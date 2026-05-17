@@ -82,11 +82,30 @@ config:
     dsn: "file:/var/lib/mqconnector/mqc.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)"
     maxOpenConns: 25
     maxIdleConns: 10
+    # Scheduled in-process snapshot worker. Empty `dir` disables.
+    # In multi-replica deploys with leadership.enabled=true only the
+    # leader writes, so destination doesn't get duplicate snapshots.
+    # See OPERATIONS.md for the restore procedure.
+    backup:
+      dir: ""                        # e.g. /var/lib/mqconnector/backups
+      interval: 24h
+      keep: 7
 
   audit:
     archiveDir: /var/lib/mqconnector/audit-archive
     maxAge: 720h         # 30d
     sweepInterval: 1h
+    # Optional S3-compatible upload of rotated daily files. Empty
+    # credentials default to local-only archival (air-gapped friendly).
+    # Compatible with AWS S3, MinIO, Cloudflare R2, Wasabi, B2.
+    s3:
+      endpoint: ""                   # e.g. https://s3.amazonaws.com
+      region: ""                     # e.g. us-east-1
+      bucket: ""
+      prefix: ""                     # optional key prefix
+      accessKey: ""
+      secretKey: ""
+      deleteAfterUpload: false
 
   leadership:
     enabled: false        # set true + bump replicaCount > 1 for HA
@@ -131,12 +150,18 @@ serviceAccount:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+# Matches the distroless `nonroot` user (UID/GID 65532) the image
+# now uses. Override only if you've built a custom image with a
+# different UID.
 podSecurityContext:
-  fsGroup: 1000
+  fsGroup: 65532
 securityContext:
   runAsNonRoot: true
-  runAsUser: 1000
+  runAsUser: 65532
+  runAsGroup: 65532
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities:
     drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault

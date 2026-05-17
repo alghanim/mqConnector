@@ -58,6 +58,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "healthcheck":
+			if err := healthcheck(); err != nil {
+				fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
 	}
 
