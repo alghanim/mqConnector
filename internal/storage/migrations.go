@@ -460,6 +460,16 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_dlq_next_retry ON dlq(next_retry_at)
 	  WHERE next_retry_at IS NOT NULL;
 	`,
+	// 0012 — Kafka consumer-group id override.
+	//
+	// Empty (the default) lets the Kafka connector auto-derive a stable
+	// group from brokers + topic, which is the right answer for the
+	// "one logical consumer per source connection" model. Operators
+	// who need two pipelines to read the same topic with independent
+	// offsets set this to two different strings.
+	`
+	ALTER TABLE connections ADD COLUMN group_id TEXT NOT NULL DEFAULT '';
+	`,
 }
 
 func migrate(db *sql.DB) error {

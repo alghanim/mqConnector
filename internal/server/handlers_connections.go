@@ -43,6 +43,10 @@ type connectionDTO struct {
 	StreamName   string `json:"stream_name,omitempty"`
 	ConsumerName string `json:"consumer_name,omitempty"`
 	QoS          int    `json:"qos,omitempty"`
+	// Kafka consumer-group override. Empty = auto-derive a stable group
+	// from brokers + topic. Set when two pipelines on the same Kafka
+	// source need independent offsets.
+	GroupID string `json:"group_id,omitempty"`
 	// Read-only echoes — the handler returns these from storage; the
 	// DTO includes them so a round-trip GET → edit → PUT doesn't drop
 	// timestamps that callers might pin to.
@@ -161,5 +165,6 @@ func dtoToConnection(d connectionDTO) *storage.Connection {
 		StreamName:   d.StreamName,
 		ConsumerName: d.ConsumerName,
 		QoS:          d.QoS,
+		GroupID:      d.GroupID,
 	}
 }

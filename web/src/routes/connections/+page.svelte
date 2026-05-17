@@ -251,6 +251,11 @@
       {:else if editing.type === 'kafka'}
         <Input bind:value={editing.brokers} label={t($locale, 'connections.brokers')} />
         <Input bind:value={editing.topic} label={t($locale, 'connections.topic')} />
+        <Input
+          bind:value={editing.group_id}
+          label={t($locale, 'connections.groupId')}
+          placeholder={t($locale, 'connections.groupIdPlaceholder')}
+        />
       {:else if editing.type === 'mqtt'}
         <!-- MQTT: URL scheme picks TLS (mqtt:// vs ssl://). Topic
              can use + and # wildcards on subscribe. ClientID must

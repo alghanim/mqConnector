@@ -180,6 +180,20 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 	if err != nil {
 		return fmt.Errorf("destination: %w", err)
 	}
+	// Durability heads-up: core NATS as a source is at-most-once by
+	// protocol (no per-message ack, no broker-side retention). The
+	// Commit/Nack guarantees the rest of the pipeline gives you are
+	// invisible to a fire-and-forget source — messages in flight when
+	// mqconnector restarts are gone. Operators who want durable NATS
+	// must point at a JetStream stream (set stream_name on the
+	// connection).
+	if srcType, _ := mq.ParseType(source.Type); srcType == mq.TypeNATS && source.StreamName == "" {
+		m.logger.Warn("pipeline source is core NATS (no JetStream stream) — at-most-once delivery",
+			"pipeline_id", p.ID,
+			"pipeline_name", p.Name,
+			"source_connection", source.Name,
+			"recommendation", "set stream_name on the connection to use JetStream for durability")
+	}
 	// Sanity check: the pipeline must not reference a connection in a
 	// different tenant. This is impossible via the HTTP API (handlers
 	// validate); the check exists for defence in depth against a hand-

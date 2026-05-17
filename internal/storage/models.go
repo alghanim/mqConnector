@@ -39,8 +39,14 @@ type Connection struct {
 	StreamName   string `json:"stream_name,omitempty"`
 	ConsumerName string `json:"consumer_name,omitempty"`
 	QoS          int    `json:"qos,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	// Kafka consumer-group override. Empty → connector hashes
+	// brokers+topic into a stable group so restarts pick up where they
+	// left off (the right answer for "one logical consumer per source
+	// connection"). Set explicitly when two pipelines on the same
+	// Kafka source need independent offsets.
+	GroupID   string    `json:"group_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Pipeline is one source→destination flow with an ordered list of stages.

@@ -111,6 +111,8 @@ export interface Connection {
   stream_name?: string;
   consumer_name?: string;
   qos?: number;
+  // Kafka consumer-group override. Empty = auto-derive from brokers+topic.
+  group_id?: string;
   // Broker TLS (Phase 17)
   tls_ca_file?: string;
   tls_cert_file?: string;

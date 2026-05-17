@@ -35,6 +35,7 @@ func From(c *storage.Connection) mq.Config {
 		QoS:          c.QoS,
 		StreamName:   c.StreamName,
 		ConsumerName: c.ConsumerName,
+		GroupID:      c.GroupID,
 		TLS: mq.TLSConfig{
 			CAFile:             c.TLSCAFile,
 			CertFile:           c.TLSCertFile,
