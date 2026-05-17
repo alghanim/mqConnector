@@ -20,6 +20,9 @@ type Retention struct {
 	maxRows       int
 	sweepInterval time.Duration
 	logger        *slog.Logger
+	// isLeader gates the sweep in multi-replica deploys. nil =
+	// always run (single-process default).
+	isLeader func() bool
 }
 
 // storeForRetention is the slice of *storage.Store the retention loop needs.
@@ -54,6 +57,17 @@ func NewRetention(s storeForRetention, maxAge time.Duration, maxRows int, sweepI
 	}
 }
 
+// IsLeader is an optional callback the retention loop consults each
+// tick. When set and it returns false, the sweep is skipped. Used in
+// multi-replica deploys so followers don't compete with the leader on
+// the same DELETE/PRUNE queries (which would otherwise cause two
+// replicas to each prune half the over-cap rows and possibly
+// over-delete past the configured limit). Single-process deploys
+// leave this nil.
+func (r *Retention) SetLeaderCheck(check func() bool) {
+	r.isLeader = check
+}
+
 // Run loops until ctx is done. Each tick runs both pruners and emits a
 // debug log line with the counts.
 func (r *Retention) Run(ctx context.Context) {
@@ -62,7 +76,9 @@ func (r *Retention) Run(ctx context.Context) {
 		return
 	}
 	// Do one sweep right away so a freshly-booted process catches up.
-	r.sweep(ctx)
+	if r.isLeader == nil || r.isLeader() {
+		r.sweep(ctx)
+	}
 	t := time.NewTicker(r.sweepInterval)
 	defer t.Stop()
 	for {
@@ -70,6 +86,9 @@ func (r *Retention) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			if r.isLeader != nil && !r.isLeader() {
+				continue
+			}
 			r.sweep(ctx)
 		}
 	}

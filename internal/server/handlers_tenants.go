@@ -153,7 +153,20 @@ func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "owner required")
 		return
 	}
-	if err := s.store.Tenants.Delete(r.Context(), id); err != nil {
+	// ?cascade=true triggers the GDPR / decommission path: every
+	// connection, pipeline, DLQ row, etc. belonging to this tenant is
+	// deleted atomically alongside the tenant row. Without the flag,
+	// the legacy behaviour applies: deletes the tenant row and leaves
+	// owned resources orphaned — operators with the older form may
+	// rely on that for staged tear-downs.
+	cascade := r.URL.Query().Get("cascade") == "true"
+	var err error
+	if cascade {
+		err = s.store.Tenants.Purge(r.Context(), id)
+	} else {
+		err = s.store.Tenants.Delete(r.Context(), id)
+	}
+	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "tenant not found")
 			return
@@ -161,7 +174,11 @@ func (s *Server) handleDeleteTenant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	resp := map[string]string{"status": "deleted"}
+	if cascade {
+		resp["mode"] = "cascade"
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleSwitchTenant sets the active-tenant cookie. Verifies membership

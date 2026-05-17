@@ -50,6 +50,23 @@ type Archiver struct {
 	openFile   *os.File
 	s3         *S3Uploader
 	deleteAfterUpload bool
+
+	// isLeader gates the sweep in multi-replica deploys. nil =
+	// always run (single-process default). Two replicas archiving
+	// concurrently is correctness-safe (rows are deleted by date
+	// cutoff, the same set on both sides) but wasteful — both would
+	// write the same file and one's open file handle could be
+	// truncated by the other's. Leader gating prevents that race.
+	isLeader func() bool
+}
+
+// SetLeaderCheck installs the leader-only gate. The first sweep after
+// SetLeaderCheck still runs through the previous schedule; the gate
+// applies from the next tick onward.
+func (a *Archiver) SetLeaderCheck(check func() bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.isLeader = check
 }
 
 // SetS3Uploader installs an S3-compatible uploader. After this is
@@ -103,7 +120,9 @@ func (a *Archiver) Run(ctx context.Context) {
 		return
 	}
 	// One sweep on boot so a freshly-restarted process catches up.
-	a.sweep(ctx)
+	if a.leaderOK() {
+		a.sweep(ctx)
+	}
 	t := time.NewTicker(a.sweepEvery)
 	defer t.Stop()
 	for {
@@ -117,9 +136,24 @@ func (a *Archiver) Run(ctx context.Context) {
 			a.mu.Unlock()
 			return
 		case <-t.C:
+			if !a.leaderOK() {
+				continue
+			}
 			a.sweep(ctx)
 		}
 	}
+}
+
+// leaderOK reports whether the sweep is allowed to run. Always true
+// when isLeader is nil.
+func (a *Archiver) leaderOK() bool {
+	a.mu.Lock()
+	check := a.isLeader
+	a.mu.Unlock()
+	if check == nil {
+		return true
+	}
+	return check()
 }
 
 // sweep is the per-tick body. Public via Archive() for tests that want

@@ -186,3 +186,41 @@ jobs:
       - name: Smoke test the image
         run: |
           docker run --rm mqconnector:ci -version
+
+      # Vulnerability scan on the built image. Fails the build on any
+      # CRITICAL or HIGH CVE so we catch upstream drift (alpine base,
+      # transitive Go deps) at PR time rather than in prod. Trivy is
+      # the de-facto open-source scanner; SARIF output is uploaded to
+      # the GitHub Security tab so issues are tracked alongside code
+      # scanning.
+      - name: Image vulnerability scan (Trivy)
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: mqconnector:ci
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          # Don't fail the build on misconfig warnings; only on actual CVEs.
+          vuln-type: os,library
+          ignore-unfixed: true
+
+      - name: Upload Trivy results to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+        continue-on-error: true
+
+      # SBOM generation — supply-chain provenance. Customers / auditors
+      # ask for this; Syft emits a CycloneDX file that's the de-facto
+      # standard. Stored as a workflow artifact for 30 days; production
+      # releases should additionally attach it to the GitHub Release.
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0.20.0
+        with:
+          image: mqconnector:ci
+          format: cyclonedx-json
+          output-file: mqconnector-sbom.cdx.json
+          upload-artifact: true
+          upload-artifact-retention: 30

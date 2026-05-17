@@ -81,8 +81,11 @@ RUN CGO_ENABLED=${CGO_ENABLED_VALUE} go build \
 FROM alpine:3.20
 
 LABEL org.opencontainers.image.title="mqConnector" \
-      org.opencontainers.image.description="Production message-queue bridge: IBM MQ / RabbitMQ / Kafka with pipeline, DLQ, and admin UI" \
-      org.opencontainers.image.vendor="Department"
+      org.opencontainers.image.description="Production message-queue bridge: IBM MQ / RabbitMQ / Kafka / NATS / MQTT / AMQP 1.0 with pipeline, DLQ, and admin UI" \
+      org.opencontainers.image.vendor="Department" \
+      org.opencontainers.image.source="https://github.com/alghanim/mqConnector" \
+      org.opencontainers.image.documentation="https://github.com/alghanim/mqConnector/blob/main/OPERATIONS.md" \
+      org.opencontainers.image.licenses="MIT"
 
 # ca-certificates: outbound TLS to SimpleAuth and to MQ brokers.
 # tzdata: log timestamps with the operator's local timezone if TZ is set.

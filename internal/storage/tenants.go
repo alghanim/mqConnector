@@ -83,6 +83,67 @@ func (r *TenantRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// Purge atomically deletes every row scoped to the named tenant —
+// connections, pipelines, stages, transforms, routing rules, dlq,
+// scripts, schemas, memberships, api_tokens, webhooks — and the
+// tenant row itself. Audit log entries are intentionally retained
+// (tamper-evident chain) so an external auditor can still verify
+// what happened in the tenant before its deletion; the operator
+// archives + purges audit via the separate archiver job.
+//
+// Use cases:
+//   - GDPR right-to-erasure: a tenant has asked us to forget them.
+//   - Decommissioning a customer / project / environment.
+//
+// The default tenant is protected; the rest of the bridge depends on
+// its existence as the legacy-row backfill target. All deletions run
+// inside a single transaction so a partial purge can't leave a
+// half-deleted tenant if the database connection drops mid-operation.
+func (r *TenantRepo) Purge(ctx context.Context, id string) error {
+	if id == DefaultTenantID {
+		return errors.New("storage: refusing to purge the default tenant")
+	}
+	// Order matters: child rows before parents, even though we don't
+	// have FK CASCADE set, so a future migration that adds FKs
+	// doesn't trip on left-behind references.
+	tables := []string{
+		"dlq",
+		"routing_rules",
+		"transforms",
+		"stages",
+		"pipelines",
+		"connections",
+		"schemas",
+		"scripts",
+		"webhooks",
+		"api_tokens",
+		"tenant_memberships",
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin purge: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op if Commit ran first
+	for _, t := range tables {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM `+t+` WHERE tenant_id = ?`, id); err != nil {
+			return fmt.Errorf("purge %s: %w", t, err)
+		}
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM tenants WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete tenant row: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit purge: %w", err)
+	}
+	return nil
+}
+
 func (r *TenantRepo) Get(ctx context.Context, id string) (*Tenant, error) {
 	row := r.db.QueryRowContext(ctx, tenantSelect+` WHERE id=?`, id)
 	return scanTenant(row)

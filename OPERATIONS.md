@@ -328,7 +328,20 @@ rows. A crash between fsync and DELETE re-archives the same rows on
 the next sweep — downstream consumers must deduplicate on `id`. Point
 your SIEM's file-input at `*.jsonl` in the archive dir.
 
-### Bulk-edit DLQ
+### Delete a tenant (GDPR / decommission)
+
+The tenant lifecycle endpoint defaults to "delete the tenant row only," which leaves connections / pipelines / DLQ orphaned in their tables. For a true erasure (right-to-be-forgotten, customer offboarding, environment teardown), pass `?cascade=true`:
+
+```sh
+curl -sk --cacert ca.pem -b 'session=<cookie>' \
+     -H "X-CSRF-Token: <token>" \
+     -X DELETE \
+     "https://mqc.svc:8443/api/v1/tenants/${TENANT_ID}?cascade=true"
+```
+
+The cascade purge runs in one SQL transaction across every per-tenant table: dlq, routing_rules, transforms, stages, pipelines, connections, schemas, scripts, webhooks, api_tokens, tenant_memberships. The audit log is **intentionally preserved** — it carries the tamper-evident chain of what the tenant did, which auditors and regulators usually require for some retention period. Archive it separately via `audit.archive_dir` and rotate to your SIEM.
+
+Caller must be an owner of the target tenant. The default tenant cannot be purged (the bridge depends on it as the legacy-row backfill target).
 
 ### Bulk-edit DLQ
 
@@ -348,3 +361,261 @@ sqlite3 -readonly /var/lib/mqconnector/mqconnector.db \
 
 Snapshot the audit table to your SIEM at whatever cadence your
 retention policy demands; the table is append-only.
+
+## Incident playbooks
+
+The "alerts fired, now what" guide. Each subsection assumes you've
+just been paged and answers in the order an on-call would actually
+ask: what's broken, who's affected, what stops the bleeding, how to
+make it not happen again.
+
+### 1. Process is down — `mqConnectorScrapeFailed`
+
+**Stops the bleeding.**
+```sh
+systemctl status mqconnector
+journalctl -u mqconnector -n 200 --no-pager
+df -h /var/lib/mqconnector       # is the disk full?
+ls -la /var/lib/mqconnector      # is the SQLite file still there?
+```
+
+**Common causes:**
+- *Out of disk*. See "Disk-full" below — recovery needs a write path
+  back before the process can boot.
+- *SQLite corruption*. Check the journalctl line. Restore from the
+  most recent backup (see Backup → Restore section).
+- *TLS material removed/expired*. The log will say
+  `tls: failed to load certificate`. Replace cert + key, restart.
+- *Bad config push*. If `config.yaml` is unparseable the process
+  refuses to boot. Revert via `git`/the snapshot you keep alongside.
+
+**Bring it back.**
+```sh
+systemctl start mqconnector
+# watch /api/health on the leader for the first minute
+curl -sk --cacert ca.pem -b 'session=<cookie>' \
+  https://mqc.svc:8443/api/health | jq .
+```
+
+### 2. Disk-full
+
+Symptom: writes start failing with `database or disk is full` in the
+logs; new DLQ rows fail to insert; backup worker logs
+`scheduled backup failed`. The Prometheus `node_filesystem_avail_bytes`
+gauge should be alerting before this hits.
+
+**Stops the bleeding** — get a write path back FAST:
+
+```sh
+# 1. find what filled the disk
+sudo du -sh /var/log/mqconnector/* /var/lib/mqconnector/* \
+            /var/backups/mqconnector/* | sort -h | tail -20
+
+# 2a. if it's old audit archives:
+find /var/log/mqconnector/audit -name '*.jsonl' -mtime +30 -delete
+
+# 2b. if it's stale backups (rotate-aware path):
+find /var/backups/mqconnector -name 'mqconnector-*.db' -mtime +14 -delete
+
+# 2c. if it's the SQLite WAL (rare but possible under sustained writes):
+sudo systemctl restart mqconnector   # close the WAL → forces checkpoint
+```
+
+**After the bleeding stops** — VACUUM the database while writes are
+quiet, to reclaim space the engine never gave back:
+
+```sh
+sudo systemctl stop mqconnector
+sqlite3 /var/lib/mqconnector/mqconnector.db 'VACUUM'
+sudo systemctl start mqconnector
+```
+
+Adjust retention so it doesn't recur: lower `pipeline.dlq.max_age`,
+lower `storage.backup.keep`, lower `audit.max_age` if archiving.
+
+### 3. DLQ flood — `mqConnectorFailureBurst`
+
+Symptom: failure ratio spikes for one pipeline. DLQ grows fast. The
+destination broker is probably down, or a stage config push just went
+out and broke schema validation, or a downstream service is rejecting
+messages.
+
+**Triage in order.**
+
+1. `GET /api/health` — is the destination broker still listed as
+   `connected`? If `error`, the issue is broker-side. Restart the
+   broker or fail over.
+2. `GET /api/v1/audit?resource=/api/v1/pipelines/<id>` — was there a
+   stage / schema / config change in the last 15 minutes? If yes,
+   revert via `gitops` or undo the edit in the UI.
+3. Pull a DLQ entry: `GET /api/v1/dlq?pipeline_id=<id>&limit=1`. The
+   `error_reason` tells you which stage failed and why. If it's a
+   schema mismatch from a new producer-side change, you need the
+   producer team — replay won't help.
+
+**Stops the bleeding.**
+
+- *Destination outage*: the bridge already routed to DLQ and will
+  auto-retry from there (see `pipeline.dlq.max_retries` and
+  `retry_backoff_ms`). Wait, and confirm the broker is up before
+  forcing retries.
+- *Bad config*: revert. Pipelines reload automatically on next
+  `POST /api/v1/reload` or on the next gitops sync.
+- *Sustained upstream-incompatible traffic*: pause the pipeline via
+  `PUT /api/v1/pipelines/{id}` with `enabled=false` so DLQ stops
+  growing while you fix the producer side.
+
+**Drain the DLQ** once root cause is fixed:
+
+```sh
+# Drain everything for one pipeline. Bounded loop so a poison
+# message doesn't hot-loop the retry endpoint.
+for id in $(curl -sk --cacert ca.pem -b 'session=<cookie>' \
+            "https://mqc.svc:8443/api/v1/dlq?pipeline_id=<pid>&limit=1000" \
+            | jq -r '.[].id'); do
+  curl -sk --cacert ca.pem -b 'session=<cookie>' \
+       -X POST -H "X-CSRF-Token: <token>" \
+       "https://mqc.svc:8443/api/v1/dlq/${id}/retry"
+done
+```
+
+### 4. Leader election stuck — multi-replica deploy
+
+Symptom: `/api/v1/leadership` reports `is_leader: false` on every
+replica; no pipelines processing; `mqConnectorPipelineDown` firing
+across the board.
+
+**Diagnose.**
+```sh
+# On every replica:
+curl -sk --cacert ca.pem -b 'session=<cookie>' \
+  https://mqc.svc:8443/api/v1/leadership | jq .
+# Inspect the lease row directly:
+sqlite3 -readonly /var/lib/mqconnector/mqconnector.db \
+  'SELECT * FROM leadership_lease'
+```
+
+**Likely causes.**
+- *Shared volume disconnected*. The lease is in SQLite — if replicas
+  can't see the same file they can't agree. Verify the network volume
+  mount on every node.
+- *Clock skew* — leases expire by wall clock. If two nodes disagree
+  on time by more than the TTL, one will keep stealing back. Run
+  `chrony` / `ntp`.
+- *Dead leader holding lease through the TTL*. Wait `ttl + tick` (≤
+  `1.5 * ttl`, default 45s). If it's longer than that, the lease row
+  is stuck — manually clear it:
+
+```sh
+sudo systemctl stop mqconnector   # on every replica
+sqlite3 /var/lib/mqconnector/mqconnector.db 'DELETE FROM leadership_lease'
+# Start replicas one at a time; first to grab the lease wins.
+sudo systemctl start mqconnector
+```
+
+### 5. Pipeline says "connected" but no messages flowing
+
+Symptom: `mqConnectorNoMessagesFlowing` fires; UI shows the pipeline
+as up; upstream insists they're publishing. The bridge is consuming
+nothing.
+
+**Diagnose** in order of likelihood:
+
+1. *Consumer group mismatch* (Kafka): a recent connection edit
+   changed the group ID. Look at the audit log for the source
+   connection. If yes, the new group claims offsets from
+   `OffsetOldest` by default — first message after the change is
+   the broker's oldest, not the latest.
+2. *Subject pattern mismatch* (NATS JetStream): the connection's
+   `topic` doesn't intersect the stream's `subjects` filter. Verify
+   with `nats stream info <stream>`.
+3. *Queue empty* (RabbitMQ): obvious but easy to miss. Check the
+   management UI's "Ready" count.
+4. *Routing rule sending elsewhere*: a routing stage may be
+   dispatching messages to a non-default destination. Check
+   `GET /api/v1/pipelines/{id}/routing-rules`.
+
+**Action**: if it's #1 or #2, fix the connection and `POST
+/api/v1/reload`. If it's #3 or #4, no action — the system is
+behaving as configured.
+
+### 6. Connection-pool storm
+
+Symptom: many pipelines simultaneously flip to `status=error` after a
+single broker bounces. Bridge logs are spammed with reconnect
+attempts.
+
+**Stops the bleeding.** The pool's eviction + reconnect logic handles
+this automatically — wait 60 seconds. Connectors back off with
+2-second sleeps between attempts, and `pool.HealthInterval` (default
+30s) reaps stale entries on its own sweep.
+
+**If it doesn't recover.** Restart mqConnector with the broker
+already up:
+
+```sh
+sudo systemctl restart mqconnector
+```
+
+Pipelines re-establish their connectors from scratch. At-least-once
+semantics mean any in-flight message either re-delivers from the
+broker or had already committed before the bounce.
+
+## Maintenance windows
+
+### Patching the host
+
+mqConnector is single-process; treat any kernel/glibc/CA-bundle
+update as a service-affecting maintenance:
+
+1. Snapshot (`mqconnector backup --to-dir=...`).
+2. `systemctl stop mqconnector`. Pipelines drain their in-flight
+   message (committed or DLQ'd) before the process exits.
+3. Patch.
+4. Reboot.
+5. `systemctl start mqconnector`. Watch
+   `mqconnector_messages_processed_total` for the first 5 minutes.
+
+In a multi-replica deploy, you can roll one host at a time provided
+leadership is enabled — failover takes ≤ `1.5 * leadership.ttl`.
+
+### Replacing a TLS certificate
+
+mqConnector reads cert + key at startup; there is no SIGHUP reload.
+Sequence:
+
+```sh
+# 1. drop new files in place
+sudo cp new.crt /etc/mqconnector/tls/server.crt
+sudo cp new.key /etc/mqconnector/tls/server.key
+sudo chown mqconnector:mqconnector /etc/mqconnector/tls/server.*
+sudo chmod 0400 /etc/mqconnector/tls/server.key
+
+# 2. restart
+sudo systemctl restart mqconnector
+
+# 3. confirm
+openssl s_client -connect mqc.svc:8443 -servername mqc.svc </dev/null 2>/dev/null \
+  | openssl x509 -noout -dates -subject -issuer
+```
+
+Plan for ≤ 5 seconds of API downtime during the restart. The MQ
+broker connections are independent of the HTTPS listener so in-flight
+messages keep moving.
+
+### Scaling pipeline workers under load
+
+Per-pipeline workers default to 1. Each worker holds its own broker
+connection. Tune via the pipeline row:
+
+```sh
+curl -sk --cacert ca.pem -b 'session=<cookie>' \
+     -H 'Content-Type: application/json' \
+     -H "X-CSRF-Token: <token>" \
+     -X PUT https://mqc.svc:8443/api/v1/pipelines/<id> \
+     -d '{"workers": 4, ...}'
+```
+
+The bridge reloads the pipeline automatically. Sweet spot is usually
+2–4: more workers help only when the destination's per-message
+latency dominates throughput.

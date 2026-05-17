@@ -202,8 +202,9 @@ func run(configPath string) error {
 	stopReaper := dlqSvc.StartReaper(rootCtx, dlq.ReaperOptions{})
 	defer stopReaper()
 
-	// DLQ retention sweeper — bounded so a long broker outage can't fill
-	// the disk. Disabled cleanly when both knobs are zero.
+	// DLQ retention sweeper — bounded so a long broker outage can't
+	// fill the disk. Disabled cleanly when both knobs are zero.
+	// Leader gating wired below once leaseRunner is constructed.
 	retention := dlq.NewRetention(
 		store.DLQ,
 		cfg.Pipeline.DLQ.MaxAge,
@@ -211,7 +212,6 @@ func run(configPath string) error {
 		cfg.Pipeline.DLQ.SweepInterval,
 		logger,
 	)
-	go retention.Run(rootCtx)
 
 	// Audit-log archival — streams rows older than cfg.Audit.MaxAge to
 	// per-day JSONL files in cfg.Audit.ArchiveDir, then prunes the
@@ -223,7 +223,6 @@ func run(configPath string) error {
 		cfg.Audit.SweepInterval,
 		logger,
 	)
-	go archiver.Run(rootCtx)
 	if cfg.Audit.ArchiveDir != "" {
 		logger.Info("audit archival enabled",
 			"archive_dir", cfg.Audit.ArchiveDir,
@@ -291,6 +290,18 @@ func run(configPath string) error {
 			logger.Warn("initial pipeline reload failed", "err", err)
 		}
 	}
+
+	// Wire leader-only gating into retention + archiver now that
+	// leaseRunner is known, then start their sweep loops. In multi-
+	// replica deploys only the leader prunes so two replicas don't
+	// fight over the same DELETE statements.
+	if leaseRunner != nil {
+		isLeader := func() bool { return leaseRunner.Snapshot().IsLeader }
+		retention.SetLeaderCheck(isLeader)
+		archiver.SetLeaderCheck(isLeader)
+	}
+	go retention.Run(rootCtx)
+	go archiver.Run(rootCtx)
 
 	// Scheduled backups. Off by default; the operator opts in by
 	// setting storage.backup.dir. On multi-replica deploys only the
