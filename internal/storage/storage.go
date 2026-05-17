@@ -46,6 +46,7 @@ type Store struct {
 	Memberships  *MembershipRepo
 	APITokens    *APITokenRepo
 	Webhooks     *WebhookRepo
+	Plugins      *PluginRepo
 }
 
 // Dialect reports which SQL flavour the underlying connection speaks.
@@ -122,6 +123,7 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 		Memberships:  &MembershipRepo{db: db},
 		APITokens:    &APITokenRepo{db: db},
 		Webhooks:     &WebhookRepo{db: db},
+		Plugins:      &PluginRepo{db: db},
 	}, nil
 }
 

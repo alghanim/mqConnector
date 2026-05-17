@@ -95,6 +95,10 @@ type BuildContext struct {
 	Transforms   []*storage.Transform
 	RoutingRules []*storage.RoutingRule
 	Schemas      map[string]*storage.Schema
+	// WasmPlugins map plugin name → pre-compiled WasmStage. The
+	// manager populates this from the plugins table before Build —
+	// keeping compilation outside Build keeps the function pure.
+	WasmPlugins map[string]*WasmStage
 }
 
 // Build constructs the concrete Stage list for the pipeline.
@@ -187,6 +191,21 @@ func Build(ctx BuildContext) ([]Stage, error) {
 				Content:      cfg.Content,
 				ProtoMessage: cfg.ProtoMessage,
 			})
+		case "wasm":
+			cfg := struct {
+				Plugin string `json:"plugin"`
+			}{}
+			if row.StageConfig != "" {
+				_ = json.Unmarshal([]byte(row.StageConfig), &cfg)
+			}
+			if cfg.Plugin == "" {
+				return nil, fmt.Errorf("wasm stage missing plugin name in stage_config")
+			}
+			s, ok := ctx.WasmPlugins[cfg.Plugin]
+			if !ok {
+				return nil, fmt.Errorf("wasm stage references unknown plugin %q", cfg.Plugin)
+			}
+			stages = append(stages, s)
 		default:
 			return nil, fmt.Errorf("unknown stage type %q", row.StageType)
 		}

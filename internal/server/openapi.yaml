@@ -1413,6 +1413,66 @@ paths:
           content:
             application/octet-stream: {}
 
+  /api/v1/plugins:
+    get:
+      tags: [plugins]
+      summary: List uploaded WASM plugins (metadata only). Authenticated.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Plugin metadata list (no blobs). }
+    post:
+      tags: [plugins]
+      summary: Upload a WASM plugin. System-admin only.
+      description: |
+        multipart/form-data with fields `name` (string) and `blob`
+        (the .wasm file). The blob is compiled via wazero before
+        persisting — failed compile returns 400 with the reason.
+        See docs/PLUGIN_DESIGN.md for the WASM contract.
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                blob: { type: string, format: binary }
+      responses:
+        '201': { description: Created. Returns plugin metadata. }
+        '400': { description: Validation failed (bad blob, missing exports, host imports, etc.). }
+        '403': { description: Not a system-admin. }
+        '413': { description: Blob exceeds 16 MiB cap. }
+
+  /api/v1/plugins/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [plugins]
+      summary: Download the plugin .wasm blob. System-admin only.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: WASM bytes.
+          content:
+            application/wasm:
+              schema: { type: string, format: binary }
+        '404': { description: Not found. }
+    delete:
+      tags: [plugins]
+      summary: Remove a plugin. System-admin only.
+      description: |
+        Pipelines still referencing the plugin will fail to build on
+        the next reload — disable them first if you don't want
+        downtime.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Deleted. }
+        '404': { description: Not found. }
+
   /api/v1/admin/integrity:
     get:
       tags: [admin]

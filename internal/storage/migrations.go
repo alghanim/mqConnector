@@ -496,6 +496,57 @@ var migrations = []string{
 	`
 	ALTER TABLE pipelines ADD COLUMN max_msgs_per_minute INTEGER NOT NULL DEFAULT 0;
 	`,
+	// 0015 — WASM plugin blobs.
+	//
+	// Operators upload precompiled .wasm modules; pipelines reference
+	// them via stage_type='wasm' + stage_config carrying the plugin
+	// name. See docs/PLUGIN_DESIGN.md for the contract.
+	//
+	// The blob lives in SQLite because plugins are typically small
+	// (KiB to low-MiB), the upload is rare (operator-driven), and
+	// keeping it in the database makes backup + restore atomic with
+	// the rest of the configuration. sha256 is the canonical id so
+	// two uploads of the same blob dedupe at the storage layer.
+	//
+	// `name` is the operator-visible label used in stage_config.
+	// Scoped to tenant — different tenants can ship plugins with the
+	// same name without colliding.
+	`
+	CREATE TABLE IF NOT EXISTS plugins (
+		id            TEXT PRIMARY KEY,
+		tenant_id     TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+		name          TEXT NOT NULL,
+		sha256        TEXT NOT NULL,
+		blob          BLOB NOT NULL,
+		size_bytes    INTEGER NOT NULL DEFAULT 0,
+		uploaded_by   TEXT NOT NULL DEFAULT '',
+		uploaded_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(tenant_id, name)
+	);
+	CREATE INDEX IF NOT EXISTS idx_plugins_tenant ON plugins(tenant_id);
+	`,
+	// 0016 — add 'wasm' to the stages.stage_type CHECK. Same
+	// recreate-and-copy dance as migration 0010; SQLite has no
+	// ALTER for CHECK constraints. wasm stages reference a plugin
+	// by name through stage_config={"plugin":"…"} — Build() resolves
+	// it via the plugins table.
+	`
+	CREATE TABLE stages_new (
+		id           TEXT PRIMARY KEY,
+		pipeline_id  TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+		stage_order  INTEGER NOT NULL,
+		stage_type   TEXT NOT NULL CHECK(stage_type IN ('filter','transform','translate','route','script','validate','wasm')),
+		stage_config TEXT NOT NULL DEFAULT '{}',
+		enabled      INTEGER NOT NULL DEFAULT 1,
+		tenant_id    TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'
+	);
+	INSERT INTO stages_new (id, pipeline_id, stage_order, stage_type, stage_config, enabled, tenant_id)
+	SELECT id, pipeline_id, stage_order, stage_type, stage_config, enabled, tenant_id FROM stages;
+	DROP TABLE stages;
+	ALTER TABLE stages_new RENAME TO stages;
+	CREATE INDEX IF NOT EXISTS idx_stages_pipeline ON stages(pipeline_id, stage_order);
+	CREATE INDEX IF NOT EXISTS idx_stages_tenant   ON stages(tenant_id);
+	`,
 }
 
 func migrate(db *sql.DB) error {

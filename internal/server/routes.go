@@ -100,6 +100,19 @@ func (s *Server) routes() http.Handler {
 		// CPU samples and absolutely must not be public.
 		s.mountPprof(r)
 
+		// WASM plugin lifecycle. System-admin only; uploads run
+		// through the sensitive-route limiter (6/min/tenant) because
+		// a malicious upload can DoS the server even if it can't
+		// escape the sandbox. The CompileWasm validation at upload
+		// time blocks bad blobs from reaching the storage layer.
+		r.Route("/api/v1/plugins", func(r chi.Router) {
+			r.Get("/", s.handleListPlugins)
+			r.With(s.rateLimitSensitive("/api/v1/plugins")).
+				Post("/", s.handleUploadPlugin)
+			r.Get("/{name}", s.handleGetPlugin)
+			r.Delete("/{name}", s.handleDeletePlugin)
+		})
+
 		// API tokens (headless / CI auth). Scoped to the caller's
 		// tenant; the secret is shown exactly once at creation.
 		r.Get("/api/v1/tokens", s.handleListTokens)

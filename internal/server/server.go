@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/tetratelabs/wazero"
 
 	"mqConnector/internal/auth"
 	"mqConnector/internal/config"
@@ -50,6 +51,7 @@ type Server struct {
 	sensitiveLimiter *sensitiveLimiter
 	accountLockout   *accountLockout
 	tlsReloader      *certReloader
+	wasmRuntime      wazero.Runtime
 	stopGC           chan struct{}
 	stopGCOnce       sync.Once
 }
@@ -103,7 +105,18 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		// → 15 min lockout. Complements the per-IP loginLimiter so
 		// distributed credential stuffing also gets stopped.
 		accountLockout: newAccountLockout(5, 5*time.Minute, 15*time.Minute),
-		stopGC:         make(chan struct{}),
+		// One wazero runtime per Server. Modules are instantiated
+		// per-message (cheap) but share this runtime. Configured with
+		// the default 32-MiB memory cap; per-stage limits override
+		// downward but not upward.
+		wasmRuntime: pipeline.NewWasmRuntime(context.Background(), pipeline.DefaultWasmLimits),
+		stopGC:      make(chan struct{}),
+	}
+	// The pipeline manager compiles plugins on Reload; lend it the
+	// runtime so the lifecycle is owned by the Server (one runtime
+	// per process).
+	if deps.Pipeline != nil {
+		deps.Pipeline.SetWasmRuntime(s.wasmRuntime)
 	}
 	go s.loginLimiter.gc(s.stopGC)
 	go s.tenantLimiter.gc(s.stopGC)

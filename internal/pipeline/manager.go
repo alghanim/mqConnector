@@ -2,10 +2,13 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/tetratelabs/wazero"
 
 	"mqConnector/internal/events"
 	"mqConnector/internal/mq"
@@ -58,6 +61,70 @@ type Manager struct {
 
 	// Optional event sink. nil means "don't emit lifecycle events".
 	events EventSink
+
+	// Optional WASM runtime — injected by the server. nil means
+	// stages with stage_type=wasm will fail Build.
+	wasmRuntime wazero.Runtime
+}
+
+// SetWasmRuntime installs the wazero runtime used to compile plugin
+// blobs at pipeline build time. The server owns the runtime
+// lifecycle and passes it in; Manager treats it as borrowed.
+func (m *Manager) SetWasmRuntime(rt wazero.Runtime) { m.wasmRuntime = rt }
+
+// loadWasmPluginsForBuild fetches every plugin referenced by this
+// pipeline's wasm stages, compiles each blob through the runtime
+// (validating exports + import-emptiness + memory caps), and
+// returns a name → WasmStage map for BuildContext.WasmPlugins.
+//
+// Compile happens here rather than inside Build so a corrupt plugin
+// fails the whole pipeline reload — partial pipelines aren't
+// useful, and the operator wants to see the failure on the next
+// /api/v1/reload rather than mid-pipeline at message-receive time.
+func (m *Manager) loadWasmPluginsForBuild(
+	ctx context.Context,
+	p *storage.Pipeline,
+	stageRows []*storage.Stage,
+) (map[string]*WasmStage, error) {
+	// Gather the plugin names this pipeline actually uses so we
+	// don't compile every plugin in the tenant's table.
+	names := map[string]bool{}
+	for _, s := range stageRows {
+		if !s.Enabled || s.StageType != "wasm" {
+			continue
+		}
+		var cfg struct {
+			Plugin string `json:"plugin"`
+		}
+		_ = json.Unmarshal([]byte(s.StageConfig), &cfg)
+		if cfg.Plugin != "" {
+			names[cfg.Plugin] = true
+		}
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+	if m.wasmRuntime == nil {
+		return nil, fmt.Errorf("pipeline uses wasm stages but no runtime is configured")
+	}
+	out := make(map[string]*WasmStage, len(names))
+	for name := range names {
+		plug, err := m.store.Plugins.Get(ctx, p.TenantID, name)
+		if err != nil {
+			return nil, fmt.Errorf("load plugin %q: %w", name, err)
+		}
+		mod, err := CompileWasm(ctx, m.wasmRuntime, plug.Blob, DefaultWasmLimits)
+		if err != nil {
+			return nil, fmt.Errorf("compile plugin %q: %w", name, err)
+		}
+		out[name] = &WasmStage{
+			PluginName: name,
+			Module:     mod,
+			Runtime:    m.wasmRuntime,
+			Limits:     DefaultWasmLimits,
+		}
+	}
+	return out, nil
 }
 
 // SetEventSink installs a publisher to receive pipeline.started /
@@ -209,12 +276,22 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 		return fmt.Errorf("load schemas: %w", err)
 	}
 
+	// Pre-compile any WASM plugins this pipeline references. Lookup
+	// is by name in the tenant's plugins table; compilation runs
+	// through the runtime's CompileWasm which validates exports +
+	// memory caps + no-imports before the module is cached.
+	wasmPlugins, err := m.loadWasmPluginsForBuild(ctx, p, stageRows)
+	if err != nil {
+		return fmt.Errorf("load wasm plugins: %w", err)
+	}
+
 	stages, err := Build(BuildContext{
 		Pipeline:     p,
 		StageRows:    stageRows,
 		Transforms:   transforms,
 		RoutingRules: routes,
 		Schemas:      schemas,
+		WasmPlugins:  wasmPlugins,
 	})
 	if err != nil {
 		return fmt.Errorf("build stages: %w", err)
