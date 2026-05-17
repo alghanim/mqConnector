@@ -23,6 +23,18 @@ type EventSink interface {
 // Manager owns one Executor per enabled pipeline and supports hot-reload:
 // callers can mutate pipeline configuration in storage and call Reload to
 // recycle the goroutines.
+// executorHandle is the per-pipeline lifecycle handle the Manager keeps
+// in its active map. cancel ends the executor's Run via ctx propagation;
+// done closes when the executor goroutine has fully unwound (including
+// its deferred Metrics.Unregister + lifecycle-event emit). Reload waits
+// on done before spawning a replacement, which closes a race where the
+// old executor's Unregister fired AFTER the new executor's Register and
+// silently wiped the live registration off the metrics store.
+type executorHandle struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
 type Manager struct {
 	store   *storage.Store
 	pool    *mq.Pool
@@ -30,8 +42,11 @@ type Manager struct {
 	dlq     DLQSink
 	logger  *slog.Logger
 
-	mu      sync.Mutex
-	active  map[string]context.CancelFunc // pipeline ID → cancel
+	mu sync.Mutex
+	// active maps pipeline ID → its running executor handle. Reload
+	// waits on each handle's done channel before spawning a
+	// replacement; see executorHandle's doc for the race this closes.
+	active  map[string]*executorHandle
 	parent  context.Context
 	stopped bool
 
@@ -82,7 +97,7 @@ func NewManager(parent context.Context, store *storage.Store, pool *mq.Pool, met
 		metrics: metrics,
 		dlq:     dlq,
 		logger:  logger.With("component", "pipeline.Manager"),
-		active:  map[string]context.CancelFunc{},
+		active:  map[string]*executorHandle{},
 		parent:  parent,
 	}
 }
@@ -95,11 +110,23 @@ func (m *Manager) Reload(ctx context.Context) (int, error) {
 		m.mu.Unlock()
 		return 0, fmt.Errorf("pipeline: manager stopped")
 	}
-	for id, cancel := range m.active {
-		cancel()
-		delete(m.active, id)
+	// Snapshot the running handles, release the lock, then signal +
+	// wait outside the critical section. Each handle's goroutine
+	// re-acquires m.mu in its defer to delete itself from the map; if
+	// we held m.mu while waiting on done we'd deadlock. The drain —
+	// wait until the old executor's deferred Unregister has fired
+	// before the new Register runs — is what closes the race the live
+	// deploy hit (active_pipelines stuck at 0 after a gitops-triggered
+	// reload).
+	oldHandles := make([]*executorHandle, 0, len(m.active))
+	for _, h := range m.active {
+		oldHandles = append(oldHandles, h)
 	}
 	m.mu.Unlock()
+	for _, h := range oldHandles {
+		h.cancel()
+		<-h.done
+	}
 
 	// ListAll walks every tenant's pipelines. The Manager is a
 	// system-level component that runs workers regardless of which
@@ -214,8 +241,9 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 		Logger:      m.logger,
 	}
 
+	handle := &executorHandle{cancel: cancel, done: make(chan struct{})}
 	m.mu.Lock()
-	m.active[p.ID] = cancel
+	m.active[p.ID] = handle
 	m.mu.Unlock()
 
 	// Lifecycle event: pipeline started. Emitted before the executor
@@ -231,9 +259,20 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
+		// Close `done` AFTER the executor has fully unwound (including
+		// its own deferred Unregister inside executor.Run). Reload
+		// blocks on this channel before spawning a replacement so the
+		// new executor's Register can't be wiped by a still-running
+		// old defer.
+		defer close(handle.done)
 		defer func() {
 			m.mu.Lock()
-			delete(m.active, p.ID)
+			// Only delete if this handle is still the live one — a
+			// concurrent Reload may have already replaced it, in which
+			// case wiping the map entry would erase the active executor.
+			if cur, ok := m.active[p.ID]; ok && cur == handle {
+				delete(m.active, p.ID)
+			}
 			m.mu.Unlock()
 			// Lifecycle event: pipeline stopped. Reasons include
 			// explicit Stop, Reload churn, or an executor error.
@@ -267,8 +306,8 @@ func (m *Manager) Stop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stopped = true
-	for id, cancel := range m.active {
-		cancel()
+	for id, h := range m.active {
+		h.cancel()
 		delete(m.active, id)
 	}
 }
@@ -289,8 +328,8 @@ func (m *Manager) Stop() {
 func (m *Manager) StopAndWait(timeout time.Duration) bool {
 	m.mu.Lock()
 	m.stopped = true
-	for id, cancel := range m.active {
-		cancel()
+	for id, h := range m.active {
+		h.cancel()
 		// We deliberately don't delete from m.active here — the
 		// goroutine's own defer does that. Premature deletion races
 		// with the goroutine's "am I still active?" checks during
@@ -322,8 +361,8 @@ func (m *Manager) StopAndWait(timeout time.Duration) bool {
 func (m *Manager) StopAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for id, cancel := range m.active {
-		cancel()
+	for id, h := range m.active {
+		h.cancel()
 		delete(m.active, id)
 	}
 }
