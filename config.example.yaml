@@ -58,6 +58,12 @@ auth:
   insecure_skip_verify: false
   # Browser session-cookie TTL. Should be ≤ the JWT's own expiry.
   session_ttl: "12h"
+  # Sliding inactivity timeout. When set and less than session_ttl,
+  # every authenticated request refreshes the cookie's MaxAge so an
+  # idle browser tab auto-logs-out without server-side state.
+  # Required by HIPAA / NIST 800-53 IA-11 / some PCI flows.
+  # 0 disables; typical value 15-30 minutes.
+  idle_timeout: "0s"
   # Session cookie name.
   cookie_name: "mqc_session"
 

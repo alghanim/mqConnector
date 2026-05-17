@@ -40,6 +40,7 @@ type Service struct {
 	client         authClient
 	cookieName     string
 	sessionTTL     time.Duration
+	idleTimeout    time.Duration
 	secure         bool
 	tenantResolver TenantResolver // optional; nil = single-tenant fallback
 	apiTokenLookup APITokenLookup // optional; nil disables Bearer auth
@@ -48,12 +49,19 @@ type Service struct {
 // Options bundle the constructor arguments. Secure controls the cookie Secure
 // flag — set to false only in dev mode.
 type Options struct {
-	SimpleAuthURL       string
-	SimpleAuthAdminKey  string
-	InsecureSkipVerify  bool
-	CookieName          string
-	SessionTTL          time.Duration
-	Secure              bool
+	SimpleAuthURL      string
+	SimpleAuthAdminKey string
+	InsecureSkipVerify bool
+	CookieName         string
+	SessionTTL         time.Duration
+	// IdleTimeout caps how long the session cookie survives without
+	// activity. When > 0 and less than SessionTTL, every authenticated
+	// request re-issues the cookie with MaxAge = IdleTimeout (sliding
+	// expiry). Compliance frameworks that require auto-logout on user
+	// idleness (HIPAA, NIST 800-53 IA-11, some PCI flows) are
+	// satisfied by setting this. Zero disables.
+	IdleTimeout time.Duration
+	Secure      bool
 }
 
 // NewService constructs a Service backed by a real SimpleAuth client.
@@ -98,12 +106,37 @@ func newServiceWith(client authClient, opts Options) *Service {
 		opts.SessionTTL = 12 * time.Hour
 	}
 	return &Service{
-		client:     client,
-		cookieName: opts.CookieName,
-		sessionTTL: opts.SessionTTL,
-		secure:     opts.Secure,
+		client:      client,
+		cookieName:  opts.CookieName,
+		sessionTTL:  opts.SessionTTL,
+		idleTimeout: opts.IdleTimeout,
+		secure:      opts.Secure,
 	}
 }
+
+// cookieMaxAgeSeconds returns the MaxAge to use for the session
+// cookie. When IdleTimeout is configured and shorter than the
+// SessionTTL, idleTimeout wins — the cookie expires sooner so an
+// abandoned browser tab can't keep a session alive past the
+// configured idleness budget. Capped at SessionTTL so a misconfigured
+// IdleTimeout doesn't accidentally widen the absolute lifetime.
+func (s *Service) cookieMaxAgeSeconds() int {
+	ttl := s.sessionTTL
+	if s.idleTimeout > 0 && s.idleTimeout < ttl {
+		ttl = s.idleTimeout
+	}
+	return int(ttl.Seconds())
+}
+
+// IdleTimeoutEnabled reports whether the sliding-cookie refresh path
+// should run. Handlers / middleware use this to skip re-issuing the
+// cookie when the feature is off.
+func (s *Service) IdleTimeoutEnabled() bool {
+	return s.idleTimeout > 0 && s.idleTimeout < s.sessionTTL
+}
+
+// IdleTimeout exposes the configured value for telemetry/tests.
+func (s *Service) IdleTimeout() time.Duration { return s.idleTimeout }
 
 // Login exchanges credentials for a JWT via SimpleAuth. Returns only the
 // access token — keep using this for tests that don't care about refresh.
@@ -159,6 +192,8 @@ func (s *Service) Validate(token string) (*simpleauth.User, error) {
 }
 
 // SetCookie writes the JWT-bearing session cookie to the response.
+// MaxAge is capped by IdleTimeout (when set) so an idle browser tab
+// times out sooner than the JWT itself — see cookieMaxAgeSeconds.
 func (s *Service) SetCookie(w http.ResponseWriter, token string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName,
@@ -167,8 +202,17 @@ func (s *Service) SetCookie(w http.ResponseWriter, token string) {
 		HttpOnly: true,
 		Secure:   s.secure,
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int(s.sessionTTL.Seconds()),
+		MaxAge:   s.cookieMaxAgeSeconds(),
 	})
+}
+
+// SlideCookie re-issues the existing session cookie with a fresh
+// MaxAge. Called by the inactivity-refresh middleware on every
+// authenticated request when IdleTimeoutEnabled() is true — the
+// browser's clock thus tracks user activity rather than the
+// absolute time-since-login.
+func (s *Service) SlideCookie(w http.ResponseWriter, token string) {
+	s.SetCookie(w, token)
 }
 
 // ClearCookie writes an immediately-expired session cookie. Server-side

@@ -26,6 +26,9 @@ data:
       insecure_skip_verify: {{ .Values.config.auth.insecureSkipVerify }}
       cookie_name: {{ .Values.config.auth.cookieName | quote }}
       session_ttl: {{ .Values.config.auth.sessionTtl }}
+      {{- with .Values.config.auth.idleTimeout }}
+      idle_timeout: {{ . }}
+      {{- end }}
       secure: {{ .Values.config.auth.secure }}
 
     storage:

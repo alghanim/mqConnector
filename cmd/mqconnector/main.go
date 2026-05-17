@@ -179,6 +179,7 @@ func run(configPath string) error {
 		InsecureSkipVerify: cfg.Auth.InsecureSkipVerify,
 		CookieName:         cfg.Auth.CookieName,
 		SessionTTL:         cfg.Auth.SessionTTL,
+		IdleTimeout:        cfg.Auth.IdleTimeout,
 		Secure:             !cfg.IsDev(),
 	})
 	if err != nil {

@@ -146,6 +146,13 @@ type AuthConfig struct {
 	// SessionTTL is the lifetime of the browser cookie that carries the JWT.
 	// Should be ≤ the JWT's own expiry.
 	SessionTTL time.Duration `yaml:"session_ttl"`
+	// IdleTimeout (sliding) caps how long the session cookie can sit
+	// idle. When > 0 and less than SessionTTL, every authenticated
+	// request refreshes the cookie's MaxAge so a user who walks away
+	// for IdleTimeout gets auto-logged-out without us having to track
+	// last-activity server-side. Required by HIPAA / NIST 800-53
+	// IA-11 / some PCI flows. Zero disables (legacy behaviour).
+	IdleTimeout time.Duration `yaml:"idle_timeout"`
 	// CookieName is the name of the session cookie.
 	CookieName string `yaml:"cookie_name"`
 }

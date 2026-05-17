@@ -46,6 +46,14 @@ This section accumulates changes between tagged releases. Move entries into a ne
 - **Cosign release signing**: new `.github/workflows/release.yml` fires on `v*` tags, builds + pushes to ghcr.io, signs keyless with cosign, attests the SBOM, attaches the SBOM to the GitHub Release.
 - **S3 audit archival**: `audit.s3` config block + wired through `main.go`. Empty credentials default to local-only (air-gapped friendly).
 - **Chaos test coverage**: failure-mode contract tests in `internal/pipeline/chaos_test.go`.
+- **Account lockout**: per-username sliding-window counter on `/api/auth/login`. 5 failures within 5 min → 15-min lockout, regardless of source IP. Case-folded so attackers can't iterate casing variants.
+- **Session inactivity timeout**: `auth.idle_timeout` config knob. Sliding cookie refresh on every authenticated request — idle browser tabs auto-logout. Required by HIPAA / NIST 800-53 IA-11. Default 0 (disabled) preserves legacy behaviour.
+- **Distroless runtime image**: `Dockerfile` final stage runs `gcr.io/distroless/static-debian12:nonroot`. No shell, no `wget`, no package manager. New `mqconnector healthcheck` subcommand replaces the wget-based HEALTHCHECK.
+- **pprof endpoint**: `/api/v1/admin/pprof/*` (system-admin only) for production runtime debugging.
+- **Cosign release signing**: `.github/workflows/release.yml` signs images keyless on `v*` tags and attests the CycloneDX SBOM.
+- **Helm chart catch-up**: `storage.backup`, `audit.s3`, `auth.idle_timeout` exposed in `values.yaml`. Pod security context defaults updated for the distroless `nonroot` user (UID 65532).
+- **WCAG**: skip-to-main-content link in the app shell (WCAG 2.1 SC 2.4.1).
+- **CHANGELOG.md** (this file) with SemVer + 3-phase deprecation policy.
 
 ### Changed
 

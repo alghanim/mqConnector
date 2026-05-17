@@ -131,6 +131,16 @@ func (s *Service) RequireSession(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
+		// Sliding inactivity timeout: every authenticated request
+		// re-issues the cookie with a fresh MaxAge so the browser's
+		// expiry tracks user activity, not just absolute time since
+		// login. If the user goes idle past IdleTimeout the cookie
+		// expires on the browser side; the next request arrives
+		// without it and lands here in the "unauthorized" branch
+		// above. No-op when IdleTimeout is unset.
+		if s.IdleTimeoutEnabled() {
+			s.SlideCookie(w, c.Value)
+		}
 		ctx := WithUser(r.Context(), user)
 
 		// Resolve the active tenant. With no resolver installed, fall

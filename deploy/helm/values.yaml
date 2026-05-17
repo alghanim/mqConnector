@@ -74,6 +74,9 @@ config:
     insecureSkipVerify: false
     cookieName: mqc_session
     sessionTtl: 8h
+    # Sliding inactivity timeout. Zero disables (legacy). Set to
+    # 15m–30m for HIPAA / NIST 800-53 IA-11 / PCI auto-logout.
+    idleTimeout: 0s
     secure: true
 
   storage:
