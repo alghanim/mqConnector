@@ -275,6 +275,27 @@ func (s *Store) Prometheus() string {
 			m.PipelineID, m.SourceQueue, m.DestQueue, total)
 	}
 
+	// Per-pipeline up/down — 1 if status is "connected", 0 otherwise.
+	// Alertmanager-friendly: `mqconnector_pipeline_up == 0 for 5m` is
+	// the canonical "pipeline is broken" condition.
+	b.WriteString("# HELP mqconnector_pipeline_up Pipeline runtime status (1=connected, 0=error/stopped)\n")
+	b.WriteString("# TYPE mqconnector_pipeline_up gauge\n")
+	for _, m := range all {
+		up := 0
+		if m.Status == "connected" {
+			up = 1
+		}
+		fmt.Fprintf(&b, "mqconnector_pipeline_up{pipeline_id=%q,source=%q,dest=%q,status=%q} %d\n",
+			m.PipelineID, m.SourceQueue, m.DestQueue, m.Status, up)
+	}
+
+	// Total active pipelines — the trivially-aggregated counterpart to
+	// /api/health.active_pipelines. Easier to alert on than walking
+	// labels in PromQL.
+	b.WriteString("# HELP mqconnector_active_pipelines Number of currently registered pipelines\n")
+	b.WriteString("# TYPE mqconnector_active_pipelines gauge\n")
+	fmt.Fprintf(&b, "mqconnector_active_pipelines %d\n", len(all))
+
 	b.WriteString("# HELP mqconnector_uptime_seconds Uptime in seconds\n")
 	b.WriteString("# TYPE mqconnector_uptime_seconds gauge\n")
 	fmt.Fprintf(&b, "mqconnector_uptime_seconds %.0f\n", s.Uptime().Seconds())

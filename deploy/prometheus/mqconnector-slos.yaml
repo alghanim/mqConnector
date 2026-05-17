@@ -149,6 +149,22 @@ groups:
           summary: "mqConnector scrape failed"
           description: "Prometheus has been unable to scrape mqConnector for 5 minutes."
 
+      - alert: mqConnectorPipelineDown
+        # The pipeline executor sets status="error" when the source
+        # broker connection drops or stages start failing. This fires
+        # the moment the gauge dips to 0 for any pipeline and gives
+        # the operator the offending broker via the labels.
+        expr: mqconnector_pipeline_up == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }} is down"
+          description: |
+            Pipeline {{ $labels.pipeline_id }} (source={{ $labels.source }} →
+            dest={{ $labels.dest }}) reports status={{ $labels.status }}. Check
+            broker connectivity and the recent logs for the cause.
+
       - alert: mqConnectorNoMessagesFlowing
         # Each running pipeline should process at least one message every
         # 15 minutes; an idle pipeline is suspicious. Tune via
@@ -165,3 +181,82 @@ groups:
           description: |
             Pipeline {{ $labels.pipeline_id }} has processed zero messages for 15 minutes.
             Check the upstream broker and the pipeline status.
+
+  # ── 4) Tail-latency SLOs (histogram-based) ───────────────────────
+  # avg latency papers over outliers; p95/p99 catch the tail-
+  # consumer pain that an SLA usually targets. Recording rules
+  # below pre-compute the histogram quantile so dashboards and
+  # alerts don't repeat the math.
+  - name: mqconnector.latency.recording
+    interval: 30s
+    rules:
+      - record: mqconnector:latency_ms:p95
+        expr: |
+          histogram_quantile(0.95,
+            sum by (pipeline_id, le) (
+              rate(mqconnector_pipeline_latency_ms_bucket[5m])
+            )
+          )
+      - record: mqconnector:latency_ms:p99
+        expr: |
+          histogram_quantile(0.99,
+            sum by (pipeline_id, le) (
+              rate(mqconnector_pipeline_latency_ms_bucket[5m])
+            )
+          )
+
+  - name: mqconnector.latency.tail.alerts
+    rules:
+      - alert: mqConnectorP95LatencyHigh
+        expr: mqconnector:latency_ms:p95 > 1000
+        for: 10m
+        labels:
+          severity: warning
+          slo: latency_p95
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: p95 latency > 1s"
+          description: |
+            Pipeline {{ $labels.pipeline_id }} p95 end-to-end latency is
+            {{ $value }}ms over the last 5m. Investigate stage cost,
+            destination broker health, or pipeline workers count.
+
+      - alert: mqConnectorP99LatencyHigh
+        expr: mqconnector:latency_ms:p99 > 5000
+        for: 5m
+        labels:
+          severity: critical
+          slo: latency_p99
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: p99 latency > 5s"
+          description: |
+            One-in-a-hundred messages on pipeline {{ $labels.pipeline_id }} is
+            spending > 5 seconds in the bridge. Downstream timeouts are likely
+            already firing.
+
+  # ── 5) Failure-rate burst ────────────────────────────────────────
+  # The availability SLO above is the *budget* view. This one is the
+  # "something just broke" pager — a sudden burst of failures over a
+  # short window, regardless of the long-term budget. Triggers on
+  # any pipeline where >25% of the last 1m's traffic failed.
+  - name: mqconnector.failures.alerts
+    rules:
+      - alert: mqConnectorFailureBurst
+        expr: |
+          (
+            rate(mqconnector_messages_failed_total[1m])
+            /
+            clamp_min(
+              rate(mqconnector_messages_processed_total[1m])
+              + rate(mqconnector_messages_failed_total[1m]),
+              0.01
+            )
+          ) > 0.25
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: failure burst"
+          description: |
+            More than 25% of messages on pipeline {{ $labels.pipeline_id }} are
+            failing right now. DLQ growth is imminent; check destination broker
+            and any recent config change.

@@ -4,19 +4,32 @@
   "schemaVersion": 38,
   "version": 1,
   "timezone": "browser",
-  "tags": ["mqconnector", "operations"],
-  "time": { "from": "now-6h", "to": "now" },
+  "tags": [
+    "mqconnector",
+    "operations"
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "refresh": "30s",
   "templating": {
     "list": [
       {
         "name": "pipeline_id",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
         "query": "label_values(mqconnector_messages_processed_total, pipeline_id)",
         "multi": true,
         "includeAll": true,
-        "current": { "selected": false, "text": "All", "value": "$__all" }
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        }
       }
     ]
   },
@@ -24,38 +37,74 @@
     {
       "type": "stat",
       "title": "Active pipelines",
-      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
       "targets": [
         {
           "expr": "count(count by (pipeline_id) (mqconnector_messages_processed_total))",
           "refId": "A"
         }
       ],
-      "options": { "colorMode": "value", "graphMode": "area" }
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      }
     },
     {
       "type": "stat",
       "title": "Uptime",
-      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
-      "targets": [{ "expr": "mqconnector_uptime_seconds", "refId": "A" }],
-      "fieldConfig": { "defaults": { "unit": "s" } }
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "expr": "mqconnector_uptime_seconds",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
     },
     {
       "type": "stat",
       "title": "Msg / sec (5m rate)",
-      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
       "targets": [
         {
           "expr": "sum(rate(mqconnector_messages_processed_total[5m]))",
           "refId": "A"
         }
       ],
-      "fieldConfig": { "defaults": { "decimals": 1 } }
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1
+        }
+      }
     },
     {
       "type": "stat",
       "title": "Fail rate (5m)",
-      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
       "targets": [
         {
           "expr": "1 - avg(mqconnector:availability:ratio5m)",
@@ -68,9 +117,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 0.001 },
-              { "color": "red", "value": 0.01 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.001
+              },
+              {
+                "color": "red",
+                "value": 0.01
+              }
             ]
           }
         }
@@ -79,7 +137,12 @@
     {
       "type": "timeseries",
       "title": "Throughput per pipeline (msg/s)",
-      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
       "targets": [
         {
           "expr": "sum by (pipeline_id) (rate(mqconnector_messages_processed_total{pipeline_id=~\"$pipeline_id\"}[1m]))",
@@ -91,7 +154,12 @@
     {
       "type": "timeseries",
       "title": "Failures per pipeline (msg/s)",
-      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
       "targets": [
         {
           "expr": "sum by (pipeline_id) (rate(mqconnector_messages_failed_total{pipeline_id=~\"$pipeline_id\"}[1m]))",
@@ -100,13 +168,25 @@
         }
       ],
       "fieldConfig": {
-        "defaults": { "color": { "mode": "thresholds" }, "custom": { "fillOpacity": 20 } }
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 20
+          }
+        }
       }
     },
     {
       "type": "timeseries",
       "title": "Avg latency (ms)",
-      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
       "targets": [
         {
           "expr": "mqconnector_avg_latency_ms{pipeline_id=~\"$pipeline_id\"}",
@@ -120,9 +200,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 500 },
-              { "color": "red", "value": 2000 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 500
+              },
+              {
+                "color": "red",
+                "value": 2000
+              }
             ]
           }
         }
@@ -131,7 +220,12 @@
     {
       "type": "timeseries",
       "title": "Bytes processed (per second)",
-      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
       "targets": [
         {
           "expr": "sum by (pipeline_id) (rate(mqconnector_bytes_processed_total{pipeline_id=~\"$pipeline_id\"}[1m]))",
@@ -139,12 +233,21 @@
           "refId": "A"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "Bps" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        }
+      }
     },
     {
       "type": "gauge",
       "title": "Availability SLO — 1h",
-      "gridPos": { "x": 0, "y": 20, "w": 8, "h": 6 },
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 8,
+        "h": 6
+      },
       "targets": [
         {
           "expr": "avg(mqconnector:availability:ratio1h)",
@@ -159,9 +262,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 0.999 },
-              { "color": "green", "value": 0.9995 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.999
+              },
+              {
+                "color": "green",
+                "value": 0.9995
+              }
             ]
           }
         }
@@ -170,7 +282,12 @@
     {
       "type": "gauge",
       "title": "Availability SLO — 6h",
-      "gridPos": { "x": 8, "y": 20, "w": 8, "h": 6 },
+      "gridPos": {
+        "x": 8,
+        "y": 20,
+        "w": 8,
+        "h": 6
+      },
       "targets": [
         {
           "expr": "avg(mqconnector:availability:ratio6h)",
@@ -185,9 +302,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 0.999 },
-              { "color": "green", "value": 0.9995 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.999
+              },
+              {
+                "color": "green",
+                "value": 0.9995
+              }
             ]
           }
         }
@@ -196,7 +322,12 @@
     {
       "type": "stat",
       "title": "Error budget burn (1h vs weekly)",
-      "gridPos": { "x": 16, "y": 20, "w": 8, "h": 6 },
+      "gridPos": {
+        "x": 16,
+        "y": 20,
+        "w": 8,
+        "h": 6
+      },
       "targets": [
         {
           "expr": "(1 - avg(mqconnector:availability:ratio1h)) / (1 - 0.999)",
@@ -210,12 +341,141 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 6 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 6
+              }
             ]
           }
         }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 latency (ms)",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "mqconnector:latency_ms:p95{pipeline_id=~\"$pipeline_id\"}",
+          "legendFormat": "{{pipeline_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 3000
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "p99 latency (ms)",
+      "gridPos": {
+        "x": 12,
+        "y": 26,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "mqconnector:latency_ms:p99{pipeline_id=~\"$pipeline_id\"}",
+          "legendFormat": "{{pipeline_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2000
+              },
+              {
+                "color": "red",
+                "value": 5000
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Pipeline status (1 = up, 0 = error/stopped)",
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 24,
+        "h": 5
+      },
+      "targets": [
+        {
+          "expr": "mqconnector_pipeline_up{pipeline_id=~\"$pipeline_id\"}",
+          "legendFormat": "{{pipeline_id}} ({{status}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name"
       }
     }
   ]

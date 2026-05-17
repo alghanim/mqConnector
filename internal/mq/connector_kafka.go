@@ -213,11 +213,20 @@ func (c *KafkaConnector) ReceiveMessage(ctx context.Context) ([]byte, error) {
 	}
 }
 
-// Commit marks the most-recent delivery's offset on the consumer group.
-// sarama batches the actual broker-side commit; the next Consume loop
-// (or session close) flushes it. For our restart-resilience guarantee
-// the important property is "the offset will be persisted before the
-// next claim of this partition," which sarama upholds.
+// Commit marks the most-recent delivery's offset AND synchronously
+// flushes the commit to the broker. The earlier "MarkMessage only"
+// implementation lost data on graceful shutdown because auto-commit
+// is disabled — the marked offset never reached the broker before
+// the session closed, so the next session re-claimed messages that
+// the executor had already considered "handled."
+//
+// Synchronous Commit costs one offset-commit round-trip per processed
+// message. That matches the semantics RabbitMQ Ack and IBM MQ MQCMIT
+// already provide and is the correct trade-off for the at-least-once
+// guarantee the rest of the bridge assumes. Throughput-over-
+// durability deployments can tune this later by batching commits in
+// the executor (e.g. every N messages) — but the floor for "the
+// broker stops redelivering this" must remain a real commit.
 func (c *KafkaConnector) Commit(_ context.Context) error {
 	c.mu.Lock()
 	p := c.pending
@@ -227,6 +236,7 @@ func (c *KafkaConnector) Commit(_ context.Context) error {
 		return nil
 	}
 	p.sess.MarkMessage(p.msg, "")
+	p.sess.Commit()
 	return nil
 }
 
