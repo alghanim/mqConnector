@@ -107,6 +107,79 @@ func TestRetention_DisabledIsNoOp(t *testing.T) {
 	}
 }
 
+// TestRetention_SkipsWhenNotLeader — in multi-replica deploys only
+// the leader sweeps. The SetLeaderCheck gate must be honoured BOTH
+// for the startup sweep AND the per-tick sweep, otherwise two
+// replicas compete on DELETE statements and can over-prune past the
+// configured limit.
+func TestRetention_SkipsWhenNotLeader(t *testing.T) {
+	store := newStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Seed plenty of rows so a sweep would clearly do something.
+	for i := 0; i < 20; i++ {
+		_ = store.DLQ.Insert(ctx, storage.DefaultTenantID, &storage.DLQEntry{
+			OriginalMsg: []byte("x"), ErrorReason: "test",
+		})
+	}
+
+	// Configure retention that WOULD prune to 5 rows if it ran.
+	r := NewRetention(store.DLQ, 0, 5, 50*time.Millisecond, nil)
+	r.SetLeaderCheck(func() bool { return false })
+
+	done := make(chan struct{})
+	go func() {
+		r.Run(ctx)
+		close(done)
+	}()
+	// Let several ticks pass — none should run.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+
+	// Use a fresh context for the assertion; the run context is
+	// cancelled which would make any List return immediately with
+	// zero rows.
+	_, total, _ := store.DLQ.List(context.Background(), storage.DefaultTenantID, 1, 50)
+	if total != 20 {
+		t.Errorf("non-leader ran the sweep: got %d rows, want 20", total)
+	}
+}
+
+// TestRetention_RunsWhenLeader — sanity check that the gate doesn't
+// block the leader.
+func TestRetention_RunsWhenLeader(t *testing.T) {
+	store := newStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for i := 0; i < 20; i++ {
+		_ = store.DLQ.Insert(ctx, storage.DefaultTenantID, &storage.DLQEntry{
+			OriginalMsg: []byte("x"), ErrorReason: "test",
+		})
+		time.Sleep(2 * time.Millisecond) // ensure distinct created_at
+	}
+
+	r := NewRetention(store.DLQ, 0, 5, time.Hour, nil)
+	r.SetLeaderCheck(func() bool { return true })
+
+	done := make(chan struct{})
+	go func() {
+		r.Run(ctx)
+		close(done)
+	}()
+	// The startup sweep fires immediately; give it a moment to land.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+
+	_, total, _ := store.DLQ.List(context.Background(), storage.DefaultTenantID, 1, 50)
+	if total != 5 {
+		t.Errorf("leader did not prune: got %d rows, want 5", total)
+	}
+}
+
 func TestRetention_RunRespectsCancel(t *testing.T) {
 	store := newStore(t)
 	ctx, cancel := context.WithCancel(context.Background())

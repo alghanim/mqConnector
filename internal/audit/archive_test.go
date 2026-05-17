@@ -156,6 +156,39 @@ func TestArchive_RunRespectsCancel(t *testing.T) {
 	}
 }
 
+// TestArchive_SkipsWhenNotLeader — leader-gating mirrors the DLQ
+// retention behaviour. Two replicas writing to the same archive_dir
+// would race on file rotation and corrupt the day's JSONL; the gate
+// is the guard.
+func TestArchive_SkipsWhenNotLeader(t *testing.T) {
+	s := openStore(t)
+	dir := t.TempDir()
+
+	// Seed archivable rows so a sweep would clearly do something.
+	old := time.Now().Add(-2 * time.Hour).UTC()
+	seedAudit(t, s, 5, func(i int) time.Time { return old.Add(time.Duration(i) * time.Second) })
+
+	arc := New(s.Audit, dir, time.Hour, 50*time.Millisecond, nil)
+	arc.SetLeaderCheck(func() bool { return false })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		arc.Run(ctx)
+		close(done)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+
+	// No archive file should exist, and rows must still be in the
+	// live table (no DELETE happened).
+	if files, _ := filepath.Glob(filepath.Join(dir, "audit-*.jsonl")); len(files) > 0 {
+		t.Errorf("non-leader wrote archive files: %v", files)
+	}
+}
+
 func TestArchive_DisabledWhenDirEmpty(t *testing.T) {
 	s := openStore(t)
 	arc := New(s.Audit, "", time.Hour, time.Millisecond, nil)
