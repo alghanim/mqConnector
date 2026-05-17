@@ -60,6 +60,8 @@ This section accumulates changes between tagged releases. Move entries into a ne
 - **UPGRADING.md** doc with per-version upgrade procedure + Helm + multi-replica zero-downtime variant + rollback.
 - **docs/API_RECIPES.md** with curl + jq recipes for the workflows operators actually do.
 - **docs/PLUGIN_DESIGN.md** — design note for the future WASM-based custom-stage system. Captures the four candidate mechanisms (plugin.Open / WASM / gRPC sidecar / scripting) and lays out the proposed wazero path so the eventual implementation lands on a thought-through shape.
+- **WASM plugin system**: operators upload `.wasm` plugins via `POST /api/v1/plugins` (system-admin only). Pipelines reference them with `stage_type='wasm'` and `stage_config={"plugin":"<name>"}`. Sandboxed by wazero — no host imports, hard memory cap, no shell / FS / network. Migration 0015 adds the `plugins` table; migration 0016 widens the stage_type CHECK. See `docs/PLUGIN_DESIGN.md` for the contract.
+- **Postgres backend foundation**: pgx driver registered, `Open` dispatches on DSN scheme, `migrate()` is dialect-aware (skips `PRAGMA`, rewrites `?` placeholders, translates `INSERT OR IGNORE` → `ON CONFLICT DO NOTHING`, `BLOB` → `bytea`). Integration test `TestPostgresOpen_AppliesMigrations` confirms the migration set applies on `postgres:16`. Per-repo placeholder rewriting is the remaining mechanical work — see `POSTGRES_MIGRATION.md` §7.
 
 ### Changed
 

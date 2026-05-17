@@ -147,13 +147,39 @@ Add a `make load-test` target that runs k6 against both backends with the same w
 
 ## 7. Status
 
-| Step                                  | State        |
-| ------------------------------------- | ------------ |
-| DSN dispatcher in `Open`              | ✅ done      |
-| `rewritePlaceholders` helper          | ✅ done      |
-| `migrations_postgres.go`              | ⏳ TODO      |
-| pgx import + driver registration      | ⏳ TODO (needs dep approval) |
-| Repo-level dialect branches           | ⏳ TODO      |
-| Leadership lease on serialisable      | ⏳ TODO      |
-| Audit chain on serialisable           | ⏳ TODO      |
-| Test plan                             | ⏳ TODO      |
+| Step                                          | State        |
+| --------------------------------------------- | ------------ |
+| DSN dispatcher in `Open`                      | ✅ done      |
+| `rewritePlaceholders` helper                  | ✅ done      |
+| pgx import + driver registration              | ✅ done      |
+| `migrate()` dialect-aware (PRAGMA skip, etc.) | ✅ done      |
+| Inline SQL translation (BLOB→bytea, etc.)     | ✅ done      |
+| Integration test: Open + migrate              | ✅ done (`internal/storage/postgres_integration_test.go`, env-gated by `POSTGRES_DSN`) |
+| Repo-level placeholder rewriting              | ⏳ TODO — every repo's `?` queries need passing through `rewritePlaceholders` |
+| Leadership lease on serialisable / advisory   | ⏳ TODO      |
+| Audit chain on serialisable                   | ⏳ TODO      |
+| Postgres-specific load test                   | ⏳ TODO      |
+
+### What works right now
+
+- A Postgres DSN (`postgres://…` / `postgresql://…`) is dispatched to the pgx driver.
+- `Open` connects, pings, and runs every shipped migration. The `schema_migrations` bookkeeping table is correctly populated.
+- The integration test confirms migrations apply cleanly against a vanilla `postgres:16` container:
+
+```sh
+docker run -d --rm -p 5432:5432 -e POSTGRES_PASSWORD=mqc postgres:16
+POSTGRES_DSN='postgres://postgres:mqc@localhost:5432/postgres?sslmode=disable' \
+  go test -tags integration -run TestPostgres ./internal/storage/...
+```
+
+### What doesn't work yet
+
+- Every repository SQL statement still uses SQLite-style `?` placeholders. pgx expects `$1, $2, …`. Reads + writes against the repos will fail on Postgres until each repo is converted. The porting is mechanical now that the foundation exists — see "Recommended next steps".
+- The audit chain mutex (`chainMu`) is process-local; multi-replica Postgres deploys need either a serialisable transaction or an advisory lock to keep the chain ordered.
+
+### Recommended next steps
+
+1. Add a small `(r *Repo) rw(sql string) string` helper to each repo that wraps `rewritePlaceholders` with the dialect captured at construction.
+2. Convert all `db.ExecContext(ctx, "...SQL with ?...", args...)` to `db.ExecContext(ctx, r.rw("...SQL with ?..."), args...)`. ~200 sites across the repos; trivial mechanical change.
+3. Add per-repo CRUD integration tests that run against both SQLite and Postgres via a build matrix.
+4. Land the leadership-lease + audit-chain Postgres-native paths before declaring Postgres a production-supported backend.

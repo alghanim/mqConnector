@@ -15,7 +15,8 @@ import (
 	"os"
 	"strings"
 
-	_ "modernc.org/sqlite" // pure-Go SQLite driver
+	_ "github.com/jackc/pgx/v5/stdlib" // Postgres driver speaking database/sql
+	_ "modernc.org/sqlite"             // SQLite driver (pure-Go)
 )
 
 // Dialect names the underlying SQL flavour. Repository methods that use
@@ -79,17 +80,17 @@ func dialectFromDSN(dsn string) Dialect {
 //     the modernc/sqlite pure-Go driver.
 func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 	dialect := dialectFromDSN(dsn)
+	var driverName string
 	switch dialect {
 	case DialectPostgres:
-		return nil, fmt.Errorf(
-			"storage: postgres DSN detected but the postgres backend is not yet wired — see POSTGRES_MIGRATION.md")
+		driverName = "pgx"
 	case DialectSQLite:
-		// fall through
+		driverName = "sqlite"
 	default:
 		return nil, fmt.Errorf("storage: unsupported dialect for DSN")
 	}
 
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open(driverName, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sql.Open: %w", err)
 	}
@@ -103,7 +104,7 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	if err := migrate(db); err != nil {
+	if err := migrate(db, dialect); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
