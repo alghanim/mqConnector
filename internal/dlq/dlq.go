@@ -141,6 +141,10 @@ func (s *Service) Retry(ctx context.Context, tenantID, id string) error {
 	if err != nil {
 		return err
 	}
+	// Service-wide cap check first — fast-fails the obvious case
+	// without a pipeline lookup. The per-pipeline cap (which can be
+	// higher than the service default) is enforced after the pipeline
+	// is loaded below.
 	if entry.RetryCount >= s.maxRetries {
 		return ErrMaxRetries
 	}
@@ -153,6 +157,28 @@ func (s *Service) Retry(ctx context.Context, tenantID, id string) error {
 	pipe, err := s.store.Pipelines.Get(ctx, tenantID, entry.PipelineID)
 	if err != nil {
 		return fmt.Errorf("dlq retry: pipeline lookup: %w", err)
+	}
+
+	// Per-pipeline retry_max overrides the service default upward only
+	// (a pipeline's policy can extend the cap, not loosen it below the
+	// service-wide minimum). The service-wide check above already
+	// short-circuited any entry with RetryCount >= s.maxRetries, so
+	// here we only need to widen the cap when pipe.RetryMax allows it.
+	limit := s.maxRetries
+	if pipe.RetryMax > limit {
+		limit = pipe.RetryMax
+	}
+	if entry.RetryCount >= limit {
+		return ErrMaxRetries
+	}
+
+	// Count the attempt up-front so failures during pool.Get / SendMessage
+	// still consume one of the retry-budget slots. The reaper otherwise
+	// loops forever against a permanently-broken destination (caught
+	// during the live deploy test). Errors on increment are non-fatal —
+	// log and keep trying the send.
+	if err := s.store.DLQ.IncrementRetry(ctx, tenantID, id); err != nil {
+		s.logger.Warn("dlq increment failed", "id", id, "err", err)
 	}
 	dest, err := s.store.Connections.Get(ctx, tenantID, pipe.DestinationID)
 	if err != nil {
@@ -168,11 +194,6 @@ func (s *Service) Retry(ctx context.Context, tenantID, id string) error {
 
 	if err := conn.SendMessage(ctx, entry.OriginalMsg); err != nil {
 		return fmt.Errorf("dlq retry: send: %w", err)
-	}
-
-	if err := s.store.DLQ.IncrementRetry(ctx, tenantID, id); err != nil {
-		s.logger.Warn("dlq increment after successful retry failed",
-			"id", id, "err", err)
 	}
 	s.logger.Info("dlq message retried",
 		"tenant_id", tenantID,

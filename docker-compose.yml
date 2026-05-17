@@ -183,6 +183,12 @@ services:
       # Logging
       LOGGING_LEVEL: ${MQC_LOG_LEVEL:-info}
       LOGGING_FORMAT: ${MQC_LOG_FORMAT:-json}
+      # OTLP/HTTP tracing — exports every Span.End() into Jaeger. Empty
+      # OTLP_ENDPOINT disables export (tracing stays log-only).
+      TRACING_OTLP_ENDPOINT: ${MQC_OTLP_ENDPOINT:-jaeger:4318}
+      TRACING_INSECURE: "true"
+      TRACING_SERVICE_NAME: mqconnector
+      TRACING_SAMPLE_RATIO: "1.0"
       TZ: ${TZ:-UTC}
     volumes:
       - mqc-data:/var/lib/mqconnector
@@ -251,3 +257,47 @@ services:
       timeout: 10s
       retries: 5
       start_period: 40s
+
+  # ---------------------------------------------------------------------------
+  # Jaeger all-in-one — OTLP/HTTP collector + tracing UI. Used by the
+  # tracing.otlp_endpoint=jaeger:4318 wiring to verify end-to-end span
+  # export. UI on http://localhost:16686/.
+  # ---------------------------------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: mqc-jaeger
+    restart: unless-stopped
+    networks: [mqc]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # UI
+      - "4318:4318"     # OTLP/HTTP
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:14269/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Confluent-compatible schema registry. The OSS apicurio image speaks
+  # the same /subjects/* REST surface mqConnector's internal/schemaregistry
+  # client expects. Used to verify the schema-registry integration.
+  # ---------------------------------------------------------------------------
+  schemaregistry:
+    image: apicurio/apicurio-registry:3.0.6
+    container_name: mqc-schemaregistry
+    restart: unless-stopped
+    networks: [mqc]
+    environment:
+      APICURIO_STORAGE_KIND: sql
+      APICURIO_STORAGE_SQL_KIND: h2
+    ports:
+      - "8181:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

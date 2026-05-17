@@ -157,6 +157,9 @@ func fetchExport(c *http.Client, base, token, tenantSlug string) (*gitopsBundle,
 	}
 	req, _ := http.NewRequest("GET", u.String(), nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	// /api/v1/config/export negotiates on Accept — default is YAML.
+	// Ask for JSON so the existing json.Decoder below works.
+	req.Header.Set("Accept", "application/json")
 	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err

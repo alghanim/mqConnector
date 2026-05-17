@@ -188,9 +188,18 @@ func (m *Manager) replayKafka(
 	}
 	agg := make(chan item, len(pcs)*16)
 	doneN := 0
+	// Idle timeout per partition. Kafka's Messages() channel never
+	// closes on its own — once we've drained the requested window we
+	// need a different signal to exit, otherwise the replay sits
+	// waiting for new traffic that may not come for hours. 2 seconds
+	// of broker silence is plenty for a replay over committed
+	// history.
+	const idleTimeout = 2 * time.Second
 	for _, pc := range pcs {
 		pc := pc
 		go func() {
+			timer := time.NewTimer(idleTimeout)
+			defer timer.Stop()
 			for {
 				select {
 				case <-ctx.Done():
@@ -206,12 +215,26 @@ func (m *Manager) replayKafka(
 						return
 					}
 					agg <- item{msg: msg}
+					// Reset the idle timer; a fresh message means
+					// there might be more behind it.
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+					timer.Reset(idleTimeout)
 				case err, ok := <-pc.Errors():
 					if !ok {
 						agg <- item{}
 						return
 					}
 					agg <- item{err: err.Err}
+				case <-timer.C:
+					// No messages for idleTimeout — assume the window
+					// is drained and we're done with this partition.
+					agg <- item{}
+					return
 				}
 			}
 		}()

@@ -86,17 +86,17 @@ func EnableOTLP(ctx context.Context, cfg OTLPConfig) (shutdown func(context.Cont
 	if ver == "" {
 		ver = "dev"
 	}
-	res, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName(svc),
-			semconv.ServiceVersion(ver),
-		),
+	// Build a resource with just the attributes we care about. Skipping
+	// resource.Default() avoids the schema-URL collision: the SDK's
+	// default uses whatever semconv version the SDK pins (e.g. 1.40
+	// today), and Merge refuses to combine resources with differing
+	// schema URLs. Our service.name/version are sufficient on the wire;
+	// collectors fill in telemetry.sdk.* if they care.
+	res := resource.NewWithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceName(svc),
+		semconv.ServiceVersion(ver),
 	)
-	if err != nil {
-		return nil, fmt.Errorf("otlp resource: %w", err)
-	}
 
 	ratio := cfg.SampleRatio
 	if ratio == 0 {
