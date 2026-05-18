@@ -24,6 +24,12 @@ No surface goes from Announced → Removed in less than two minor releases, so a
 
 This section accumulates changes between tagged releases. Move entries into a new version section on release.
 
+---
+
+## [1.1.0] — 2026-05-18
+
+Production-readiness release. Closes every item from the §1-§12 audit + every Known Limitation that was in `SECURITY.md` v1.0.0. The bridge gains a WASM plugin system, Postgres foundation (driver dispatch + dialect-aware migrations + repo-level placeholder rewriting + serialisable audit chain), distroless runtime image, cosign-signed release pipeline, and a stack of compliance controls (CSRF, session inactivity timeout, account lockout, GDPR cascade-purge).
+
 ### Added
 
 - **Disaster recovery**: `mqconnector backup --to=path` CLI subcommand, scheduled in-process backup worker (`storage.backup.dir`), and `GET /api/v1/admin/backup` system-admin HTTP endpoint. All three use SQLite's online `VACUUM INTO`, verify integrity on the produced snapshot, and rotate older files. See `OPERATIONS.md`.

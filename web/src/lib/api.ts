@@ -144,6 +144,9 @@ export interface Connection {
   qos?: number;
   // Kafka consumer-group override. Empty = auto-derive from brokers+topic.
   group_id?: string;
+  // Kafka initial offset for a fresh consumer group. Empty = "newest"
+  // (upgrade-safe default); "oldest" replays history.
+  initial_offset?: string;
   // Broker TLS (Phase 17)
   tls_ca_file?: string;
   tls_cert_file?: string;

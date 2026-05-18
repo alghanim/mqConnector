@@ -256,6 +256,15 @@
           label={t($locale, 'connections.groupId')}
           placeholder={t($locale, 'connections.groupIdPlaceholder')}
         />
+        <Select
+          value={editing.initial_offset ?? ''}
+          on:change={(e) => (editing!.initial_offset = (e.target as HTMLSelectElement).value)}
+          label={t($locale, 'connections.initialOffset')}
+          options={[
+            { value: '', label: t($locale, 'connections.initialOffsetNewest') },
+            { value: 'oldest', label: t($locale, 'connections.initialOffsetOldest') }
+          ]}
+        />
       {:else if editing.type === 'mqtt'}
         <!-- MQTT: URL scheme picks TLS (mqtt:// vs ssl://). Topic
              can use + and # wildcards on subscribe. ClientID must
