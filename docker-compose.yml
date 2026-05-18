@@ -151,7 +151,10 @@ services:
       additional_contexts:
         simpleauth-sdk: ${SIMPLEAUTH_SDK_PATH:-../SimpleAuth/sdk/go}
       args:
-        VERSION: ${MQC_VERSION:-1.0.0}
+        # Override via MQC_VERSION in .env for CI / release builds.
+        # The fallback tracks the VERSION file at the repo root —
+        # bump both together when cutting a release.
+        VERSION: ${MQC_VERSION:-1.1.0}
     container_name: mqc-app
     restart: unless-stopped
     networks: [mqc]

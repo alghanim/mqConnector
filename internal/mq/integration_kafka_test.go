@@ -43,6 +43,11 @@ func TestIntegration_Kafka_PublishConsume_RoundTrip(t *testing.T) {
 		Brokers: strings.Split(brokers, ","),
 		Topic:   topic,
 		GroupID: "mqctest-" + uuid.NewString()[:8],
+		// Tests publish messages and expect to receive them in the
+		// same run, so the fresh consumer group must attach at
+		// OffsetOldest. Production deployments leave this empty
+		// for the upgrade-safe OffsetNewest default.
+		InitialOffset: "oldest",
 	}
 	conn, err := New(cfg)
 	if err != nil {
