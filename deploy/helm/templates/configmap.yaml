@@ -6,6 +6,7 @@ metadata:
 data:
   config.yaml: |
     server:
+      mode: {{ .Values.config.server.mode | default "prod" | quote }}
       listen: {{ .Values.config.server.listen | quote }}
       read_timeout: {{ .Values.config.server.readTimeout }}
       write_timeout: {{ .Values.config.server.writeTimeout }}

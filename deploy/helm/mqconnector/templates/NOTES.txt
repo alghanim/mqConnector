@@ -21,16 +21,48 @@ Port-forward to reach the admin UI:
   Then open: https://localhost:8443/
 {{- end }}
 
-Health probe:
+Health probe (distroless image has no shell or wget; use the binary's
+own healthcheck subcommand):
   kubectl --namespace {{ .Release.Namespace }} exec \
     deploy/{{ include "mqconnector.fullname" . }} -- \
-    wget -qO- --no-check-certificate https://localhost:8443/api/health
+    /usr/local/bin/mqconnector healthcheck
+
+╔══════════════════════════════════════════════════════════════════════╗
+║ PRODUCTION CHECKLIST                                                 ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║  [ ] MQC_MASTER_KEY (or MQC_MASTER_KEYS) is set in the Secret.       ║
+║      Prod-mode startup refuses without one — broker passwords are    ║
+║      encrypted at rest with AES-256-GCM under this key. Generate:    ║
+║          openssl rand -hex 32                                        ║
+║                                                                      ║
+║  [ ] config.auth.idleTimeout is set to 15-30m for SOC2 / ISO 27001   ║
+║      auto-logout compliance. The chart default is 0 (legacy).        ║
+║                                                                      ║
+║  [ ] If replicaCount > 1, config.leadership.enabled = true so only   ║
+║      one replica drains the source queue. The chart fails install    ║
+║      if you skip this, so you'll see it before this NOTES prints.    ║
+║                                                                      ║
+║  [ ] Audit archival: config.audit.archiveDir (and optionally         ║
+║      .audit.s3) for long-term retention beyond the live DB.          ║
+║                                                                      ║
+║  [ ] Scheduled backups: config.storage.backup.dir on a separate      ║
+║      PVC, or use the GET /api/v1/admin/backup endpoint from cron.    ║
+║                                                                      ║
+║  [ ] Prometheus alert rules: apply                                   ║
+║      deploy/prometheus/mqconnector-slos.yaml (23 rules across        ║
+║      availability, latency, DLQ, leadership, encryption, lag).       ║
+║                                                                      ║
+║  [ ] Grafana dashboard: import                                       ║
+║      deploy/grafana/mqconnector-overview.dashboard.json.             ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
 
 {{ if not .Values.secrets.create }}
 NOTE: secrets.create=false. The Deployment expects a Secret named
   "{{ include "mqconnector.secretName" . }}"
 in namespace "{{ .Release.Namespace }}" with these keys:
   - SIMPLEAUTH_ADMIN_TOKEN
-  - MQC_ENCRYPTION_KEY_V1
+  - MQC_MASTER_KEY        (or MQC_MASTER_KEYS for the rotation form)
 Provision it via external-secrets-operator, sops, or kubectl create secret.
 {{- end }}

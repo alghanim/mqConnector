@@ -1,5 +1,5 @@
 {
-  "title": "mqConnector — Overview",
+  "title": "mqConnector \u2014 Overview",
   "uid": "mqc-overview",
   "schemaVersion": 38,
   "version": 1,
@@ -241,7 +241,7 @@
     },
     {
       "type": "gauge",
-      "title": "Availability SLO — 1h",
+      "title": "Availability SLO \u2014 1h",
       "gridPos": {
         "x": 0,
         "y": 20,
@@ -281,7 +281,7 @@
     },
     {
       "type": "gauge",
-      "title": "Availability SLO — 6h",
+      "title": "Availability SLO \u2014 6h",
       "gridPos": {
         "x": 8,
         "y": 20,
@@ -476,6 +476,198 @@
         "graphMode": "none",
         "colorMode": "background",
         "textMode": "value_and_name"
+      }
+    },
+    {
+      "type": "row",
+      "title": "Operational health (Phase 2)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "DLQ depth per pipeline",
+      "description": "mqconnector_dlq_depth \u2014 number of dead-lettered messages per pipeline. Alerts on sustained growth (mqConnectorDLQGrowing).",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "mqconnector_dlq_depth{pipeline_id=~\"$pipeline_id\"}",
+          "legendFormat": "{{pipeline_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "DLQ oldest age (seconds)",
+      "description": "mqconnector_dlq_oldest_age_seconds \u2014 age of the longest-resident DLQ row. >1h triggers mqConnectorDLQStuck.",
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "mqconnector_dlq_oldest_age_seconds{pipeline_id=~\"$pipeline_id\"}",
+          "legendFormat": "{{pipeline_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Source backlog (broker-side)",
+      "description": "mqconnector_source_depth \u2014 RabbitMQ queue depth or Kafka consumer-group lag, sampled every 30s by the depth-sampler. Series absent = source type doesn't expose depth (NATS Core, MQTT QoS 0).",
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "mqconnector_source_depth{pipeline_id=~\"$pipeline_id\"}",
+          "legendFormat": "{{pipeline_id}} ({{source}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Leader (HA only)",
+      "description": "mqconnector_leader \u2014 1 if this replica holds the leadership lease, 0 otherwise. In a single-process deploy the mode label is 'single' and this is always 1.",
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "expr": "mqconnector_leader",
+          "legendFormat": "{{self}} ({{mode}})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value_and_name"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Lease remaining (s)",
+      "description": "mqconnector_leader_lease_remaining_seconds \u2014 countdown to the next renewal deadline. Should hover near ttl/2; sustained <5s warns via mqConnectorLeaderLeaseExpiringFast.",
+      "gridPos": {
+        "x": 18,
+        "y": 48,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "expr": "mqconnector_leader_lease_remaining_seconds",
+          "legendFormat": "{{self}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Master key version",
+      "description": "mqconnector_master_key_version \u2014 current AES-GCM key version. 0 means encryption disabled (prod refuses to start in this state); >1 indicates active rotation history.",
+      "gridPos": {
+        "x": 12,
+        "y": 52,
+        "w": 12,
+        "h": 4
+      },
+      "targets": [
+        {
+          "expr": "mqconnector_master_key_version",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "graphMode": "none",
+        "colorMode": "background",
+        "textMode": "value"
       }
     }
   ]

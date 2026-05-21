@@ -1,0 +1,18 @@
+# Grafana datasource provisioning — Prometheus, auto-wired on first
+# Grafana boot. The URL uses Docker's service-name DNS so the
+# Prometheus container is resolved without a hostname env var.
+#
+# `isDefault: true` makes new dashboards default to this datasource,
+# which is what the bundled mqconnector-overview dashboard expects.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "15s"

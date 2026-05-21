@@ -1,0 +1,20 @@
+# Grafana dashboard provisioning — autoloads every JSON file under
+# the configured path into a folder called "mqConnector". Updating a
+# checked-in dashboard JSON and restarting Grafana re-imports it.
+#
+# allowUiUpdates: false means an operator can't edit-and-save the
+# checked-in dashboards via the web UI — they're treated as code.
+# To experiment in the UI, copy the dashboard and edit the duplicate.
+
+apiVersion: 1
+
+providers:
+  - name: mqConnector
+    orgId: 1
+    folder: mqConnector
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

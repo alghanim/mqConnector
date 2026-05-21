@@ -26,6 +26,52 @@ This section accumulates changes between tagged releases. Move entries into a ne
 
 ---
 
+## [1.2.0] — 2026-05-21
+
+Enterprise-hardening release. Closes every outstanding item from the May 2026 production-readiness audit, completes the Postgres production-supported backend, lands per-pipeline RBAC, and rounds out observability for the full operational surface (DLQ, leadership, encryption-at-rest, broker backlog). Breaking-for-operators: prod-mode startup now refuses without `MQC_MASTER_KEY` — set the env var or stay in dev mode.
+
+### Added
+
+- **Operational metrics** at `/api/metrics/prometheus`: `mqconnector_dlq_depth`, `mqconnector_dlq_oldest_age_seconds`, `mqconnector_source_depth` (RabbitMQ queue depth or Kafka consumer-group lag, sampled every 30 s by an in-process depth sampler), `mqconnector_leader{self,holder,mode}`, `mqconnector_leader_lease_remaining_seconds`, `mqconnector_master_key_version`. Seven new alerting rules in `deploy/prometheus/mqconnector-slos.yaml` covering DLQ growth, stuck DLQ rows, leader split-brain, lease-renewal lag, encryption disabled, and source-broker backlog.
+- **`mq.DepthReporter` interface**: optional capability on a `Connector`. RabbitMQ implements via passive `QueueDeclare`; Kafka implements via a held-open admin client that sums per-partition `(high water mark − committed offset)` across the topic. The in-memory test connector implements it via channel length.
+- **Outbound circuit breaker** (`internal/pipeline/breaker.go`): per-pipeline 3-state (Closed → Open → HalfOpen) gate on the destination broker. 5 consecutive failures opens with a 30 s cool-down; on Open the worker Nacks to source for redelivery instead of flooding the DLQ. Probe-on-recovery races safely across workers via a half-open token.
+- **Per-pipeline RBAC** (migration 0018 + `internal/storage/pipeline_grants.go`): per-(pipeline, user) role grants that ESCALATE the tenant role for a specific pipeline only — never demote. New `PipelineGrantsRepo` with `Set` / `Get` / `Delete` / `ListForPipeline` / `ListPipelinesForUser` / `EffectiveRole`. New endpoints `GET /api/v1/pipelines/{id}/grants`, `PUT /api/v1/pipelines/{id}/grants/{userSub}`, `DELETE /api/v1/pipelines/{id}/grants/{userSub}` (effective-admin gated). The list endpoint now carries `effective_role` per pipeline; update/delete/stage/transform/routing handlers gate on the effective role so a viewer-with-admin-grant can manage just their pipeline without tenant-wide privileges.
+- **`PipelineGrantsEditor` UI** at `/pipelines/[id]`: in-line role-change, revoke, add-grant form. Read-only view when the caller's effective role is below admin.
+- **`/account` page**: identity claims, tenant memberships with role badges, switch-tenant + sign-out actions. Closes the historical 404 from the ProfileMenu's account link.
+- **Phase 1 script-stage timeout**: every `script` stage now defaults to a 5 s wall-clock cap (`DefaultScriptTimeoutMs`). Override per-stage via `stage_config.timeout_ms`. The script runner polls `ctx.Done()` on every line so a deadline fires within at most one op-cycle.
+- **Phase 1 master-key hard requirement**: prod-mode startup refuses without `MQC_MASTER_KEY` or `MQC_MASTER_KEYS`. Dev mode still tolerates an unset key and emits a warning.
+- **`mqconnector kafka-offsets` subcommand**: operator-facing helper for the pre-1.1 → 1.1+ Kafka upgrade hazard. Derives the auto-group id, supports `--to=latest`/`--to=earliest`/`--dry-run`/`--print-group-id`. UPGRADING.md walks the seed-before-start flow.
+- **Postgres production support**:
+  - Migrations 0010 and 0016 ship Postgres-native bodies via `postgresMigrationOverrides` — `ALTER TABLE … DROP/ADD CONSTRAINT` instead of the SQLite recreate-and-rename idiom that Postgres rejects under FK references.
+  - Leadership lease gets a Postgres path: `leadership.NewWithDialect` wraps the upsert in `pg_try_advisory_xact_lock` for explicit cross-replica serialisation. SQLite path keeps the existing INSERT…ON CONFLICT semantics.
+  - Multi-replica failover regression test (`TestPostgresLeadership_AdvisoryLockSerialisesClaim`): three replicas, sampling proves ≤ 1 leader at every observation.
+- **Storage backend load test** (`cmd/loadtest` + `internal/storage/loadtest` + `scripts/load-test.sh`): runs the same Create / Get / Update / List / Delete mix against either backend, emits JSON with p50/p95/p99 + per-op breakdown, prints PASS / FAIL against a configurable p99 ceiling (default 1.2× the SQLite baseline per `POSTGRES_MIGRATION.md` §6).
+- **Kafka rebalance chaos test** (`TestIntegration_Kafka_RebalanceRedeliversInflight`): 2-partition topic, 2-consumer group, consumer A receives + crashes uncommitted, asserts every produced message is redelivered to consumer B post-rebalance.
+- **Helm install-time guards** (`deploy/helm/templates/_validate.tpl`): `helm install` / `helm upgrade` fails with a clear error when prod mode is configured without a master key, when `replicaCount > 1` without `leadership.enabled`, or when `auth.insecure_skip_verify` is true in prod. Prevents CrashLoopBackOff diagnostics at 3 am.
+- **Helm startup probe**: 60 s startupProbe gates the liveness probe so populated-DB first-boot migrations + audit-chain verification don't trip premature liveness failures.
+
+### Changed
+
+- **Container healthcheck**: docker-compose's `mqconnector` service swaps the broken `wget` probe (distroless ships no shell, no wget) for `["CMD", "/usr/local/bin/mqconnector", "healthcheck"]`. The "unhealthy" state from the previous compose stack is gone. Helm chart already used kubelet's httpGet probe — unaffected.
+- **Container drain budget**: docker-compose adds `stop_grace_period: 35s` to match the Helm chart's `terminationGracePeriodSeconds: 35`. Aligns Docker's SIGKILL deadline with the binary's 30 s `pipeline.Manager.StopAndWait` drain budget so in-flight messages aren't lost on `docker compose restart`.
+- **Membership adoption resilience** (`internal/storage/memberships.go`): SimpleAuth re-bootstraps that hand out a fresh `sub` claim for the same admin username no longer strand the operator's tenants. `adoptBootstrap` now also salvages stale-sub rows when they match the bootstrap-admin signature (owner of the default tenant), with collision-safe semantics that prevent two regular users with the same username from stealing each other's grants. Four new tests in `memberships_test.go` lock in the behaviour, including the security regression.
+- **Grafana dashboard**: 7 new panels for operational health — DLQ depth, DLQ oldest age, source backlog, leader state, lease remaining, master key version.
+
+### Security
+
+- Phase 1 prod-mode hard refusal to start without `MQC_MASTER_KEY` makes the at-rest encryption posture mandatory rather than recommended.
+- Per-pipeline RBAC grants are escalation-only by design and gated on the bootstrap-admin signature when adopting stale subs; documented in the `PipelineGrant` doc comment and `EffectiveRole` resolver. Includes a regression test that locks in the no-steal invariant.
+
+### Upgrade notes
+
+See `UPGRADING.md`. Key items:
+
+- Set `MQC_MASTER_KEY=$(openssl rand -hex 32)` in your environment / Helm secret store before upgrading a prod deployment. If you skip it the bridge refuses to start.
+- Existing scripted stages keep working — the new 5 s default timeout is generous for typical per-message transforms. Long-running scripts set `stage_config.timeout_ms` explicitly.
+- Per-pipeline grants are additive — no migration step is required for existing deployments to keep working. New endpoints are admin-gated.
+
+---
+
 ## [1.1.0] — 2026-05-18
 
 Production-readiness release. Closes every item from the §1-§12 audit + every Known Limitation that was in `SECURITY.md` v1.0.0. The bridge gains a WASM plugin system, Postgres foundation (driver dispatch + dialect-aware migrations + repo-level placeholder rewriting + serialisable audit chain), distroless runtime image, cosign-signed release pipeline, and a stack of compliance controls (CSRF, session inactivity timeout, account lockout, GDPR cascade-purge).

@@ -260,3 +260,118 @@ groups:
             More than 25% of messages on pipeline {{ $labels.pipeline_id }} are
             failing right now. DLQ growth is imminent; check destination broker
             and any recent config change.
+
+  # ── 6) DLQ growth (Phase 2 observability) ────────────────────────
+  # mqconnector_dlq_depth and mqconnector_dlq_oldest_age_seconds are
+  # rendered by the operational-metrics handler. Absence of the
+  # series for a pipeline = "no DLQ rows" (the renderer skips
+  # zero-count pipelines), so the alerts here naturally fire only
+  # when there's actual backlog.
+  - name: mqconnector.dlq.alerts
+    rules:
+      - alert: mqConnectorDLQGrowing
+        expr: mqconnector_dlq_depth > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: DLQ depth > 100"
+          description: |
+            Pipeline {{ $labels.pipeline_id }} has {{ $value }} rows in the DLQ
+            (held for 10m). A destination broker outage or a poison-message
+            loop is likely. Review /api/v1/dlq and the recent logs.
+
+      - alert: mqConnectorDLQStuck
+        # Oldest row in the DLQ has aged past 1 hour — beyond the
+        # reaper's exponential-backoff schedule for typical configs.
+        # Manual triage required.
+        expr: mqconnector_dlq_oldest_age_seconds > 3600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: stale DLQ rows"
+          description: |
+            DLQ on pipeline {{ $labels.pipeline_id }} has rows older than
+            1 hour ({{ $value | humanizeDuration }}). The retry reaper has
+            given up on them; a human needs to decide replay vs delete.
+
+  # ── 7) Leadership / HA ───────────────────────────────────────────
+  # mqconnector_leader carries a `mode` label: "single" for one-process
+  # deploys (always 1), "ha" when the lease is enabled. We alert only
+  # on the "ha" case — a single-process deploy is by definition the
+  # leader of itself.
+  - name: mqconnector.leadership.alerts
+    rules:
+      - alert: mqConnectorNoLeader
+        # In a multi-replica deploy, exactly one replica must hold the
+        # lease. Zero means lease lost and not yet recovered; > 1 is
+        # split-brain (advisory lock prevents this on Postgres; SQLite
+        # serialises writes so it's effectively impossible there too).
+        expr: sum(mqconnector_leader{mode="ha"}) != 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mqConnector leadership: {{ $value }} leaders (want 1)"
+          description: |
+            Expected exactly one leader for the HA replica set; observing
+            {{ $value }}. Zero means the lease was lost; check kubelet
+            evictions, DB connectivity, and clock skew. Greater than one
+            is split-brain — escalate immediately.
+
+      - alert: mqConnectorLeaderLeaseExpiringFast
+        # The leader renews at lease_ttl / 2. Remaining seconds dropping
+        # below ttl/4 means renewal is lagging — usually DB contention
+        # or a paused process.
+        expr: mqconnector_leader_lease_remaining_seconds{mode="ha"} < 5
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "mqConnector leader {{ $labels.self }}: lease nearly expired"
+          description: |
+            Leader {{ $labels.self }} on a 30s-TTL lease has only
+            {{ $value }}s remaining. Investigate DB latency, GC pause
+            durations, or noisy-neighbour effects on the host.
+
+  # ── 8) Encryption at rest ────────────────────────────────────────
+  - name: mqconnector.encryption.alerts
+    rules:
+      - alert: mqConnectorEncryptionDisabled
+        # Phase 1 hardening: prod-mode binaries refuse to start without
+        # a master key, so this alert firing means either (a) the bridge
+        # is running in dev mode in production (config drift), or (b)
+        # the key was rotated to nothing. Either way operator attention.
+        expr: mqconnector_master_key_version == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mqConnector connection encryption is disabled"
+          description: |
+            Master key version is 0 — broker passwords are stored in
+            plaintext at rest. In prod, set MQC_MASTER_KEY (or
+            MQC_MASTER_KEYS for rotation) and rotate via `mqconnector
+            rotate-secrets`. See OPERATIONS.md.
+
+  # ── 9) Source-side broker backlog (Phase 2 DepthReporter) ────────
+  # Populated for source brokers that implement mq.DepthReporter
+  # (RabbitMQ queue depth, Kafka consumer-group lag). Absence of the
+  # series means the source type doesn't expose depth (MQTT QoS 0,
+  # NATS Core) — that's fine, no alert fires.
+  - name: mqconnector.source_depth.alerts
+    rules:
+      - alert: mqConnectorSourceBacklogGrowing
+        expr: mqconnector_source_depth > 10000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: source backlog > 10k"
+          description: |
+            Source backlog on pipeline {{ $labels.pipeline_id }} is at
+            {{ $value }} messages and not draining over 10 minutes. The
+            destination is slower than the source — bump
+            pipelines.workers, raise max_msgs_per_minute, or scale the
+            destination broker.

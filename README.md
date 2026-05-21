@@ -133,12 +133,18 @@ SIMPLEAUTH_SDK_PATH=/abs/path/to/SimpleAuth/sdk/go
 
 # Configure
 cp config.example.yaml config.yaml
-# Edit config.yaml — at minimum, set auth.simpleauth.{base_url, admin_token}
+# Edit config.yaml — at minimum, set auth.simpleauth_url
+
+# Production-mode startup REQUIRES a master key for at-rest encryption
+# of broker passwords. Skip this step (or stay in dev mode) and the
+# bridge refuses to start in prod. Generate one once and inject from
+# your secret store / environment.
+export MQC_MASTER_KEY=$(openssl rand -hex 32)
 
 # Run
-./scripts/dev.sh           # dev mode (TLS optional, debug logs)
+./scripts/dev.sh           # dev mode (TLS optional, master key optional, debug logs)
 # or
-./dist/mqconnector         # production mode (TLS required)
+./dist/mqconnector         # prod mode (TLS + MQC_MASTER_KEY required)
 ```
 
 Default admin URL: https://localhost:8443/
@@ -256,19 +262,22 @@ A Helm chart lives at [`deploy/helm/mqconnector/`](deploy/helm/mqconnector/). Th
 ```yaml
 image:
   repository: ghcr.io/alghanim/mqconnector
-  tag: 1.0.0
+  tag: 1.2.0
 config:
-  mode: prod
-  simpleauth:
-    baseURL: https://simpleauth.svc.cluster.local/
+  server:
+    mode: prod
+  auth:
+    simpleauthUrl: https://simpleauth.svc.cluster.local/
 secrets:
-  simpleauthAdminToken: <stored in a k8s Secret>
-  encryptionKey: <base64 32 bytes>
+  # Required in prod mode — chart install fails fast without it
+  masterKey: <hex 32 bytes>            # e.g. `openssl rand -hex 32`
+  # Or reference an externally-managed Secret instead of inlining:
+  # existingSecret: mqconnector-secrets
 persistence:
   size: 5Gi
   storageClass: standard
 tls:
-  certificate: <ref to cert-manager issued cert>
+  existingSecret: <ref to cert-manager issued cert>
 ```
 
 Install:
@@ -276,7 +285,7 @@ Install:
 helm install mqconnector ./deploy/helm/mqconnector -f values.yaml
 ```
 
-The chart provisions: Deployment (1 replica by default — see [HA section](#high-availability)), PersistentVolumeClaim, Service, optional Ingress, a Secret for the SimpleAuth admin token, and a ConfigMap for `config.yaml`.
+The chart provisions: Deployment (1 replica by default — see [HA section](#high-availability)), PersistentVolumeClaim, Service, optional Ingress, a Secret for the SimpleAuth admin token + master key, and a ConfigMap for `config.yaml`. **Install-time guards** in [`templates/_validate.tpl`](deploy/helm/templates/_validate.tpl) fail the install with a clear error if prod mode is configured without a master key, or if `replicaCount > 1` without the leadership lease enabled.
 
 ### Deployment — air-gapped tarball
 
@@ -284,11 +293,13 @@ For environments with no Docker registry / no internet:
 
 ```sh
 ./scripts/build-dist.sh                 # builds dist/mqconnector-<ver>.tar.gz
-scp dist/mqconnector-1.0.0.tar.gz host:/tmp/
+scp dist/mqconnector-1.2.0.tar.gz host:/tmp/
 ssh host
-tar -xzf /tmp/mqconnector-1.0.0.tar.gz -C /opt/
+tar -xzf /tmp/mqconnector-1.2.0.tar.gz -C /opt/
 cp /opt/mqconnector/config.example.yaml /etc/mqconnector/config.yaml
 # edit /etc/mqconnector/config.yaml, then:
+# set MQC_MASTER_KEY in the systemd unit's EnvironmentFile before starting:
+echo "MQC_MASTER_KEY=$(openssl rand -hex 32)" > /etc/mqconnector/env
 systemctl enable --now mqconnector       # unit file ships in the tarball
 ```
 

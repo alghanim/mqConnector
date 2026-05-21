@@ -1,3 +1,6 @@
+{{- /* Install-time guards — see _validate.tpl. Side-effect only (calls
+       `fail` on misconfiguration); produces no output. */}}
+{{- include "mqconnector.validate" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -67,12 +70,25 @@ spec:
                   name: {{ include "mqconnector.secretName" . }}
                   key: AUTH_ADMIN_KEY
                   optional: true
+          # Startup probe runs FIRST and gates the other two — once it
+          # succeeds, the readiness + liveness probes take over. With
+          # failureThreshold=30 × periodSeconds=2 the pod gets up to 60 s
+          # to pass /api/health, which covers SQLite migration runs +
+          # audit-chain verification on first boot of a populated DB
+          # without prematurely failing liveness.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: https
+              scheme: HTTPS
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /api/health
               port: https
               scheme: HTTPS
-            initialDelaySeconds: 3
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 3
@@ -81,7 +97,6 @@ spec:
               path: /api/health
               port: https
               scheme: HTTPS
-            initialDelaySeconds: 15
             periodSeconds: 15
             timeoutSeconds: 3
             failureThreshold: 5

@@ -1,0 +1,44 @@
+# Prometheus config for the local docker-compose observability stack.
+#
+# Scrapes mqConnector's /api/metrics/prometheus endpoint via a Bearer
+# token minted by the prom-scrape-token bootstrap container at first
+# boot. The token sits in a shared volume mounted read-only into the
+# Prometheus container at /token/scrape-token.
+#
+# Production deployments should generate the token out of band and
+# inject it through a secret-management tool — this file is a
+# reference for the wiring shape.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # The audit's 23-rule alerting + recording set. promtool validates
+  # this on every compose rebuild via the prom-rules-lint sidecar.
+  - /etc/prometheus/rules/*.yaml
+
+scrape_configs:
+  - job_name: mqconnector
+    metrics_path: /api/metrics/prometheus
+    scheme: https
+    static_configs:
+      - targets:
+          - mqconnector:8443
+        labels:
+          # Surfaces in every alert + dashboard via the `job` label;
+          # set explicitly so the value is stable across re-runs.
+          service: mqconnector
+    tls_config:
+      # The compose stack uses a self-signed cert from the certs-init
+      # service. Operators in prod swap to a CA-issued cert and remove
+      # this line.
+      insecure_skip_verify: true
+    authorization:
+      type: Bearer
+      credentials_file: /token/scrape-token
+
+  # Prometheus scrapes itself so the rules engine has a heartbeat.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

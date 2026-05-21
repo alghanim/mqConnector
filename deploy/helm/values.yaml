@@ -55,6 +55,11 @@ persistence:
 # ───────────────────────────────────────────────────────────────────
 config:
   server:
+    # "prod" (default) or "dev". The chart fails the install with a
+    # clear error when mode=prod and no master key is configured —
+    # this prevents a CrashLoopBackOff that's painful to diagnose at
+    # 3 am. Flip to "dev" for local kind/minikube clusters.
+    mode: prod
     listen: "0.0.0.0:8443"
     readTimeout: 30s
     writeTimeout: 30s

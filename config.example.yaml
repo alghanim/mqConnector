@@ -4,6 +4,17 @@
 # fully-qualified config path uppercased with dots replaced by underscores. Example:
 #   server.tls.enabled  →  SERVER_TLS_ENABLED
 #   storage.dsn         →  STORAGE_DSN
+#
+# Production-mode requirements (server.mode = "prod", the default):
+#   - TLS is mandatory (server.tls.enabled = true with valid cert / key paths).
+#   - SimpleAuth URL is mandatory (auth.simpleauth_url).
+#   - auth.insecure_skip_verify must be false.
+#   - The MQC_MASTER_KEY (or MQC_MASTER_KEYS) env var MUST be set to a 32-byte
+#     hex/base64 key. The binary refuses to start in prod mode without one;
+#     broker passwords are encrypted at rest under this key. Generate once:
+#       openssl rand -hex 32
+#     and inject from your secret store (k8s Secret, systemd EnvironmentFile,
+#     Vault Agent, etc.). Multi-version rotation form: MQC_MASTER_KEYS="v1=...,v2=..."
 
 server:
   # Bind address. Default 0.0.0.0:8443 (TLS) or 0.0.0.0:8080 (dev).
@@ -63,6 +74,10 @@ auth:
   # idle browser tab auto-logs-out without server-side state.
   # Required by HIPAA / NIST 800-53 IA-11 / some PCI flows.
   # 0 disables; typical value 15-30 minutes.
+  #
+  # Production recommendation: 30m. Leaving this at 0s lets a forgotten
+  # browser tab stay authenticated for the full session_ttl (12 h above),
+  # which most enterprise SOC2/ISO 27001 controls won't accept.
   idle_timeout: "0s"
   # Session cookie name.
   cookie_name: "mqc_session"
@@ -91,9 +106,14 @@ pipeline:
     max_retries: 3
     retry_backoff: "30s"
 
-# Optional: scriptable transform engine settings.
+# Scriptable transform engine settings.
+#
+# NOTE: the actual per-stage timeout is configured on each `script` stage's
+# JSON config (`stage_config.timeout_ms`), with a built-in default of
+# 5 seconds (DefaultScriptTimeoutMs in internal/pipeline/stage.go). The
+# global knob here is reserved for future use; today it has no effect.
+# Leaving it in place so older configs don't error on parse.
 script:
-  # Per-message script execution timeout. Hard cap to prevent stuck pipelines.
   timeout: "1s"
 
 # Optional: active/standby coordination across replicas. When enabled,

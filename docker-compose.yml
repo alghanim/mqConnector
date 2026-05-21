@@ -30,6 +30,11 @@ volumes:
   simpleauth-data:
   rabbitmq-data:
   kafka-data:
+  prometheus-data:
+  grafana-data:
+  # Shared volume holding the Prometheus scrape-token bearer file.
+  # prom-scrape-token writes; prometheus reads.
+  scrape-token:
 
 services:
   # ---------------------------------------------------------------------------
@@ -154,7 +159,7 @@ services:
         # Override via MQC_VERSION in .env for CI / release builds.
         # The fallback tracks the VERSION file at the repo root —
         # bump both together when cutting a release.
-        VERSION: ${MQC_VERSION:-1.1.0}
+        VERSION: ${MQC_VERSION:-1.2.0}
     container_name: mqc-app
     restart: unless-stopped
     networks: [mqc]
@@ -198,12 +203,33 @@ services:
       - mqc-certs:/etc/mqconnector/tls:ro
     ports:
       - "${MQC_HOST_PORT:-8443}:8443"
+    # Distroless `nonroot` ships no shell and no wget, so the previous
+    # wget-based healthcheck always reported unhealthy even when the
+    # service was serving 200s. The binary exposes its own
+    # `healthcheck` subcommand that does the probe in-process — works
+    # from inside the image with zero extra dependencies.
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-check-certificate --spider -q https://localhost:8443/api/health || exit 1"]
+      test: ["CMD", "/usr/local/bin/mqconnector", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
+    # Phase 1 hardened graceful shutdown: pipeline.Manager.StopAndWait
+    # drains in-flight messages with a 30 s deadline. The compose
+    # default of 10 s would SIGKILL the binary mid-drain. 35 s gives
+    # the 30 s drain plus a small slack for SIGINT propagation.
+    stop_grace_period: 35s
+    # Resource limits — kept conservative for a single-tenant dev box.
+    # Production deployments should raise these via the override file
+    # or Helm chart's resources block. Limits prevent a runaway pipeline
+    # from starving the host; reservations let Docker schedule sanely.
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2"
+        reservations:
+          memory: 256M
 
   # ---------------------------------------------------------------------------
   # RabbitMQ — useful for local pipeline experiments.
@@ -303,4 +329,142 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # prom-scrape-token — one-shot bootstrap that mints a long-lived viewer
+  # API token on the default tenant and writes it to a shared volume so
+  # Prometheus can authenticate its scrape against /api/metrics/prometheus.
+  #
+  # Idempotency note: the script doesn't check for a pre-existing token by
+  # name (the API doesn't expose that), so every recreate of this service
+  # mints a fresh token. Old tokens accumulate harmlessly in the DB; clean
+  # them up periodically via the admin UI or `DELETE /api/v1/tokens/{id}`.
+  # ---------------------------------------------------------------------------
+  prom-scrape-token:
+    image: alpine:3.20
+    container_name: mqc-prom-scrape-token
+    depends_on:
+      mqconnector:
+        condition: service_healthy
+    networks: [mqc]
+    volumes:
+      - scrape-token:/token
+    environment:
+      USERNAME: ${SIMPLEAUTH_ADMIN_USER:-admin}
+      PASSWORD: ${SIMPLEAUTH_ADMIN_PASSWORD:-Changeme1!}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        apk add --no-cache curl jq >/dev/null 2>&1
+        echo "→ logging in to mqConnector as $$USERNAME"
+        # Login. The response sets the session cookie + a CSRF cookie;
+        # we capture both. /api/auth/login is unauthenticated; tightly
+        # rate-limited (10/min/IP) but a single retry never hits that.
+        curl -ksS -c /tmp/jar https://mqconnector:8443/api/auth/login \
+          -H "Content-Type: application/json" \
+          -d "{\"username\":\"$$USERNAME\",\"password\":\"$$PASSWORD\"}" \
+          -o /tmp/login.out -w "%{http_code}\n" > /tmp/login.code
+        CODE=$$(cat /tmp/login.code)
+        if [ "$$CODE" != "200" ]; then
+          echo "✗ login failed: HTTP $$CODE"; cat /tmp/login.out; exit 1
+        fi
+        # Extract the CSRF token from the cookie jar — the server's
+        # double-submit middleware requires it on every state-changing
+        # request.
+        CSRF=$$(grep mqc_csrf /tmp/jar | awk '{print $$7}')
+        # Mint a viewer-role token on the default tenant. Role viewer
+        # is sufficient — /api/metrics/prometheus only requires a valid
+        # session (any role).
+        echo "→ minting prometheus-scrape token"
+        curl -ksS -b /tmp/jar https://mqconnector:8443/api/v1/tokens \
+          -H "Content-Type: application/json" \
+          -H "X-CSRF-Token: $$CSRF" \
+          -d '{"name":"prometheus-scrape","role":"viewer"}' \
+          -o /tmp/tok.out -w "%{http_code}\n" > /tmp/tok.code
+        TCODE=$$(cat /tmp/tok.code)
+        if [ "$$TCODE" != "200" ] && [ "$$TCODE" != "201" ]; then
+          echo "✗ token mint failed: HTTP $$TCODE"; cat /tmp/tok.out; exit 1
+        fi
+        # The response field name is `secret`; jq pulls it out. The
+        # secret is only ever returned at creation time.
+        SECRET=$$(jq -r .secret /tmp/tok.out)
+        if [ -z "$$SECRET" ] || [ "$$SECRET" = "null" ]; then
+          echo "✗ no secret in token response"; cat /tmp/tok.out; exit 1
+        fi
+        printf "%s" "$$SECRET" > /token/scrape-token
+        # 0644 so the Prometheus container (which runs as `nobody`, UID
+        # 65534) can read the file. The volume is private to this
+        # compose project — no other host process can access it.
+        chmod 0644 /token/scrape-token
+        echo "✓ wrote scrape token ($${SECRET:0:8}…) to /token/scrape-token"
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # Prometheus — scrapes mqConnector via the bearer token above and
+  # evaluates the 23 alerting + recording rules in deploy/prometheus/.
+  # UI on http://localhost:9090 (no auth — local dev only).
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: mqc-prometheus
+    restart: unless-stopped
+    networks: [mqc]
+    depends_on:
+      prom-scrape-token:
+        condition: service_completed_successfully
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus:/etc/prometheus/rules:ro
+      - scrape-token:/token:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Grafana — pre-provisioned with the Prometheus datasource and the
+  # checked-in mqconnector-overview dashboard (21 panels, including the
+  # Phase 2 operational health row). UI on http://localhost:3000
+  # (admin / admin on first boot — local dev only).
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: mqc-grafana
+    restart: unless-stopped
+    networks: [mqc]
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # Provisioning loads on every Grafana start so a checked-in
+      # dashboard change is picked up by re-running `docker compose up`.
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      # Dashboards are loaded from this directory by the file-based
+      # provisioner configured in provisioning/dashboards/all.yaml.
+      - ./deploy/grafana:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_HOST_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
       start_period: 20s
