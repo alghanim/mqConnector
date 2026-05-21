@@ -64,6 +64,13 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "kafka-offsets":
+			os.Args = append(os.Args[:1], os.Args[2:]...)
+			if err := kafkaOffsets(); err != nil {
+				fmt.Fprintf(os.Stderr, "kafka-offsets: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
 	}
 
@@ -154,18 +161,24 @@ func run(configPath string) error {
 	defer func() { _ = store.Close() }()
 	logger.Info("storage opened")
 
-	// Connection-password encryption. The sealer is nil when MQC_MASTER_KEY
-	// isn't set, in which case ConnectionRepo stores+returns plaintext —
-	// preserving the old behaviour without breaking existing data.
+	// Connection-password encryption. In prod mode the master key is
+	// mandatory — an enterprise deployment must not store broker
+	// credentials at rest in plaintext. Dev mode tolerates an unset key
+	// so a developer can poke at a local SQLite file without ceremony.
 	sealer, err := secrets.FromEnv()
 	if err != nil {
 		return fmt.Errorf("init secrets: %w", err)
 	}
 	if sealer.Enabled() {
 		store.Connections = store.Connections.WithSealer(sealer)
-		logger.Info("connection-password encryption enabled (AES-GCM)")
-	} else {
+		logger.Info("connection-password encryption enabled (AES-GCM)",
+			"current_key_version", sealer.Current())
+	} else if cfg.IsDev() {
 		logger.Warn("connection passwords stored in plaintext — set MQC_MASTER_KEY to encrypt at rest")
+	} else {
+		return fmt.Errorf("MQC_MASTER_KEY (or MQC_MASTER_KEYS) is required in prod mode; " +
+			"set a 32-byte hex/base64 key so broker passwords are encrypted at rest, " +
+			"or run with server.mode=dev for local testing")
 	}
 
 	// Auth
@@ -306,7 +319,11 @@ func run(configPath string) error {
 				id = "mqconnector"
 			}
 		}
-		leaseRunner = leadership.New(store.DB, id, cfg.Leadership.TTL, logger)
+		leaseDialect := leadership.DialectSQLite
+		if store.Dialect() == storage.DialectPostgres {
+			leaseDialect = leadership.DialectPostgres
+		}
+		leaseRunner = leadership.NewWithDialect(store.DB, id, cfg.Leadership.TTL, leaseDialect, logger)
 		go func() {
 			if err := leaseRunner.Run(rootCtx); err != nil {
 				logger.Error("leadership.Run exited with error", "err", err)

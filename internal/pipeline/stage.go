@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"mqConnector/internal/storage"
 )
@@ -65,9 +66,23 @@ type RouteConfig struct {
 }
 
 // ScriptConfig is the JSON payload for a `script` stage.
+//
+// TimeoutMs is the wall-clock cap (milliseconds) on a single script
+// execution. 0 means "use the default" (DefaultScriptTimeoutMs). The
+// timeout is enforced by the script runner polling ctx.Done() on every
+// line, so a long-running script returns ctx.DeadlineExceeded promptly
+// rather than pinning a pipeline worker.
 type ScriptConfig struct {
-	Script string `json:"script"`
+	Script    string `json:"script"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
 }
+
+// DefaultScriptTimeoutMs is the wall-clock cap applied to a script
+// stage when the operator hasn't set TimeoutMs on the config. Five
+// seconds is generous for the per-message transforms the script stage
+// is intended for — a real workload should never approach it; if it
+// does, the stage was misused and the worker is at risk.
+const DefaultScriptTimeoutMs = 5000
 
 // ValidateConfig is the JSON payload for a `validate` stage.
 //
@@ -160,7 +175,14 @@ func Build(ctx BuildContext) ([]Stage, error) {
 			if row.StageConfig != "" {
 				_ = json.Unmarshal([]byte(row.StageConfig), &cfg)
 			}
-			stages = append(stages, &ScriptStage{Script: cfg.Script})
+			timeoutMs := cfg.TimeoutMs
+			if timeoutMs <= 0 {
+				timeoutMs = DefaultScriptTimeoutMs
+			}
+			stages = append(stages, &ScriptStage{
+				Script:  cfg.Script,
+				Timeout: time.Duration(timeoutMs) * time.Millisecond,
+			})
 		case "validate":
 			cfg := ValidateConfig{}
 			if row.StageConfig != "" {

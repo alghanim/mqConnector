@@ -270,6 +270,96 @@ func createKafkaTopic(t *testing.T, brokers, topic string, partitions int32) {
 	}
 }
 
+// TestIntegration_Kafka_RebalanceRedeliversInflight exercises the
+// rebalance hazard the audit called out: when consumer A holds a
+// message uncommitted and disconnects, the broker must redeliver
+// that message to a remaining group member (or to A on reconnect)
+// rather than silently losing it.
+//
+// Setup: 2-partition topic, 2 consumers in the same group. The
+// broker assigns one partition to each. We:
+//   1. Produce enough messages that each partition holds work.
+//   2. Consumer A receives one message (claim on its partition).
+//   3. Consumer A disconnects WITHOUT Commit — the broker's
+//      heartbeat times out and triggers a rebalance.
+//   4. Consumer B receives every produced message, including the
+//      uncommitted one from A's partition.
+//
+// What this catches: a regression that closes the consumer-group
+// session without Nack/rollback semantics (sarama doesn't expose
+// an explicit nack — uncommitted = will redeliver). If the
+// connector were ever changed to auto-commit before send-succeeds
+// we'd silently lose A's in-flight message; this test catches that.
+func TestIntegration_Kafka_RebalanceRedeliversInflight(t *testing.T) {
+	brokers := os.Getenv("KAFKA_BROKERS")
+	if brokers == "" {
+		t.Skip("set KAFKA_BROKERS to run; e.g. KAFKA_BROKERS=localhost:9092")
+	}
+
+	topic := "mqctest-rebal-" + uuid.NewString()[:8]
+	t.Cleanup(func() { deleteKafkaTopic(t, brokers, topic) })
+	createKafkaTopic(t, brokers, topic, 2)
+
+	groupID := "mqctest-rebal-group-" + uuid.NewString()[:8]
+	cfg := Config{
+		Type:    TypeKafka,
+		Brokers: strings.Split(brokers, ","),
+		Topic:   topic,
+		GroupID: groupID,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	// Publish 10 messages, distributed across both partitions via the
+	// default hash partitioner (keyed by index).
+	producer := newKafkaProducer(t, brokers)
+	defer producer.Close()
+	const N = 10
+	for i := 0; i < N; i++ {
+		body := []byte(fmt.Sprintf(`{"seq":%d}`, i))
+		if _, _, err := producer.SendMessage(&sarama.ProducerMessage{
+			Topic: topic,
+			Key:   sarama.StringEncoder(fmt.Sprintf("k%d", i)),
+			Value: sarama.ByteEncoder(body),
+		}); err != nil {
+			t.Fatalf("publish %d: %v", i, err)
+		}
+	}
+
+	// Consumer A: receive one message and DROP it (no Commit). The
+	// disconnect below triggers a rebalance; the broker MUST replay
+	// the un-Commited partition prefix to whoever ends up owning the
+	// partition next.
+	connA := newConnect(t, ctx, cfg)
+	if _, err := connA.ReceiveMessage(ctx); err != nil {
+		t.Fatalf("A: first receive: %v", err)
+	}
+	_ = connA.Disconnect()
+
+	// Consumer B joins. With A gone the broker reassigns both
+	// partitions to B; everything produced should be delivered,
+	// including the prefix A held uncommitted.
+	time.Sleep(2 * time.Second)
+	connB := newConnect(t, ctx, cfg)
+	defer connB.Disconnect()
+	got := readUntilQuiet(t, ctx, connB, 8*time.Second)
+	if len(got) < N {
+		t.Fatalf("expected at least %d redelivered messages, got %d: %v", N, len(got), got)
+	}
+	// And every produced seq must appear at least once.
+	seen := map[string]bool{}
+	for _, m := range got {
+		seen[m] = true
+	}
+	for i := 0; i < N; i++ {
+		needle := fmt.Sprintf(`{"seq":%d}`, i)
+		if !seen[needle] {
+			t.Errorf("rebalance lost message: %s missing from redelivered set", needle)
+		}
+	}
+}
+
 func deleteKafkaTopic(t *testing.T, brokers, topic string) {
 	t.Helper()
 	cfg := sarama.NewConfig()

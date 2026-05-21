@@ -37,6 +37,12 @@ type KafkaConnector struct {
 	mu       sync.Mutex
 	producer sarama.SyncProducer
 	group    sarama.ConsumerGroup
+	// adminClient is held open for the lifetime of the connector so
+	// Depth() can query high-water marks and consumer-group offsets
+	// without paying the connection-setup cost on every scrape. nil
+	// when Connect hasn't run yet (or after Disconnect).
+	adminClient sarama.Client
+	groupID     string
 
 	// Consumer-group plumbing. The group runs in a goroutine and pushes
 	// claimed messages into deliveries; the session is captured so
@@ -169,6 +175,23 @@ func (c *KafkaConnector) Connect(_ context.Context) error {
 		"group_id", groupID,
 		"initial_offset_if_fresh", policy)
 
+	// Admin client for lag queries. A nil client is non-fatal — if the
+	// build fails we log and continue; Depth will return -1 and the
+	// metric simply won't be emitted. Producer/group still work.
+	adminCfg := sarama.NewConfig()
+	adminCfg.Version = scfg.Version
+	if scfg.Net.TLS.Enable {
+		adminCfg.Net.TLS.Enable = true
+		adminCfg.Net.TLS.Config = scfg.Net.TLS.Config
+	}
+	adminClient, adminErr := sarama.NewClient(c.cfg.Brokers, adminCfg)
+	if adminErr != nil {
+		slog.Warn("kafka admin client init failed; lag metrics disabled",
+			"component", "mq.kafka", "err", adminErr)
+	}
+	c.adminClient = adminClient
+	c.groupID = groupID
+
 	c.producer = producer
 	c.group = group
 	c.deliveries = make(chan kafkaDelivery, 16)
@@ -212,10 +235,67 @@ func (c *KafkaConnector) Disconnect() error {
 		_ = c.producer.Close()
 		c.producer = nil
 	}
+	if c.adminClient != nil {
+		_ = c.adminClient.Close()
+		c.adminClient = nil
+	}
 	c.deliveries = nil
 	c.groupErr = nil
 	c.pending = nil
 	return nil
+}
+
+// Depth implements DepthReporter for Kafka. Sums per-partition lag —
+// (high water mark) - (committed offset) — across every partition of
+// the topic for this consumer group. Returns -1 if the admin client
+// isn't available (init failed) or the broker errors out; the operator
+// sees the absence in Prometheus instead of a misleading 0.
+func (c *KafkaConnector) Depth(_ context.Context) (int64, error) {
+	c.mu.Lock()
+	admin := c.adminClient
+	topic := c.cfg.Topic
+	groupID := c.groupID
+	c.mu.Unlock()
+	if admin == nil {
+		return -1, errors.New("kafka: admin client not available")
+	}
+	if err := admin.RefreshMetadata(topic); err != nil {
+		return -1, fmt.Errorf("kafka refresh metadata: %w", err)
+	}
+	parts, err := admin.Partitions(topic)
+	if err != nil {
+		return -1, fmt.Errorf("kafka partitions: %w", err)
+	}
+	mgr, err := sarama.NewOffsetManagerFromClient(groupID, admin)
+	if err != nil {
+		return -1, fmt.Errorf("kafka offset manager: %w", err)
+	}
+	defer mgr.Close()
+	var total int64
+	for _, p := range parts {
+		hwm, err := admin.GetOffset(topic, p, sarama.OffsetNewest)
+		if err != nil {
+			return -1, fmt.Errorf("kafka HWM p=%d: %w", p, err)
+		}
+		pm, err := mgr.ManagePartition(topic, p)
+		if err != nil {
+			return -1, fmt.Errorf("kafka manage partition %d: %w", p, err)
+		}
+		committed, _ := pm.NextOffset()
+		_ = pm.Close()
+		// NextOffset returns -1 ("unknown") for groups that haven't
+		// committed yet — treat that as "lag == HWM" (the full backlog
+		// is unconsumed for this group on this partition).
+		if committed < 0 {
+			total += hwm
+			continue
+		}
+		lag := hwm - committed
+		if lag > 0 {
+			total += lag
+		}
+	}
+	return total, nil
 }
 
 func (c *KafkaConnector) SendMessage(_ context.Context, message []byte) error {

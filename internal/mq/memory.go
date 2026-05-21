@@ -139,6 +139,18 @@ func (m *MemoryConnector) Commit(_ context.Context) error { return nil }
 // has no concept of redelivery.
 func (m *MemoryConnector) Nack(_ context.Context, _ bool) error { return nil }
 
+// Depth implements DepthReporter using the underlying channel length.
+// Used by the executor's source-depth sampling so tests that wire a
+// memory connector through the pipeline manager can verify the
+// mqconnector_source_depth metric is populated.
+func (m *MemoryConnector) Depth(_ context.Context) (int64, error) {
+	if !m.alive() {
+		return -1, ErrNotConnected
+	}
+	q := m.reg.Queue(m.name)
+	return int64(len(q)), nil
+}
+
 func (m *MemoryConnector) alive() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()

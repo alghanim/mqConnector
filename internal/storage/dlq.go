@@ -144,6 +144,40 @@ func (r *DLQRepo) Delete(ctx context.Context, tenantID, id string) error {
 	return nil
 }
 
+// DLQStat is one row of the per-pipeline DLQ aggregate. OldestAt is
+// the timestamp of the longest-resident message for that pipeline —
+// alerting on its age catches a stuck retry loop or a broken
+// destination broker that the size metric alone would miss.
+type DLQStat struct {
+	PipelineID string
+	Count      int64
+	OldestAt   time.Time
+}
+
+// Stats returns one DLQStat per pipeline that currently has any DLQ
+// rows. Empty pipelines are omitted — the metrics renderer surfaces
+// only what's actually backed up. Cost is one indexed scan; the
+// query groups in-place with no application-side aggregation.
+func (r *DLQRepo) Stats(ctx context.Context) ([]DLQStat, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT pipeline_id, COUNT(1), MIN(created_at)
+		FROM dlq
+		GROUP BY pipeline_id`)
+	if err != nil {
+		return nil, fmt.Errorf("dlq stats: %w", err)
+	}
+	defer rows.Close()
+	var out []DLQStat
+	for rows.Next() {
+		var s DLQStat
+		if err := rows.Scan(&s.PipelineID, &s.Count, &s.OldestAt); err != nil {
+			return nil, fmt.Errorf("dlq stats scan: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // PruneOlderThan deletes DLQ rows older than cutoff. Returns the count
 // removed. Runs across every tenant — retention is a system-level job
 // configured globally, not per-tenant.

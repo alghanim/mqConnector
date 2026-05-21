@@ -24,6 +24,11 @@ type Pipeline struct {
 	AvgLatencyMs      float64   `json:"avg_latency_ms"`
 	Status            string    `json:"status"`
 	LastError         string    `json:"last_error,omitempty"`
+	// SourceDepth is the most recent broker-side backlog measurement
+	// for the pipeline's source. -1 means "not sampled yet" or "source
+	// connector doesn't report depth"; the Prometheus renderer skips
+	// the series in that case so operators don't get a misleading 0.
+	SourceDepth int64 `json:"source_depth,omitempty"`
 	// Histogram exposed under JSON for the UI's percentile panel.
 	// Buckets keyed by upper bound (ms) → cumulative count.
 	LatencyHistogram []HistogramBucket `json:"latency_histogram,omitempty"`
@@ -84,9 +89,27 @@ func (s *Store) Register(pipelineID, sourceQueue, destQueue string) {
 			SourceQueue: sourceQueue,
 			DestQueue:   destQueue,
 			Status:      "connected",
+			SourceDepth: -1,
 		},
 		latencyBucketCounts: make([]uint64, len(latencyBuckets)),
 	}
+}
+
+// SetSourceDepth records the latest broker-side backlog observation for
+// a pipeline. A negative value means "unknown"; the renderer omits the
+// series in that case. Called by the executor's depth-sampling
+// goroutine every ~30s for pipelines whose source connector implements
+// DepthReporter.
+func (s *Store) SetSourceDepth(pipelineID string, depth int64) {
+	s.mu.RLock()
+	e, ok := s.pipelines[pipelineID]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.data.SourceDepth = depth
 }
 
 // Unregister removes a pipeline.
@@ -273,6 +296,20 @@ func (s *Store) Prometheus() string {
 		fmt.Fprintf(&b,
 			"mqconnector_pipeline_latency_ms_count{pipeline_id=%q,source=%q,dest=%q} %d\n",
 			m.PipelineID, m.SourceQueue, m.DestQueue, total)
+	}
+
+	// Per-pipeline source backlog. Only emitted for pipelines whose
+	// source connector implements mq.DepthReporter — the absence of
+	// the series for a given pipeline_id means "this source type
+	// doesn't expose depth (e.g. NATS, MQTT QoS 0)" rather than 0.
+	b.WriteString("# HELP mqconnector_source_depth Most recent broker-side backlog for the pipeline source (queue depth for RabbitMQ, consumer-group lag for Kafka)\n")
+	b.WriteString("# TYPE mqconnector_source_depth gauge\n")
+	for _, m := range all {
+		if m.SourceDepth < 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "mqconnector_source_depth{pipeline_id=%q,source=%q} %d\n",
+			m.PipelineID, m.SourceQueue, m.SourceDepth)
 	}
 
 	// Per-pipeline up/down — 1 if status is "connected", 0 otherwise.

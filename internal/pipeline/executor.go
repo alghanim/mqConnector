@@ -22,6 +22,11 @@ type MetricsSink interface {
 	SetStatus(pipelineID, status, lastError string)
 	RecordSuccess(pipelineID string, bytes int64, latencyMs float64)
 	RecordFailure(pipelineID string)
+	// SetSourceDepth is called by the depth-sampling goroutine when
+	// the source connector implements mq.DepthReporter. A negative
+	// value clears the most recent reading (so the Prometheus
+	// renderer drops the series instead of reporting stale data).
+	SetSourceDepth(pipelineID string, depth int64)
 }
 
 // DLQSink is the minimal surface the executor uses to push failures into the
@@ -60,6 +65,13 @@ type Executor struct {
 	// MaxMsgsPerMinute > 0. Shared across all workers so the cap
 	// applies per-pipeline, not per-worker.
 	budget *budget
+
+	// breaker is the per-pipeline outbound circuit breaker. Set in
+	// Run(); shared by every worker so a broker outage trips once
+	// for the pipeline, not once per worker. nil disables the
+	// circuit (used in tests that don't want the open-state
+	// behaviour to interfere).
+	breaker *breaker
 }
 
 // Run blocks until ctx is cancelled or the executor encounters an unrecoverable
@@ -91,6 +103,12 @@ func (e *Executor) Run(ctx context.Context) error {
 		workers = 16
 	}
 
+	// Outbound circuit breaker. One per pipeline, shared across
+	// workers. Default threshold + cool-down; per-pipeline overrides
+	// could be added but the defaults handle the typical "destination
+	// broker restart" recovery window without operator tuning.
+	e.breaker = newBreaker(defaultBreakerThreshold, defaultBreakerCooldown)
+
 	// Per-pipeline message budget. When > 0 the executor enforces a
 	// simple token-bucket cap: budget messages per minute, refilled
 	// every refill window. Shared across workers so the cap is
@@ -104,6 +122,16 @@ func (e *Executor) Run(ctx context.Context) error {
 		logger.Info("pipeline starting", "workers", workers)
 	}
 	defer logger.Info("pipeline stopped")
+
+	// Source-depth sampler. Spawned only when the source connector
+	// declares the DepthReporter capability; saves a goroutine per
+	// pipeline for sources that can't report depth (NATS Core, MQTT
+	// QoS 0). Uses its OWN pool key so it doesn't contend with worker
+	// receives — depth probes are best-effort and shouldn't stall on
+	// a blocking receive. Cancels with ctx; reports -1 to the metrics
+	// sink on shutdown so a Prometheus scrape during teardown doesn't
+	// see a stale gauge.
+	go e.runDepthSampler(ctx, logger)
 
 	// Each worker runs the same receive→stages→send→commit loop
 	// independently. To preserve at-least-once semantics we give every
@@ -234,6 +262,21 @@ func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.L
 	routeResult := outcome.Route
 	_ = outcome.Format // currentFormat is consumed inside RunStages
 
+	// Circuit-breaker gate. If the destination has been failing the
+	// breaker will block the send and we Nack the source delivery so
+	// the broker re-delivers it after the cool-down. This is what
+	// keeps a broken destination from filling the DLQ with millions
+	// of "destination unreachable" entries.
+	if e.breaker != nil && !e.breaker.allow() {
+		logger.Warn("circuit open; nack to source for redelivery")
+		e.finalize(ctx, source, false, logger)
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+		return nil
+	}
+
 	// Forward
 	var sendErr error
 	if routeResult != nil {
@@ -250,6 +293,10 @@ func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.L
 		}
 	} else {
 		sendErr = e.send(ctx, "dest-"+e.Pipeline.ID, e.DefaultDest, current)
+	}
+
+	if e.breaker != nil {
+		e.breaker.recordResult(sendErr == nil)
 	}
 
 	if sendErr != nil {
@@ -302,4 +349,62 @@ func (e *Executor) send(ctx context.Context, id string, cfg mq.Config, message [
 	}
 	defer release()
 	return conn.SendMessage(ctx, message)
+}
+
+// depthSamplerInterval is how often the per-pipeline depth probe asks
+// the source broker for its current backlog. 30s is the natural cadence
+// for an alerting metric — fast enough that a stuck pipeline shows up
+// before the on-call is paged, slow enough that we're not hammering the
+// broker on every Prometheus scrape (which can fire every 15s).
+const depthSamplerInterval = 30 * time.Second
+
+// runDepthSampler periodically probes the source connector's depth and
+// reports it to the metrics sink. The probe uses a dedicated pool key
+// (id + "-depth") so it gets its own connector instance and doesn't
+// contend with the worker receive lock — receive can block on the
+// broker for many seconds, which would block the metric otherwise.
+//
+// The goroutine exits cleanly when ctx is cancelled. If the source
+// connector doesn't implement DepthReporter the goroutine still runs
+// but reports nothing — the cost is one type assertion per tick.
+func (e *Executor) runDepthSampler(ctx context.Context, logger *slog.Logger) {
+	if e.Metrics == nil || e.Pool == nil {
+		return
+	}
+	// First tick fires immediately so the metric appears within a
+	// scrape interval of pipeline start.
+	probe := func() {
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		conn, release, err := e.Pool.Get(probeCtx, e.Pipeline.ID+"-depth", e.Source)
+		if err != nil {
+			// Don't log on every tick — a broker outage will already
+			// be visible through pipeline_up; this would just spam.
+			return
+		}
+		defer release()
+		reporter, ok := conn.(mq.DepthReporter)
+		if !ok {
+			return
+		}
+		depth, err := reporter.Depth(probeCtx)
+		if err != nil || depth < 0 {
+			return
+		}
+		e.Metrics.SetSourceDepth(e.Pipeline.ID, depth)
+	}
+	probe()
+	t := time.NewTicker(depthSamplerInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			// Clear the metric so a scrape during teardown doesn't see
+			// stale data attached to a stopped pipeline.
+			e.Metrics.SetSourceDepth(e.Pipeline.ID, -1)
+			return
+		case <-t.C:
+			probe()
+		}
+	}
 }

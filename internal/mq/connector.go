@@ -157,6 +157,27 @@ type Connector interface {
 	Ping(ctx context.Context) error
 }
 
+// DepthReporter is an optional capability a connector can implement to
+// report how many messages are waiting on the source side. The pipeline
+// executor probes for this interface periodically and feeds the result
+// into the metrics store as `mqconnector_source_depth`. Connectors that
+// don't implement it (or that report -1) emit no series — the absence
+// is observable in Prometheus and that's fine.
+//
+// The semantic is intentionally loose: "messages waiting for this
+// consumer". For RabbitMQ that's queue depth; for Kafka it's
+// consumer-group lag (sum across partitions); for in-memory test
+// connectors it's the length of the pending channel. Operators reading
+// the metric should treat it as a backlog signal, not a queue-state
+// reflector.
+type DepthReporter interface {
+	// Depth returns the broker-side backlog for this consumer. A
+	// negative return value means "unknown" and is treated as the
+	// metric being absent for this scrape — implementations should
+	// return that rather than a stale 0 when they can't measure.
+	Depth(ctx context.Context) (int64, error)
+}
+
 // New is the factory. The platform-specific IBM constructor lives in
 // connector_ibm_on.go (with the `ibmmq` build tag) and connector_ibm_off.go.
 func New(cfg Config) (Connector, error) {

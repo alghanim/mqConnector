@@ -50,8 +50,18 @@ If you've intentionally taken writes on the new version that you want to keep, r
 
 This release applies migrations 0013 (`tenant_memberships.system_admin`) and 0014 (`pipelines.max_msgs_per_minute`). Both are additive ALTER TABLEs with no destructive effect on existing data.
 
-After upgrade, three behavioural changes can surface:
+After upgrade, several behavioural changes can surface:
 
+- **`MQC_MASTER_KEY` is now mandatory in prod mode.** Previous releases tolerated an unset key and stored broker passwords in plaintext at rest with a warning. The bridge now refuses to start in `server.mode=prod` without `MQC_MASTER_KEY` (or `MQC_MASTER_KEYS` for the multi-version form). Generate a 32-byte key once and inject it from your secret store:
+  ```sh
+  # generate
+  openssl rand -hex 32
+  # set on the unit / pod
+  systemd: Environment=MQC_MASTER_KEY=<hex>
+  k8s:     envFrom: { secretRef: { name: mqconnector-secrets } }   # with MQC_MASTER_KEY in it
+  ```
+  Existing plaintext rows continue to decrypt transparently (they pass through unchanged on read). To migrate them to ciphertext, run `mqconnector rotate-secrets` once after the upgrade — it walks every connection row and re-saves under the current key. Dev mode (`server.mode=dev`) still permits an unset key for local testing; the bridge emits a warning instead of refusing.
+- **Script stages now have a default 5-second wall-clock timeout.** A `script` stage that doesn't set `timeout_ms` on its config inherits the new `DefaultScriptTimeoutMs` cap. Operators with long-running scripts (rare — the stage is for per-message transforms) should set `timeout_ms` explicitly on the stage config. Existing pipelines whose scripts complete in microseconds are unaffected.
 - **Cookie SameSite tightened to `Strict`.** A user who navigates to mqConnector from an external link in the same tab will be treated as unauthenticated; they re-login and proceed. No action needed; brief user-visible blip.
 - **Container image is now distroless static.** If you have a custom `docker run` recipe that overrides `--user` or `--entrypoint`, audit it — the user is now `nonroot` (UID 65532), no shell exists in the image.
 - **Kafka offset handover (one-time on upgrade).** The pre-1.1 binary used `sarama.ConsumePartition(OffsetNewest)` with NO consumer group — no broker-side offset tracking. The post-1.1 binary uses a real consumer group with manual commits.
@@ -67,8 +77,15 @@ After upgrade, three behavioural changes can surface:
   # 3. Stop the old binary.
   # 4. (Optional but recommended) Pre-seed the new consumer group at
   #    the topic's current end, so the new binary doesn't even need
-  #    to rely on initial_offset=newest:
-  GROUP_ID=mqconnector-$(echo -n "broker:9092topic-name" | sha256sum | head -c 16)
+  #    to rely on initial_offset=newest. The new binary ships a
+  #    helper that does exactly this, deriving the group id the same
+  #    way the connector does:
+  mqconnector kafka-offsets --brokers=broker:9092 \
+    --topic=topic-name --to=latest
+  # Or, if you prefer kafka-consumer-groups.sh, print the derived id
+  # and feed it manually:
+  GROUP_ID=$(mqconnector kafka-offsets --brokers=broker:9092 \
+    --topic=topic-name --print-group-id)
   kafka-consumer-groups.sh --bootstrap-server broker:9092 \
     --group "$GROUP_ID" --topic topic-name \
     --reset-offsets --to-latest --execute

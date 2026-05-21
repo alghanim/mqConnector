@@ -271,3 +271,21 @@ func (c *RabbitMQConnector) Ping(_ context.Context) error {
 	}
 	return nil
 }
+
+// Depth implements DepthReporter via QueueDeclare (passive=true via the
+// passive flag on declare). The amqp091 client returns Messages on the
+// Queue struct — that's the broker-side ready-message count for the
+// queue we're consuming. Cost is one round-trip per call so callers
+// should rate-limit (the executor samples every ~30s).
+func (c *RabbitMQConnector) Depth(_ context.Context) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.channel == nil {
+		return -1, errors.New("rabbitmq: not connected")
+	}
+	q, err := c.channel.QueueDeclarePassive(c.cfg.QueueName, true, false, false, false, nil)
+	if err != nil {
+		return -1, fmt.Errorf("rabbitmq queue inspect: %w", err)
+	}
+	return int64(q.Messages), nil
+}
