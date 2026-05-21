@@ -122,6 +122,136 @@ func TestPipelines_CreateRejectsMissingFields(t *testing.T) {
 	}
 }
 
+// TestPipelineGrants_CRUDViaHTTP covers the full grants lifecycle:
+// create a pipeline, grant a role to a second user, list grants,
+// upsert to a different role, delete. Hits all four routes registered
+// under /api/v1/pipelines/{id}/grants.
+func TestPipelineGrants_CRUDViaHTTP(t *testing.T) {
+	h, _, _ := newTestServer(t)
+	cookie, _ := withAuth(t, h)
+	src := postConn(t, h, cookie, `{"name":"gsrc","type":"rabbitmq","url":"amqp://x","queue_name":"q"}`)
+	dst := postConn(t, h, cookie, `{"name":"gdst","type":"rabbitmq","url":"amqp://x","queue_name":"q"}`)
+
+	// Create a pipeline.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipelines",
+		strings.NewReader(`{"name":"p","source_id":"`+src.ID+`","destination_id":"`+dst.ID+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	attachSession(req, cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create pipeline: %d %s", rec.Code, rec.Body)
+	}
+	var pipe storage.Pipeline
+	_ = json.Unmarshal(rec.Body.Bytes(), &pipe)
+
+	// PUT a grant: bob ← operator on this pipeline.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut,
+		"/api/v1/pipelines/"+pipe.ID+"/grants/bob",
+		strings.NewReader(`{"role":"operator"}`))
+	req.Header.Set("Content-Type", "application/json")
+	attachSession(req, cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put grant: %d %s", rec.Code, rec.Body)
+	}
+
+	// LIST grants.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet,
+		"/api/v1/pipelines/"+pipe.ID+"/grants", nil)
+	attachSession(req, cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list grants: %d", rec.Code)
+	}
+	var grants []storage.PipelineGrant
+	_ = json.Unmarshal(rec.Body.Bytes(), &grants)
+	if len(grants) != 1 || grants[0].UserSub != "bob" || grants[0].Role != storage.RoleOperator {
+		t.Errorf("unexpected grants: %+v", grants)
+	}
+
+	// Upsert: bob ← admin.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut,
+		"/api/v1/pipelines/"+pipe.ID+"/grants/bob",
+		strings.NewReader(`{"role":"admin"}`))
+	req.Header.Set("Content-Type", "application/json")
+	attachSession(req, cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upsert grant: %d %s", rec.Code, rec.Body)
+	}
+
+	// Bad role payload should be rejected.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut,
+		"/api/v1/pipelines/"+pipe.ID+"/grants/bob",
+		strings.NewReader(`{"role":"superuser"}`))
+	req.Header.Set("Content-Type", "application/json")
+	attachSession(req, cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("bad role: status %d, want 400", rec.Code)
+	}
+
+	// DELETE.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete,
+		"/api/v1/pipelines/"+pipe.ID+"/grants/bob", nil)
+	attachSession(req, cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("delete grant: %d %s", rec.Code, rec.Body)
+	}
+
+	// LIST after delete: empty.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet,
+		"/api/v1/pipelines/"+pipe.ID+"/grants", nil)
+	attachSession(req, cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list after delete: %d", rec.Code)
+	}
+	grants = nil
+	_ = json.Unmarshal(rec.Body.Bytes(), &grants)
+	if len(grants) != 0 {
+		t.Errorf("expected 0 grants after delete, got %d", len(grants))
+	}
+}
+
+// TestPipelines_ListResponseCarriesEffectiveRole confirms the list
+// response now carries the new `effective_role` field so the UI can
+// gate edit/delete buttons. The shape is additive — the old fields
+// are still present on each row.
+func TestPipelines_ListResponseCarriesEffectiveRole(t *testing.T) {
+	h, _, _ := newTestServer(t)
+	cookie, _ := withAuth(t, h)
+	src := postConn(t, h, cookie, `{"name":"esrc","type":"rabbitmq","url":"amqp://x","queue_name":"q"}`)
+	dst := postConn(t, h, cookie, `{"name":"edst","type":"rabbitmq","url":"amqp://x","queue_name":"q"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pipelines",
+		strings.NewReader(`{"name":"p","source_id":"`+src.ID+`","destination_id":"`+dst.ID+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	attachSession(req, cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/pipelines", nil)
+	attachSession(req, cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"effective_role"`) {
+		t.Errorf("list response should expose effective_role: %s", rec.Body)
+	}
+}
+
 func TestConnections_CreateRejectsBadType(t *testing.T) {
 	h, _, _ := newTestServer(t)
 	cookie, _ := withAuth(t, h)

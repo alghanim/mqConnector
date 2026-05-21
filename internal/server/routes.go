@@ -177,6 +177,14 @@ func (s *Server) routes() http.Handler {
 			r.Put("/{id}/transforms", s.handleReplaceTransforms)
 			r.Get("/{id}/routing-rules", s.handleListRoutingRules)
 			r.Put("/{id}/routing-rules", s.handleReplaceRoutingRules)
+			// Per-pipeline RBAC grants. Mounted under the pipeline
+			// so the chi router carries the pipeline id through the
+			// handler chain via {id}; the grant subject is named
+			// "userSub" to mirror auth.UserSub / SimpleAuth's sub
+			// claim.
+			r.Get("/{id}/grants", s.handleListPipelineGrants)
+			r.Put("/{id}/grants/{userSub}", s.handleSetPipelineGrant)
+			r.Delete("/{id}/grants/{userSub}", s.handleDeletePipelineGrant)
 		})
 		r.Post("/api/v1/reload", s.handleReload)
 		r.Post("/api/v1/pipelines/{id}/replay", s.handleReplayPipeline)

@@ -20,6 +20,7 @@
   import StageConfigForm from '$lib/components/StageConfigForm.svelte';
   import TransformListEditor from '$lib/components/TransformListEditor.svelte';
   import RoutingRuleListEditor from '$lib/components/RoutingRuleListEditor.svelte';
+  import PipelineGrantsEditor from '$lib/components/PipelineGrantsEditor.svelte';
   import Alert from '$lib/components/Alert.svelte';
   import { SAMPLE_FIXTURES } from '$lib/sample-fixtures';
 
@@ -554,6 +555,25 @@
         </div>
       {/if}
     </Card>
+  {/if}
+
+  {#if pipeline?.id}
+    <!--
+      Per-pipeline RBAC editor. The component shows the management
+      surface (add/revoke/role-change) when the caller's effective
+      role is admin or owner; otherwise it falls back to a read-only
+      view so even an operator can see who has access without being
+      able to change it. The effective_role field on Pipeline is the
+      server-side resolution — undefined means an older backend (in
+      which case we default to "show everything" rather than locking
+      operators out).
+    -->
+    <PipelineGrantsEditor
+      pipelineId={pipeline.id}
+      canManage={pipeline.effective_role === 'admin' ||
+        pipeline.effective_role === 'owner' ||
+        pipeline.effective_role === undefined}
+    />
   {/if}
 </div>
 

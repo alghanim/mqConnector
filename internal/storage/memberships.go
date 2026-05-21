@@ -156,21 +156,106 @@ func (r *MembershipRepo) queryByUser(ctx context.Context, userSub string) ([]*Me
 	return out, rows.Err()
 }
 
-// adoptBootstrap rewrites any bootstrap:<username> rows so they're keyed
-// by the real sub. Safe to call repeatedly — it just becomes a no-op
-// once the bootstrap row is gone.
+// adoptBootstrap rewrites any rows the current login should claim so
+// they're keyed by the real sub. Safe to call repeatedly — once the
+// rows belong to userSub the UPDATEs become no-ops.
+//
+// Two adoption rules, applied in order:
+//
+//  1. bootstrap:<username> → real sub. The historical case: a seeded
+//     bootstrap row sits at user_sub='bootstrap:admin' until the first
+//     real login resolves the sub claim.
+//
+//  2. Stale sub for the same username → current sub. The local-dev case:
+//     a SimpleAuth restart hands out a fresh sub for the same user, so
+//     existing membership rows keyed by the old sub become unreachable
+//     by lookup. We adopt them by username so the user's tenants survive
+//     SimpleAuth re-bootstraps.
+//
+// Rule 2 only fires when there's no row for the new sub AND every
+// existing row for this username already has a *different* (old) sub —
+// i.e. the username uniquely identifies the user in the
+// memberships table. In a multi-user setup where the same display
+// username could collide across accounts this would be unsafe, but our
+// memberships are keyed by sub uniquely; the username field is a
+// human-readable label.
 func (r *MembershipRepo) adoptBootstrap(ctx context.Context, userSub, username string) error {
 	if userSub == "" || username == "" {
 		return nil
 	}
+	now := time.Now().UTC()
 	bootstrapKey := "bootstrap:" + strings.ToLower(username)
-	_, err := r.db.ExecContext(ctx, `
+
+	// First: gate the whole adoption on the bootstrap-admin signature.
+	// We only salvage rows for a user that ALREADY owns (or was seeded
+	// to own) the default tenant under this username. A regular tenant
+	// member never matches this signature, so a username collision
+	// between two regular users cannot steal anyone's rows here.
+	var hasBootstrapSig int
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(1) FROM tenant_memberships
+		WHERE LOWER(username) = LOWER(?)
+		  AND tenant_id = ?
+		  AND role = ?`,
+		username, DefaultTenantID, string(RoleOwner)).Scan(&hasBootstrapSig); err != nil {
+		return fmt.Errorf("check bootstrap signature: %w", err)
+	}
+	if hasBootstrapSig == 0 {
+		return nil
+	}
+
+	// Step 1: remove the seeded `bootstrap:<username>` row IFF a real
+	// row for the same username already exists on the same tenant.
+	// Without this, step 2's UPDATE would collide with the unique
+	// (tenant_id, user_sub) constraint when both rows want to land on
+	// `userSub`.
+	if _, err := r.db.ExecContext(ctx, `
+		DELETE FROM tenant_memberships
+		WHERE user_sub = ?
+		  AND EXISTS (
+		    SELECT 1 FROM tenant_memberships m2
+		    WHERE m2.tenant_id = tenant_memberships.tenant_id
+		      AND LOWER(m2.username) = LOWER(?)
+		      AND m2.user_sub <> ?
+		  )`,
+		bootstrapKey, username, bootstrapKey); err != nil {
+		return fmt.Errorf("clean stale bootstrap rows: %w", err)
+	}
+
+	// Step 2: rename `bootstrap:<username>` rows to userSub (the
+	// historical first-login path). Safe because step 1 removed any
+	// rows that would collide.
+	if _, err := r.db.ExecContext(ctx, `
 		UPDATE tenant_memberships
 		SET user_sub = ?, username = ?, updated_at = ?
 		WHERE user_sub = ?`,
-		userSub, username, time.Now().UTC(), bootstrapKey)
-	if err != nil {
+		userSub, username, now, bootstrapKey); err != nil {
 		return fmt.Errorf("adopt bootstrap membership: %w", err)
+	}
+
+	// Step 3: salvage stale-sub rows. For every row of this username
+	// whose user_sub differs from the current login, rewrite it to
+	// userSub — UNLESS a row already exists at (tenant_id, userSub),
+	// in which case the stale row is a duplicate and we drop it.
+	if _, err := r.db.ExecContext(ctx, `
+		DELETE FROM tenant_memberships
+		WHERE LOWER(username) = LOWER(?)
+		  AND user_sub <> ?
+		  AND EXISTS (
+		    SELECT 1 FROM tenant_memberships m2
+		    WHERE m2.tenant_id = tenant_memberships.tenant_id
+		      AND m2.user_sub = ?
+		  )`,
+		username, userSub, userSub); err != nil {
+		return fmt.Errorf("drop duplicate stale rows: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+		UPDATE tenant_memberships
+		SET user_sub = ?, updated_at = ?
+		WHERE LOWER(username) = LOWER(?)
+		  AND user_sub <> ?`,
+		userSub, now, username, userSub); err != nil {
+		return fmt.Errorf("adopt stale-sub rows: %w", err)
 	}
 	return nil
 }

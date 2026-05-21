@@ -167,6 +167,23 @@ export interface Pipeline {
   enabled: boolean;
   created_at?: string;
   updated_at?: string;
+  // effective_role is the caller's resolved role for this pipeline:
+  // max(tenantRole, pipelineGrant). The UI uses this to gate edit /
+  // delete buttons so an operator-without-admin-grant can edit but
+  // not delete, etc. Absent on responses from older backends — treat
+  // an undefined value as "show everything" so the UI doesn't lock
+  // operators out on a backend that pre-dates this field.
+  effective_role?: Role;
+}
+
+// PipelineGrant is the storage.PipelineGrant shape served back from
+// /api/v1/pipelines/{id}/grants. user_sub is the SimpleAuth subject;
+// role is one of the four enum values.
+export interface PipelineGrant {
+  pipeline_id: string;
+  user_sub: string;
+  role: Role;
+  created_at?: string;
 }
 
 export type StageType = 'filter' | 'transform' | 'translate' | 'route' | 'script' | 'validate';

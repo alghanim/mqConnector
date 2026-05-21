@@ -17,6 +17,17 @@ import (
 // edit could mutate stages of a pipeline the caller doesn't own. The
 // PipelineRepo.Get check upstream of every child mutation handles that.
 
+// pipelineWithRole is the list/get response shape — the stored
+// Pipeline plus the caller's effective role on it. The UI uses
+// EffectiveRole to decide whether to show edit/delete buttons; the
+// API contract was previously "raw Pipeline" and remains so for
+// callers that don't read EffectiveRole. (JSON additive change is
+// backwards-compatible.)
+type pipelineWithRole struct {
+	*storage.Pipeline
+	EffectiveRole storage.Role `json:"effective_role"`
+}
+
 func (s *Server) handleListPipelines(w http.ResponseWriter, r *http.Request) {
 	tenant := auth.TenantID(r.Context())
 	list, err := s.store.Pipelines.List(r.Context(), tenant)
@@ -24,7 +35,12 @@ func (s *Server) handleListPipelines(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSONList(w, http.StatusOK, list)
+	out := make([]pipelineWithRole, 0, len(list))
+	for _, p := range list {
+		role, _ := s.effectiveRoleForPipeline(r.Context(), p.ID)
+		out = append(out, pipelineWithRole{Pipeline: p, EffectiveRole: role})
+	}
+	writeJSONList(w, http.StatusOK, out)
 }
 
 func (s *Server) handleGetPipeline(w http.ResponseWriter, r *http.Request) {
@@ -39,7 +55,12 @@ func (s *Server) handleGetPipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+	// Tenant scope already enforced by Pipelines.Get; per-pipeline
+	// effective role enriches the response so the UI knows what
+	// actions to expose. No 403 here — viewing is always permitted
+	// for anyone who can see the pipeline at all.
+	role, _ := s.effectiveRoleForPipeline(r.Context(), id)
+	writeJSON(w, http.StatusOK, pipelineWithRole{Pipeline: p, EffectiveRole: role})
 }
 
 func (s *Server) handleCreatePipeline(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +100,14 @@ func (s *Server) handleCreatePipeline(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request) {
 	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
+	// Per-pipeline gate. Mutating a pipeline requires effective role
+	// ≥ operator. The route-level RequireRole("operator") is the
+	// tenant floor; this additionally honours pipeline grants so a
+	// viewer-on-tenant with an operator grant on this pipeline can
+	// still update it.
+	if !s.gatePipeline(w, r, id, storage.RoleOperator) {
+		return
+	}
 	var p storage.Pipeline
 	if err := decodeJSON(r, &p); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -104,6 +133,12 @@ func (s *Server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeletePipeline(w http.ResponseWriter, r *http.Request) {
 	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
+	// Deletion requires effective role ≥ admin on the pipeline. An
+	// operator-via-grant can edit but not delete; full pipeline
+	// management belongs to admins.
+	if !s.gatePipeline(w, r, id, storage.RoleAdmin) {
+		return
+	}
 	if err := s.store.Pipelines.Delete(r.Context(), tenant, id); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not found")
@@ -153,6 +188,9 @@ func (s *Server) handleReplaceStages(w http.ResponseWriter, r *http.Request) {
 	if err := s.ensurePipelineInTenant(w, r, id); err != nil {
 		return
 	}
+	if !s.gatePipeline(w, r, id, storage.RoleOperator) {
+		return
+	}
 	var stages []*storage.Stage
 	if err := decodeJSON(r, &stages); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -186,6 +224,9 @@ func (s *Server) handleReplaceTransforms(w http.ResponseWriter, r *http.Request)
 	if err := s.ensurePipelineInTenant(w, r, id); err != nil {
 		return
 	}
+	if !s.gatePipeline(w, r, id, storage.RoleOperator) {
+		return
+	}
 	var rules []*storage.Transform
 	if err := decodeJSON(r, &rules); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -217,6 +258,9 @@ func (s *Server) handleReplaceRoutingRules(w http.ResponseWriter, r *http.Reques
 	tenant := auth.TenantID(r.Context())
 	id := chi.URLParam(r, "id")
 	if err := s.ensurePipelineInTenant(w, r, id); err != nil {
+		return
+	}
+	if !s.gatePipeline(w, r, id, storage.RoleOperator) {
 		return
 	}
 	var rules []*storage.RoutingRule

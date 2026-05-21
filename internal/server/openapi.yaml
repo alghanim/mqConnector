@@ -234,6 +234,29 @@ components:
         enabled: { type: boolean, default: true }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        effective_role:
+          type: string
+          enum: [viewer, operator, admin, owner]
+          description: |
+            Caller's resolved role for this pipeline: max(tenantRole, pipelineGrant).
+            Returned only on list / get responses (additive); the UI uses it to
+            gate edit and delete buttons. Absent on requests; ignored if
+            present on writes.
+
+    PipelineGrant:
+      type: object
+      required: [pipeline_id, user_sub, role]
+      description: |
+        Per-pipeline RBAC grant. Grants ESCALATE a user's tenant role for a
+        specific pipeline — they never demote below the tenant role. See
+        the access-control discussion in POSTGRES_MIGRATION.md / Phase 5.
+      properties:
+        pipeline_id: { type: string, format: uuid }
+        user_sub: { type: string, description: SimpleAuth subject (sub claim). }
+        role:
+          type: string
+          enum: [viewer, operator, admin, owner]
+        created_at: { type: string, format: date-time }
 
     Stage:
       type: object
@@ -732,6 +755,60 @@ paths:
       responses:
         '200':
           description: Replaced.
+
+  /api/v1/pipelines/{id}/grants:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: List per-pipeline RBAC grants. Requires effective role >= admin on the pipeline.
+      responses:
+        '200':
+          description: Grants for this pipeline.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PipelineGrant' }
+        '403': { description: Forbidden. }
+  /api/v1/pipelines/{id}/grants/{userSub}:
+    parameters:
+      - { $ref: '#/components/parameters/pathID' }
+      - in: path
+        name: userSub
+        required: true
+        schema: { type: string }
+        description: SimpleAuth subject (sub claim) of the user being granted access.
+    put:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Grant or update a user's role on this pipeline. Grants escalate the tenant role; they never demote.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  type: string
+                  enum: [viewer, operator, admin, owner]
+      responses:
+        '200':
+          description: Grant created or updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PipelineGrant' }
+        '400': { description: Invalid role or missing user_sub. }
+        '403': { description: Forbidden. }
+    delete:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Revoke a user's grant on this pipeline.
+      responses:
+        '200': { description: Revoked. }
+        '404': { description: Grant not found. }
+        '403': { description: Forbidden. }
 
   /api/v1/reload:
     post:
