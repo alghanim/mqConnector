@@ -6,8 +6,11 @@ import (
 	"context"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"mqConnector/internal/leadership"
 )
 
 // TestPostgresOpen_AppliesMigrations proves the Postgres dispatch
@@ -159,5 +162,82 @@ func TestPostgresAudit_SerialisableChain(t *testing.T) {
 	}
 	if len(statuses) != 1 || statuses[0].Status != "ok" {
 		t.Errorf("audit chain broken under concurrent writes: %+v", statuses)
+	}
+}
+
+// TestPostgresLeadership_AdvisoryLockSerialisesClaim runs three
+// would-be leaders against the same Postgres database and confirms
+// at most one holds the lease at any moment. The lease uses the
+// advisory-lock-wrapped INSERT…ON CONFLICT path on Postgres; this
+// test is what catches a regression where two replicas pass the
+// WHERE clause concurrently and both stamp themselves as leader.
+//
+// Convergence is loose-timed (500ms windows × 3 ticks) — the lease
+// internally renews at ttl/2 so 1-second TTL means 500ms ticks.
+// We sample each replica's IsLeader() flag every 100ms for 2s and
+// assert no observation showed more than one leader.
+func TestPostgresLeadership_AdvisoryLockSerialisesClaim(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("set POSTGRES_DSN to run")
+	}
+	// Open three separate stores so each "replica" has its own
+	// connection pool — closest we can get to a multi-process
+	// deploy in a single test binary.
+	stores := make([]*Store, 3)
+	for i := range stores {
+		s, err := Open(dsn, 4, 2)
+		if err != nil {
+			t.Fatalf("Open replica %d: %v", i, err)
+		}
+		t.Cleanup(func() { _ = s.Close() })
+		stores[i] = s
+	}
+	// Clean slate.
+	_, _ = stores[0].DB.ExecContext(context.Background(),
+		`DELETE FROM leadership`)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	leases := make([]*leadership.Lease, 3)
+	for i := range leases {
+		leases[i] = leadership.NewWithDialect(stores[i].DB,
+			"replica-"+string(rune('A'+i)),
+			time.Second,
+			leadership.DialectPostgres,
+			nil)
+		l := leases[i]
+		go func() { _ = l.Run(ctx) }()
+	}
+
+	// Give the first claim attempt a window to complete.
+	time.Sleep(300 * time.Millisecond)
+
+	// Sample for 2 seconds. At each tick, count how many replicas
+	// believe they're leader. The maximum observed count is what
+	// we care about — a regression that lets two replicas both
+	// pass the WHERE will spike this above 1.
+	var maxLeaders atomic.Int32
+	const samples = 20
+	for i := 0; i < samples; i++ {
+		count := int32(0)
+		for _, l := range leases {
+			if l.IsLeader() {
+				count++
+			}
+		}
+		if count > maxLeaders.Load() {
+			maxLeaders.Store(count)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if got := maxLeaders.Load(); got > 1 {
+		t.Errorf("observed %d concurrent leaders; lease serialisation broken", got)
+	}
+	// And at least ONE replica should have claimed it — otherwise
+	// the lease itself isn't running.
+	if maxLeaders.Load() == 0 {
+		t.Error("no replica claimed leadership within sampling window")
 	}
 }

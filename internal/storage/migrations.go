@@ -561,6 +561,78 @@ var migrations = []string{
 	`
 	ALTER TABLE connections ADD COLUMN initial_offset TEXT NOT NULL DEFAULT '';
 	`,
+	// 0018 — per-pipeline role grants.
+	//
+	// Extends the tenant-scoped role model with an optional per-pipeline
+	// override. Default behaviour is unchanged: a user with a tenant
+	// membership sees and operates every pipeline in that tenant at
+	// their tenant role. The override applies when finer control is
+	// needed — e.g. tenant T has hundreds of pipelines but user U should
+	// only see two of them.
+	//
+	// Semantics (see PipelineGrantsRepo.EffectiveRole):
+	//   - No row for (pipeline_id, user_sub) → fall back to the user's
+	//     tenant role.
+	//   - Row exists → the user's effective role on this pipeline is
+	//     max(tenant role, granted role). Grants only ESCALATE; they
+	//     never demote below the tenant role.
+	//   - To hide a pipeline from a tenant-role-of-viewer user, an
+	//     admin sets pipeline_visible=0 on the tenant membership flag
+	//     (separate concern, not in this migration).
+	//
+	// This migration is foundation for the handler-side integration:
+	// list/get/update endpoints will filter through the resolver.
+	// Endpoints landing in a follow-on commit.
+	`
+	CREATE TABLE IF NOT EXISTS pipeline_grants (
+		pipeline_id TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+		user_sub    TEXT NOT NULL,
+		role        TEXT NOT NULL CHECK(role IN ('viewer','operator','admin','owner')),
+		created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (pipeline_id, user_sub)
+	);
+	CREATE INDEX IF NOT EXISTS idx_pipeline_grants_user ON pipeline_grants(user_sub);
+	`,
+}
+
+// postgresMigrationOverrides supersedes specific entries in `migrations`
+// when the dialect is Postgres. The SQLite versions of these migrations
+// use the recreate-and-rename idiom (CREATE TABLE _new; INSERT; DROP;
+// RENAME) because SQLite has no ALTER for CHECK constraints. Postgres
+// rejects the DROP step due to foreign-key references from sibling
+// tables, so we ship native ALTER TABLE … DROP CONSTRAINT … ADD
+// CONSTRAINT statements that produce the same logical schema without
+// rebuilding the table.
+//
+// Keep in sync with the SQLite version's *effect*; the column shapes,
+// indexes and FK targets stay identical, so neither dialect drifts.
+var postgresMigrationOverrides = map[int]string{
+	// 0010 — relax CHECK constraints to admit MQTT/NATS/AMQP1.0
+	// connections, protobuf schemas, and protobuf pipeline output.
+	// SQLite recreates each table; Postgres just swaps the CHECK.
+	// The IF EXISTS guards make the migration idempotent against
+	// hand-built Postgres deployments where someone might have
+	// renamed the constraint.
+	10: `
+		ALTER TABLE connections DROP CONSTRAINT IF EXISTS connections_type_check;
+		ALTER TABLE connections ADD CONSTRAINT connections_type_check
+		  CHECK (type IN ('ibm','rabbitmq','kafka','mqtt','nats','amqp10'));
+
+		ALTER TABLE schemas DROP CONSTRAINT IF EXISTS schemas_schema_type_check;
+		ALTER TABLE schemas ADD CONSTRAINT schemas_schema_type_check
+		  CHECK (schema_type IN ('json_schema','xsd','protobuf'));
+
+		ALTER TABLE pipelines DROP CONSTRAINT IF EXISTS pipelines_output_format_check;
+		ALTER TABLE pipelines ADD CONSTRAINT pipelines_output_format_check
+		  CHECK (output_format IN ('same','json','xml','protobuf'));
+	`,
+	// 0016 — admit the 'wasm' stage type. SQLite recreates the
+	// stages table; Postgres just swaps the CHECK.
+	16: `
+		ALTER TABLE stages DROP CONSTRAINT IF EXISTS stages_stage_type_check;
+		ALTER TABLE stages ADD CONSTRAINT stages_stage_type_check
+		  CHECK (stage_type IN ('filter','transform','translate','route','script','validate','wasm'));
+	`,
 }
 
 func migrate(db *sql.DB, dialect Dialect) error {
@@ -597,6 +669,17 @@ func migrate(db *sql.DB, dialect Dialect) error {
 		// `INSERT OR IGNORE` is unique and must become `ON CONFLICT
 		// DO NOTHING`.
 		body := translateMigrationToDialect(m, dialect)
+
+		// Per-version Postgres native body. A handful of migrations
+		// use SQLite-only idioms (table recreate-and-rename for CHECK
+		// constraint changes) that don't translate via simple
+		// substitution. Those carry an entirely separate Postgres
+		// body here; we substitute before exec.
+		if dialect == DialectPostgres {
+			if pg, ok := postgresMigrationOverrides[version]; ok {
+				body = pg
+			}
+		}
 
 		// PRAGMA foreign_keys is a per-connection setting and is silently
 		// ignored inside a transaction. database/sql pools connections,
