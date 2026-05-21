@@ -193,6 +193,7 @@
   --card-bg:            var(--palette-slate-93);
   --card-border:        rgba(71, 85, 96, 0.5);          /* #475560 at 50% per spec */
   --card-shadow:        0 4px 12px rgba(0, 0, 0, 0.20); /* dark: 4dp at 20% */
+  --card-shadow-hover:  0 6px 16px rgba(0, 0, 0, 0.28); /* dark: elevated hover */
   --card-hover-bg:      var(--palette-slate-110);            /* #3D4A54 */
 
   /* §5.9 Divider variants */
@@ -247,8 +248,15 @@
      keeps the system consistent without inventing a new opacity value. */
   --dialog-shadow:      0 12px 32px rgba(0, 0, 0, 0.20);
 
-  /* Focus ring — Dark Gold 2dp per §9.5 */
+  /* Focus ring — Dark Gold 2dp per §9.5. --focus is the bare outline
+     colour for the (rare) callsite that wants `outline: solid` directly. */
   --focus-ring:         0 0 0 2px var(--palette-dark-gold);
+  --focus:              var(--palette-dark-gold);
+
+  /* Contrast colour for content sitting on --accent (maroon). White by
+     §2.3 (onTertiary dark). Same on both themes — the maroon doesn't
+     swap between dark and light. */
+  --accent-contrast:    var(--palette-white);
 }
 
 /* ─── §5 Light theme semantic tokens ─────────────────────────────── */
@@ -319,6 +327,7 @@
   --card-bg:            var(--palette-white);
   --card-border:        var(--palette-warm-gray);
   --card-shadow:        0 2px 6px rgba(51, 63, 72, 0.08); /* #333F48 at 8%, 2dp */
+  --card-shadow-hover:  0 6px 16px rgba(51, 63, 72, 0.12); /* light: elevated hover */
   --card-hover-bg:      var(--palette-warm-90);              /* #F2EFEC */
 
   --divider-subtle:     var(--palette-warm-95);              /* #E8E4DF */
@@ -364,6 +373,8 @@
   --dialog-shadow:      0 12px 32px rgba(51, 63, 72, 0.10);
 
   --focus-ring:         0 0 0 2px var(--palette-dark-gold);
+  --focus:              var(--palette-dark-gold);
+  --accent-contrast:    var(--palette-white);
 }
 
 /* ─── §6 RTL gradient mirror ──────────────────────────────────── */

@@ -847,11 +847,7 @@
   .dash-pipeline-card:hover,
   .dash-pipeline-card:focus-visible {
     border-color: var(--border-strong);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
-  }
-  :global([data-theme='light']) .dash-pipeline-card:hover,
-  :global([data-theme='light']) .dash-pipeline-card:focus-visible {
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+    box-shadow: var(--card-shadow-hover);
   }
   .dash-pipeline-card:focus-visible {
     outline: 2px solid var(--focus);

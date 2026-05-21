@@ -127,12 +127,16 @@
     display: inline-flex;
     align-items: center;
   }
+  /*
+   * 12dp interactive radius per Rule 9. The trigger contains a circular
+   * avatar + a wordmark + a chevron; it's a labeled chip, not a count.
+   */
   .profile-trigger {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
     padding: 0.25rem 0.5rem 0.25rem 0.25rem;
-    border-radius: 999px;
+    border-radius: 12px;
     border: 1px solid var(--border);
     background: var(--surface-2);
     color: var(--text);

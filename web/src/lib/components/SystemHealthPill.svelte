@@ -43,13 +43,17 @@
 </a>
 
 <style>
+  /*
+   * Labeled status chip — 12dp per §5.5 + Rule 9. Component name says
+   * "pill" but the brand prescribes pill only for count badges.
+   */
   .pill {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
     padding-block: 0.25rem;
     padding-inline: 0.625rem;
-    border-radius: 999px;
+    border-radius: 12px;
     border: 1px solid var(--border);
     background: var(--surface-2);
     color: var(--text);

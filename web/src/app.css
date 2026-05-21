@@ -4,23 +4,41 @@
 @tailwind utilities;
 
 /*
- * Embedded webfonts — Inter Variable for Latin, Noto Kufi Arabic for
- * Arabic. Both ship bundled under /fonts/ inside the static adapter
- * output, then ride into the binary via `go:embed web/dist/**`. No
- * runtime download → the air-gapped department deploy stays sealed.
+ * Embedded webfonts — Cairo for both Latin and Arabic. Cairo covers
+ * the Latin block + Arabic / Arabic Supplement / Arabic Presentation
+ * Forms in a single variable file, so we don't need a per-script
+ * font-family split. Bundled under /fonts/ in the static adapter
+ * output and rides into the binary via `go:embed web/dist/**` — the
+ * air-gapped department deploy stays sealed.
  *
- * Licensing: Inter is under the SIL Open Font License (Rasmus Andersson
- * + Inter Foundry). Noto Kufi Arabic is under the SIL OFL (Google
- * Fonts). The OFL permits redistribution as part of an application,
- * which is exactly what go:embed produces.
+ * Licensing: Cairo is released under the SIL Open Font License (the
+ * Cairo Type Society / Google Fonts). The OFL permits redistribution
+ * as part of an application, which is exactly what go:embed produces.
+ *
+ * The variable axis covers weights 200–1000; we restrict to 400–700
+ * to match the brand-guide type scale (400 Regular / 500 Medium /
+ * 600 SemiBold / 700 Bold).
  *
  * font-display: swap — keep the system-font fallback rendering until
- * the file lands so first paint is never blocked. On the first load
- * the user sees system-ui glyphs for a few hundred ms before they
- * swap to Inter / Noto Kufi Arabic.
+ * the file lands so first paint is never blocked.
+ *
+ * Drop-in: place `Cairo-VariableFont.woff2` under web/static/fonts/.
+ * Inter Variable + Noto Kufi Arabic remain bundled as fallbacks for
+ * the brief window before the woff2 lands at first paint, and as a
+ * safety net if a future build forgets to ship Cairo.
  */
 
-/* ─── Inter Variable (Latin) ────────────────────────────────────── */
+/* ─── Cairo (Latin + Arabic, variable axis) ─────────────────────── */
+@font-face {
+  font-family: 'Cairo';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/Cairo-VariableFont.woff2') format('woff2-variations'),
+       url('/fonts/Cairo-VariableFont.woff2') format('woff2');
+}
+
+/* ─── Inter Variable (fallback, Latin only) ─────────────────────── */
 @font-face {
   font-family: 'Inter Variable';
   font-style: normal;
@@ -38,14 +56,7 @@
        url('/fonts/InterVariable-Italic.woff2') format('woff2');
 }
 
-/* ─── Noto Kufi Arabic (Arabic glyphs only) ─────────────────────── */
-/*
- * Single variable-axis file covers weights 400-700. Restricted to the
- * Arabic / Arabic-Supplement / Arabic-Presentation-Forms ranges via
- * `unicode-range` — Latin glyphs come from Inter without conflict, so
- * the browser only fetches Noto when an Arabic codepoint hits the
- * screen.
- */
+/* ─── Noto Kufi Arabic (fallback, Arabic glyphs only) ───────────── */
 @font-face {
   font-family: 'Noto Kufi Arabic';
   font-style: normal;
@@ -94,16 +105,20 @@ body {
 
 body {
   font-family:
-    'Inter Variable', 'Inter', 'Noto Kufi Arabic', system-ui, -apple-system,
-    BlinkMacSystemFont, sans-serif;
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    'Cairo', 'Inter Variable', 'Inter', 'Noto Kufi Arabic', system-ui,
+    -apple-system, BlinkMacSystemFont, sans-serif;
   font-variant-ligatures: contextual;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Focus ring — visible Dark Gold 2dp per §9.5; never `outline: none` */
+/* Focus ring — visible Dark Gold 2dp per §9.5. Both an outline AND
+   box-shadow are emitted: the box-shadow is the visual ring for
+   rectangular elements; outline is the defense-in-depth fallback for
+   native controls where box-shadow is suppressed (e.g. <input
+   type=checkbox> on some engines). */
 :focus-visible {
-  outline: none;
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
 }
 
@@ -586,10 +601,12 @@ body {
   background: var(--surface);
 }
 
-/* Scrollbar — subtle, theme-aware */
+/* Scrollbar — subtle, theme-aware. --border-strong is visible on
+   both themes (slate-120 #6B7780 dark / outline-light #8A8A82 light);
+   --surface-bright is white on light and invisible. */
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-thumb {
-  background: var(--surface-bright);
+  background: var(--border);
   border-radius: 999px;
 }
 *::-webkit-scrollbar-thumb:hover {

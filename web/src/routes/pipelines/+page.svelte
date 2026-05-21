@@ -659,12 +659,13 @@
     gap: 6px;
     margin-block-start: 2px;
   }
+  /* Labeled error chip — 12dp per Rule 9. Pill is reserved for counts. */
   .cell-err-pill {
     display: inline-flex;
     align-items: center;
     gap: 4px;
     padding: 1px 6px;
-    border-radius: 999px;
+    border-radius: 12px;
     background: var(--danger-bg);
     color: var(--danger);
     font-size: 10.5px;
@@ -699,29 +700,27 @@
     gap: 0.5rem;
     flex-wrap: nowrap;
   }
+  /* Labeled endpoint chip in the flow viz — 12dp per Rule 9. */
   .flow-end {
     display: inline-flex;
     align-items: center;
     gap: 4px;
     padding: 3px 8px 3px 6px;
-    border-radius: 999px;
+    border-radius: 12px;
     background: var(--surface-2);
     border: 1px solid var(--border);
   }
+  /*
+   * Neutral icon tint — broker is identified by the glyph itself + the
+   * connection name. Vendor brand colours (#ff6600 RabbitMQ orange,
+   * #1f70c1 IBM blue, etc.) sit outside the closed brand palette and
+   * are not used; DO/DON'T #1.
+   */
   .flow-ico {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     color: var(--text-muted);
-  }
-  .flow-ico[data-type='rabbitmq'] {
-    color: #ff6600;
-  }
-  .flow-ico[data-type='kafka'] {
-    color: #6b6b6b;
-  }
-  .flow-ico[data-type='ibm'] {
-    color: #1f70c1;
   }
   .flow-name {
     font-size: 0.75rem;

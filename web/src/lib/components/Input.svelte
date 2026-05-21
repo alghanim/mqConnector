@@ -74,8 +74,14 @@
 </div>
 
 <style>
+  /*
+   * Required-field star is --danger, not --accent (maroon). The two
+   * hues are too close (brand-guide Rule 26 — maroon and error red
+   * must not touch), and forms frequently render an error border in
+   * --danger right next to this asterisk.
+   */
   .req-star {
-    color: var(--accent);
+    color: var(--danger);
     margin-inline-start: 2px;
   }
 </style>

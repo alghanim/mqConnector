@@ -492,11 +492,12 @@
     font-weight: 600;
     color: var(--text);
   }
+  /* Labeled "default" chip — 12dp per Rule 9. */
   .t-default-pill {
     display: inline-flex;
     align-items: center;
     padding: 1px 6px;
-    border-radius: 999px;
+    border-radius: 12px;
     background: var(--chip-info-bg);
     color: var(--chip-info-text);
     border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);

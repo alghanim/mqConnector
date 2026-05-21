@@ -6,13 +6,15 @@
   Tab + Shift+Tab inside, closes on Escape (when not blocked), and emits
   `confirm` / `cancel` so the caller doesn't need to wire its own.
 
-  Brand spec:
-    - Background `--dialog-bg` (#2E3840 dark / #FFFFFF light)
-    - Scrim `--dialog-scrim` (#000 60% dark / 40% light)
+  Brand spec (§5.14, all values driven by tokens — do NOT hardcode
+  the literal hex; tokens are the source of truth in brand-tokens.css):
+    - Background `--dialog-bg`
+    - Scrim       `--dialog-scrim`
+    - Shadow      `--dialog-shadow`
     - 16 dp radius, 24 dp content padding
-    - Confirm button: maroon (--accent) — destructive sits on maroon
+    - Confirm button: btn-primary (maroon) — destructive sits on maroon
       per §5.14 (visual cue is the dialog itself, not red on red)
-    - Cancel button: text-style (--secondary)
+    - Cancel button: btn-ghost (text-style, copper-on-dark)
 
   Usage:
 
@@ -172,9 +174,9 @@
     inline-size: 100%;
     max-inline-size: 480px;
     padding: 24px;
-    /* §5.14 dialog elevation via the brand-token shadow; the previous
-       literal rgba(0,0,0,0.35) ignored the light-theme adjustment in
-       §5.2 (#333F48 at 8%). */
+    /* §5.14 dialog elevation via the brand-token shadow — token is
+       theme-aware (light shadow is keyed off slate at 8% opacity in
+       §5.2; dark uses a deeper drop). Never hardcode rgba here. */
     box-shadow: var(--dialog-shadow);
     /* The scrim's fixed-position container scrolls the body, but make
        sure a very tall dialog body doesn't push the actions out of

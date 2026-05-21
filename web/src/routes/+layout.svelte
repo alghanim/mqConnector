@@ -355,10 +355,10 @@
     z-index: 100;
     padding: 8px 12px;
     background: var(--accent);
-    color: var(--accent-contrast, var(--bg));
+    color: var(--accent-contrast);
     text-decoration: none;
     font-weight: 600;
-    border-radius: 4px;
+    border-radius: 12px;
     transform: translateY(-150%);
     transition: transform 0.15s ease;
   }
@@ -411,7 +411,7 @@
     justify-content: center;
     width: 36px;
     height: 36px;
-    border-radius: 10px;
+    border-radius: 12px;
     background: var(--surface-2);
     border: 1px solid var(--border);
     color: var(--text);
@@ -426,8 +426,13 @@
     font-weight: 700;
     letter-spacing: -0.01em;
   }
+  /*
+   * Wordmark "Connector" used to render in --accent (maroon). Reserved
+   * the maroon for the Logo glyph (and live CTAs / count badges) so the
+   * eye finds maroon = action, not maroon = branding text.
+   */
   .brand-name-accent {
-    color: var(--accent);
+    color: var(--text);
   }
   .brand-tagline {
     margin-top: 2px;
@@ -462,8 +467,8 @@
     align-items: center;
     gap: 0.625rem;
     padding: 0.5rem 0.625rem;
-    border-radius: 0.5rem;
-    color: var(--text-secondary, var(--text));
+    border-radius: 0.75rem;
+    color: var(--text-muted);
     text-decoration: none;
     font-size: 0.8125rem;
     font-weight: 500;
@@ -476,14 +481,20 @@
     background: var(--surface-2);
     color: var(--text);
   }
+  /*
+   * Active-nav indicator: gold (--primary), not maroon. Maroon (--accent)
+   * is reserved for actions (CTAs, count badges, destructive). A nav
+   * indicator is selection, not action — per brand-guide §5.3 it sits in
+   * the gold family.
+   */
   .nav-item.active {
     background: var(--surface-2);
     color: var(--text);
     font-weight: 600;
-    box-shadow: inset 3px 0 0 var(--accent);
+    box-shadow: inset 3px 0 0 var(--primary);
   }
   :global([dir='rtl']) .nav-item.active {
-    box-shadow: inset -3px 0 0 var(--accent);
+    box-shadow: inset -3px 0 0 var(--primary);
   }
   .nav-icon {
     display: inline-flex;
@@ -494,7 +505,7 @@
     flex-shrink: 0;
   }
   .nav-item.active .nav-icon {
-    color: var(--accent);
+    color: var(--primary);
   }
   .nav-label {
     flex: 1;
@@ -502,6 +513,11 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /*
+   * Nav badge = count badge (DLQ count). §5.5 allows pill + maroon here:
+   * count badges are the one exception where pill radius AND --accent
+   * background are both correct.
+   */
   .nav-badge {
     display: inline-flex;
     align-items: center;
@@ -511,7 +527,7 @@
     padding-inline: 6px;
     border-radius: 999px;
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-on);
     font-size: 0.6875rem;
     font-weight: 600;
     letter-spacing: 0.02em;
@@ -531,7 +547,7 @@
     gap: 0.5rem;
     flex: 1;
     padding: 0.5rem 0.625rem;
-    border-radius: 0.5rem;
+    border-radius: 0.75rem;
     border: 1px dashed var(--border-strong);
     background: transparent;
     color: var(--text-muted);
@@ -551,7 +567,7 @@
     flex: 0 0 auto;
     inline-size: 30px;
     block-size: 30px;
-    border-radius: 6px;
+    border-radius: 0.75rem;
     border: 1px dashed var(--border-strong);
     background: transparent;
     color: var(--text-muted);
@@ -602,7 +618,7 @@
     gap: 0.5rem;
     padding-block: 0.3125rem;
     padding-inline: 0.625rem 0.5rem;
-    border-radius: 0.5rem;
+    border-radius: 0.75rem;
     border: 1px solid var(--border);
     background: var(--surface-2);
     color: var(--text-muted);
@@ -636,6 +652,11 @@
     font-family: 'SFMono-Regular', Menlo, monospace;
   }
 
+  /*
+   * 32×32 icon button — 12dp radius per brand-guide Rule 9 (pill is
+   * reserved for count badges). The maroon dot indicator (-dot) DOES
+   * stay pill: it's a count-indicator, the one allowed pill use.
+   */
   .icon-btn {
     position: relative;
     display: inline-flex;
@@ -643,7 +664,7 @@
     justify-content: center;
     width: 32px;
     height: 32px;
-    border-radius: 999px;
+    border-radius: 12px;
     border: 1px solid var(--border);
     background: var(--surface-2);
     color: var(--text);

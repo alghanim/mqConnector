@@ -117,11 +117,12 @@
   .alert-body { flex: 1; min-inline-size: 0; }
   .alert-title { font-weight: 600; margin-bottom: 4px; }
   .alert-content :global(p) { margin: 0; }
+  /* 24×24 close button — 12dp per Rule 9, not pill. */
   .alert-dismiss {
     flex-shrink: 0;
     inline-size: 24px;
     block-size: 24px;
-    border-radius: 999px;
+    border-radius: 12px;
     background: transparent;
     color: currentColor;
     border: none;

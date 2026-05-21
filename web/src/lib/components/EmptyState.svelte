@@ -28,14 +28,14 @@
       <svg viewBox="0 0 200 120" width="200" height="120">
         <defs>
           <linearGradient id="es-gold" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stop-color="#F8E08E" stop-opacity=".8" />
-            <stop offset="100%" stop-color="#8F6A2A" stop-opacity=".6" />
+            <stop offset="0%" style="stop-color: var(--palette-light-gold); stop-opacity: .8" />
+            <stop offset="100%" style="stop-color: var(--palette-dark-gold); stop-opacity: .6" />
           </linearGradient>
         </defs>
         <rect x="14" y="40" width="60" height="40" rx="10" fill="var(--surface-2)" stroke="var(--border-strong)" />
         <rect x="126" y="40" width="60" height="40" rx="10" fill="var(--surface-2)" stroke="var(--border-strong)" />
         <path d="M74 60 H126" stroke="url(#es-gold)" stroke-width="2.5" stroke-dasharray="4 4" />
-        <circle cx="100" cy="60" r="6" fill="#8B153D" />
+        <circle cx="100" cy="60" r="6" fill="var(--palette-dark-gold)" />
         <text x="44" y="65" text-anchor="middle" fill="var(--text-muted)" font-size="10" font-family="SFMono-Regular, Menlo, monospace">SRC</text>
         <text x="156" y="65" text-anchor="middle" fill="var(--text-muted)" font-size="10" font-family="SFMono-Regular, Menlo, monospace">DST</text>
       </svg>
@@ -43,8 +43,8 @@
       <svg viewBox="0 0 200 120" width="200" height="120">
         <defs>
           <linearGradient id="es-pipe" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stop-color="#F8E08E" stop-opacity=".75" />
-            <stop offset="100%" stop-color="#8F6A2A" stop-opacity=".55" />
+            <stop offset="0%" style="stop-color: var(--palette-light-gold); stop-opacity: .75" />
+            <stop offset="100%" style="stop-color: var(--palette-dark-gold); stop-opacity: .55" />
           </linearGradient>
         </defs>
         <circle cx="22" cy="60" r="10" fill="var(--surface-2)" stroke="var(--border-strong)" />
@@ -53,38 +53,38 @@
         <rect x="142" y="50" width="36" height="20" rx="6" fill="var(--surface-2)" stroke="var(--border-strong)" />
         <circle cx="190" cy="60" r="10" fill="var(--surface-2)" stroke="var(--border-strong)" />
         <path d="M32 60 H50 M86 60 H96 M132 60 H142 M178 60 H180" stroke="url(#es-pipe)" stroke-width="2" />
-        <circle cx="68" cy="60" r="2" fill="#8B153D" />
-        <circle cx="114" cy="60" r="2" fill="#8B153D" />
-        <circle cx="160" cy="60" r="2" fill="#8B153D" />
+        <circle cx="68" cy="60" r="2" fill="var(--palette-dark-gold)" />
+        <circle cx="114" cy="60" r="2" fill="var(--palette-dark-gold)" />
+        <circle cx="160" cy="60" r="2" fill="var(--palette-dark-gold)" />
       </svg>
     {:else if illustration === 'dlq'}
       <svg viewBox="0 0 200 120" width="200" height="120">
         <rect x="50" y="30" width="100" height="60" rx="10" fill="var(--surface-2)" stroke="var(--border-strong)" />
         <path d="M70 60 H130" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-dasharray="3 3" />
-        <circle cx="100" cy="20" r="14" fill="none" stroke="#3FB950" stroke-width="2.5" />
-        <path d="M93 20 l5 5 l9 -10" stroke="#3FB950" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        <circle cx="100" cy="20" r="14" fill="none" stroke="var(--palette-success-text-dark)" stroke-width="2.5" />
+        <path d="M93 20 l5 5 l9 -10" stroke="var(--palette-success-text-dark)" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
     {:else if illustration === 'metrics'}
       <svg viewBox="0 0 200 120" width="200" height="120">
         <defs>
           <linearGradient id="es-line" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stop-color="#F8E08E" />
-            <stop offset="100%" stop-color="#8F6A2A" />
+            <stop offset="0%" style="stop-color: var(--palette-light-gold)" />
+            <stop offset="100%" style="stop-color: var(--palette-dark-gold)" />
           </linearGradient>
         </defs>
         <line x1="20" y1="100" x2="180" y2="100" stroke="var(--border-strong)" />
         <line x1="20" y1="20" x2="20" y2="100" stroke="var(--border-strong)" />
         <polyline points="22,80 50,72 80,82 110,52 140,60 180,32" fill="none" stroke="url(#es-line)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
-        <circle cx="180" cy="32" r="3.5" fill="#8B153D" />
+        <circle cx="180" cy="32" r="3.5" fill="var(--palette-light-gold)" stroke="var(--palette-dark-gold)" stroke-width="1" />
       </svg>
     {:else if illustration === 'tenants'}
       <svg viewBox="0 0 200 120" width="200" height="120">
         <rect x="14" y="46" width="50" height="50" rx="8" fill="var(--surface-2)" stroke="var(--border-strong)" />
         <rect x="74" y="32" width="50" height="64" rx="8" fill="var(--surface-2)" stroke="var(--border-strong)" />
         <rect x="134" y="50" width="50" height="46" rx="8" fill="var(--surface-2)" stroke="var(--border-strong)" />
-        <circle cx="39" cy="38" r="6" fill="#8B153D" />
-        <circle cx="99" cy="22" r="6" fill="#F8E08E" stroke="#8F6A2A" stroke-width="1" />
-        <circle cx="159" cy="42" r="6" fill="#A59F8A" />
+        <circle cx="39" cy="38" r="6" fill="var(--palette-copper)" />
+        <circle cx="99" cy="22" r="6" fill="var(--palette-light-gold)" stroke="var(--palette-dark-gold)" stroke-width="1" />
+        <circle cx="159" cy="42" r="6" fill="var(--palette-olive-gold)" />
       </svg>
     {:else}
       <svg viewBox="0 0 200 120" width="200" height="120">

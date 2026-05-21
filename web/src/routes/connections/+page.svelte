@@ -533,7 +533,14 @@
     white-space: nowrap;
   }
 
-  /* per-type colour hint, very subtle */
+  /*
+   * Neutral monogram chip — the broker type is communicated by the
+   * icon glyph itself + the type code rendered next to the connection
+   * name. We deliberately do NOT tint by vendor brand colours
+   * (#ff6600 RabbitMQ orange, #1f70c1 IBM blue, etc.); those sit
+   * outside the closed brand palette and shout louder than every
+   * other surface on the page.
+   */
   .cell-type-icon {
     display: inline-flex;
     align-items: center;
@@ -544,23 +551,14 @@
     background: var(--surface-2);
     color: var(--text-muted);
   }
-  .cell-type-icon[data-type='rabbitmq'] {
-    color: #ff6600;
-  }
-  .cell-type-icon[data-type='kafka'] {
-    color: #6b6b6b;
-  }
-  .cell-type-icon[data-type='ibm'] {
-    color: #1f70c1;
-  }
 
-  /* test status pill — narrow, inline with the name */
+  /* test status pill — labeled chip, 12dp per Rule 9 (not pill). */
   .test-pill {
     display: inline-flex;
     align-items: center;
     gap: 4px;
     padding: 2px 6px;
-    border-radius: 999px;
+    border-radius: 12px;
     font-size: 0.6875rem;
     font-weight: 500;
     margin-inline-start: 6px;

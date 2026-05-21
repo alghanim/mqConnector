@@ -613,16 +613,16 @@
     display: inline-flex;
     align-items: center;
     padding: 0.5rem 0.875rem;
-    border-radius: 8px;
+    border-radius: 12px;
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-on);
     text-decoration: none;
     font-size: 0.875rem;
     font-weight: 500;
     border: 1px solid var(--accent);
-    transition: filter 150ms;
+    transition: background-color 150ms;
   }
   .link-cta:hover {
-    filter: brightness(1.1);
+    background: var(--accent-hover);
   }
 </style>
