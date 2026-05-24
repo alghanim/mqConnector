@@ -218,6 +218,41 @@ type DLQEntry struct {
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
+// PipelineRevision is an append-only snapshot of a pipeline's full
+// configuration at a point in time. Saving a pipeline writes a new
+// revision row with deployed_at = NULL; deploying writes the snapshot
+// through to the live tables and sets deployed_at. Hash dedup at the
+// repo layer collapses a re-save with identical bytes into the
+// existing row (so a "save" that changed nothing doesn't churn the
+// history) — see PipelineRevisionRepo.Create.
+type PipelineRevision struct {
+	ID              string     `json:"id"`
+	TenantID        string     `json:"tenant_id"`
+	PipelineID      string     `json:"pipeline_id"`
+	RevisionNumber  int        `json:"revision_number"`
+	Snapshot        string     `json:"snapshot"` // canonical JSON; see PipelineSnapshot
+	SnapshotHash    string     `json:"snapshot_hash"`
+	AuthorSub       string     `json:"author_sub"`
+	AuthorUsername  string     `json:"author_username"`
+	ChangeSummary   string     `json:"change_summary"`
+	CreatedAt       time.Time  `json:"created_at"`
+	DeployedAt      *time.Time `json:"deployed_at,omitempty"`
+	DeployRequestID string     `json:"deploy_request_id,omitempty"`
+}
+
+// PipelineSnapshot is the canonical shape encoded inside
+// PipelineRevision.Snapshot. SchemaVersion starts at 1; any additive
+// change must remain backwards-compatible so an older binary can read
+// a newer snapshot. New fields land as `omitempty` and never as
+// breaking renames of existing ones.
+type PipelineSnapshot struct {
+	Pipeline      *Pipeline      `json:"pipeline"`
+	Stages        []*Stage       `json:"stages"`
+	Transforms    []*Transform   `json:"transforms"`
+	RoutingRules  []*RoutingRule `json:"routing_rules"`
+	SchemaVersion int            `json:"snapshot_schema_version"`
+}
+
 // DLQRedactionRule is one redaction rule attached to a pipeline.
 // Rules are applied in `Order` order by the DLQ Push path before
 // the row is persisted. The repo's Replace method writes TenantID

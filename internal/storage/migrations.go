@@ -682,6 +682,47 @@ var migrations = []string{
 	  REFERENCES connections(id) ON DELETE SET NULL;
 	ALTER TABLE pipelines ADD COLUMN shadow_percent INTEGER NOT NULL DEFAULT 0;
 	`,
+	// 0022 — pipeline revisions (Pipeline Studio foundation).
+	//
+	// Append-only history of a pipeline's full configuration. Saving a
+	// pipeline writes a new revision row with deployed_at = NULL;
+	// deploying writes the snapshot back to the live tables and stamps
+	// deployed_at. The snapshot column holds canonical JSON of the
+	// pipeline + stages + transforms + routing_rules; snapshot_hash is
+	// the SHA-256 of that bytes so the repo can dedupe no-op saves at
+	// the storage layer rather than the handler.
+	//
+	// Indexes: (pipeline_id, revision_number DESC) is the workhorse for
+	// the "show me the latest N revisions of this pipeline" view; the
+	// secondary (tenant_id, created_at DESC) supports the future cross-
+	// pipeline activity feed without a scan.
+	//
+	// pipelines.requires_approval is added in the same migration as
+	// Wave-5 forward-compat. Default false, unsurfaced for now; the
+	// deploy handler in Wave 5 will gate publish on it.
+	`
+	CREATE TABLE IF NOT EXISTS pipeline_revisions (
+		id                 TEXT PRIMARY KEY,
+		tenant_id          TEXT NOT NULL,
+		pipeline_id        TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+		revision_number    INTEGER NOT NULL,
+		snapshot           TEXT NOT NULL,
+		snapshot_hash      TEXT NOT NULL,
+		author_sub         TEXT NOT NULL,
+		author_username    TEXT NOT NULL DEFAULT '',
+		change_summary     TEXT NOT NULL DEFAULT '',
+		created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deployed_at        DATETIME,
+		deploy_request_id  TEXT NOT NULL DEFAULT '',
+		UNIQUE (pipeline_id, revision_number)
+	);
+	CREATE INDEX IF NOT EXISTS idx_pipeline_revisions_pipeline
+	  ON pipeline_revisions(pipeline_id, revision_number DESC);
+	CREATE INDEX IF NOT EXISTS idx_pipeline_revisions_tenant
+	  ON pipeline_revisions(tenant_id, created_at DESC);
+
+	ALTER TABLE pipelines ADD COLUMN requires_approval BOOLEAN NOT NULL DEFAULT 0;
+	`,
 }
 
 // postgresMigrationOverrides supersedes specific entries in `migrations`
