@@ -124,6 +124,68 @@ func (r *PipelineRevisionRepo) Create(ctx context.Context, tenantID string, rev 
 	return nil
 }
 
+// CreateForce inserts a new revision row WITHOUT the hash-dedup check
+// that Create applies. Used by the server-layer rollback handler: a
+// rollback re-publishes a prior revision's snapshot as a new
+// chronological entry, which carries operator intent (change_summary,
+// requesting user, deploy request id) that must be preserved even
+// when the snapshot bytes match the latest revision. The save-and-
+// ship PUT path keeps using Create — it's the legacy "saving the
+// same bytes twice is a no-op" contract.
+//
+// Allocates a new revision_number atomically under the per-pipeline
+// mutex, just like Create. created_at and tenant_id are populated by
+// this method; deployed_at stays NULL (the caller invokes
+// MarkDeployed when appropriate).
+func (r *PipelineRevisionRepo) CreateForce(ctx context.Context, tenantID string, rev *PipelineRevision) error {
+	if tenantID == "" {
+		return ErrTenantRequired
+	}
+	if rev == nil {
+		return errors.New("storage: nil pipeline revision")
+	}
+	if rev.PipelineID == "" {
+		return errors.New("storage: revision missing pipeline_id")
+	}
+	if rev.SnapshotHash == "" {
+		return errors.New("storage: revision missing snapshot_hash")
+	}
+
+	mu := r.pipelineLock(rev.PipelineID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if rev.ID == "" {
+		rev.ID = uuid.NewString()
+	}
+	rev.TenantID = tenantID
+	rev.CreatedAt = time.Now().UTC()
+	rev.DeployedAt = nil
+
+	var maxRev sql.NullInt64
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT MAX(revision_number) FROM pipeline_revisions
+		 WHERE pipeline_id = ? AND tenant_id = ?`,
+		rev.PipelineID, tenantID).Scan(&maxRev); err != nil {
+		return fmt.Errorf("max revision_number: %w", err)
+	}
+	rev.RevisionNumber = int(maxRev.Int64) + 1
+
+	if _, err := r.db.ExecContext(ctx, `
+		INSERT INTO pipeline_revisions (id, tenant_id, pipeline_id, revision_number,
+		                                snapshot, snapshot_hash, author_sub,
+		                                author_username, change_summary, created_at,
+		                                deploy_request_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rev.ID, tenantID, rev.PipelineID, rev.RevisionNumber,
+		rev.Snapshot, rev.SnapshotHash, rev.AuthorSub,
+		rev.AuthorUsername, rev.ChangeSummary, rev.CreatedAt,
+		rev.DeployRequestID); err != nil {
+		return fmt.Errorf("insert pipeline_revision: %w", err)
+	}
+	return nil
+}
+
 // List returns revisions for one pipeline, newest-first, paginated.
 // Returns (rows, total, error). limit <= 0 falls back to 50; offset
 // is taken as-is (negative offsets are coerced to 0).

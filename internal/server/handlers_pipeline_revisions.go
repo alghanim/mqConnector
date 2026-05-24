@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -325,14 +326,16 @@ func (s *Server) handleRollbackRevision(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Body is optional. Empty body / "{}"  is fine; only a structural
-	// JSON error or an unknown field trips a 400.
+	// Body is optional. An entirely empty request body (no bytes)
+	// short-circuits the decoder so a caller invoking the endpoint
+	// without a Content-Type doesn't trip a 400; a non-empty body
+	// must still parse as JSON and pass DisallowUnknownFields. The
+	// `if err != io.EOF` shape covers the body-less case under both
+	// http.NoBody and a zero-length io.Reader.
 	var body rollbackRequest
-	if r.ContentLength > 0 {
-		if err := decodeJSON(r, &body); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
+	if err := decodeJSON(r, &body); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
 	}
 
 	target, err := s.store.PipelineRevisions.Get(r.Context(), tenant, id, revNum)
@@ -383,7 +386,14 @@ func (s *Server) handleRollbackRevision(w http.ResponseWriter, r *http.Request) 
 		ChangeSummary:   summary,
 		DeployRequestID: requestID,
 	}
-	if err := s.store.PipelineRevisions.Create(r.Context(), tenant, newRev); err != nil {
+	// Use CreateForce so the per-pipeline hash-dedup that Create
+	// applies doesn't collapse the rollback's new row into the
+	// target revision when the target IS already the most recent
+	// revision. A rollback carries operator intent (the
+	// change_summary, the request id) that we record even when the
+	// snapshot bytes haven't moved — dedup would silently swallow
+	// that intent.
+	if err := s.store.PipelineRevisions.CreateForce(r.Context(), tenant, newRev); err != nil {
 		s.logger.Warn("rollback: revision insert failed",
 			"err", err, "pipeline_id", id, "source_revision", revNum)
 		writeError(w, http.StatusInternalServerError, err.Error())
