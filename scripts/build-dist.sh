@@ -20,7 +20,7 @@ mkdir -p "$STAGE"
 
 cp dist/mqconnector "$STAGE/"
 cp config.example.yaml "$STAGE/"
-cp README.md COMPLIANCE.md BRAND-COMPLIANCE.md VERSION "$STAGE/"
+cp README.md COMPLIANCE.md CHANGELOG.md VERSION "$STAGE/"
 
 cat > "$STAGE/mqconnector.service" <<'SERVICE'
 [Unit]

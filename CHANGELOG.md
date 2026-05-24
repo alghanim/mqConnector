@@ -26,6 +26,37 @@ This section accumulates changes between tagged releases. Move entries into a ne
 
 ---
 
+## [1.3.0] — 2026-05-24
+
+Operability + compliance release. Ten additive features layered on the 1.2.0 enterprise-hardening base: payload-level PII protection on the DLQ, a destination-side dedup window for non-idempotent downstreams, pluggable key custody (Vault), schema-drift detection earlier than DLQ-depth alarms, per-stage latency observation without a trace backend, CEF for SIEM integrations, tenant-aggregate fairness, broker-side mTLS hot reload, bulk DLQ triage, and shadow-destination canarying for broker migrations. No breaking changes — every new field is default-off and preserves prior behaviour.
+
+### Added
+
+- **DLQ payload redaction with sealed raw** (migration 0019): per-pipeline jsonpath/regex rules applied at DLQ Push time. The redacted form lives in `original_msg`; the pre-redaction bytes are envelope-encrypted into `raw_msg` under the existing `MQC_MASTER_KEY`. New admin-gated endpoint `GET /api/v1/dlq/{id}/raw` decrypts on demand and emits a dedicated `action=dlq_raw_view` audit row for every read. `PUT /api/v1/pipelines/{id}/dlq-redaction-rules` (admin) validates patterns at edit time and refuses with 412 when no master key is configured — redacting without a sealed raw would silently destroy the original. Retry uses the raw payload so redacted bytes never reach the destination.
+- **Destination-side dedup window** (migration 0020): per-pipeline `dedup_window_seconds` (default 0 = disabled). When set, the executor SHA-256s the post-stage payload and skips outbound sends for byte-identical payloads observed within the window. The source is still committed (operator opted into "treat as same message"), upgrading the global at-least-once contract to effectively-once for the configured window. New `mqconnector_dedup_skipped_total` counter. 15-min prune sweeper.
+- **Pluggable secrets provider**: new `secrets.source = env | file | vault` config block. `EnvProvider` wraps the historical `MQC_MASTER_KEY`/`MQC_MASTER_KEYS` path unchanged. `FileProvider` reads a key file (for Vault Agent sidecar, k8s Secret mount, sealed-secrets, SOPS-decrypted artifacts). `VaultProvider` fetches a HashiCorp Vault KV v2 secret over a minimal HTTP client (no hashicorp/vault dep added) — each `v{N}` field becomes one envelope key version; rotation = `vault kv put` + `POST /api/v1/secrets/rotate`.
+- **Schema drift alarm**: new `mqconnector_validate_attempts_total` / `_failures_total` counters wired off a new per-stage `StageRun` observation log returned by `RunStages`. Two new alert rules in `deploy/prometheus/mqconnector-slos.yaml`: `mqConnectorSchemaDriftSuspected` (>20% validate failure rate, 3 min, attempts > 0.1/s) and `mqConnectorSchemaDriftSevere` (>80%, 1 min). Catches producer-side schema changes at the inflection point, before DLQ-depth alarms fire on the downstream effect.
+- **Per-stage latency histogram**: `mqconnector_stage_duration_ms_{bucket,sum,count}` labelled by `(pipeline_id, source, dest, stage)`. Lets air-gapped operators answer "which stage is slow?" from the embedded Grafana dashboard without a Tempo/Jaeger backend. Same observation hook the drift alarm uses; zero hot-path cost beyond a `time.Since` call.
+- **CEF audit-log wire format**: new `audit.syslog_format = rfc5424 | cef` option on the existing syslog forwarder. CEF (ArcSight Common Event Format) lets the audit feed plug into ArcSight ESM / QRadar DSM pipelines that key on the CEF schema. Pipes and equals signs in extension values are escaped per spec so an injected actor name can't smuggle k/v pairs into the parsed event.
+- **Tenant-aggregate fairness budget**: activates `tenant.MaxMsgsPerMinute` for the pipeline path (until 1.3.0 it was wired only to the HTTP rate limiter). The manager caches one shared `*budget` per `tenant_id` and hands it to every executor that serves a pipeline in that tenant; the executor takes the tenant slot BEFORE the per-pipeline slot. Closes the prior fairness gap where a runaway pipeline under tenant T could monopolise broker bandwidth allocated to T, starving sibling pipelines.
+- **Broker mTLS hot reload**: `BuildTLSConfig` now wires `GetClientCertificate` to a per-(`certPath`, `keyPath`) cached `clientCertReloader` that stats the files on every handshake and reloads on mtime change. An external cert rotator (cert-manager, certbot, internal CA renewer) can swap the PEM files without a process restart; new broker connections pick up the rotated keypair on the next handshake. Connections established before the rotation keep using the previous cert until they reconnect.
+- **Bulk DLQ triage**: new operator-gated `POST /api/v1/dlq/bulk/retry` and `POST /api/v1/dlq/bulk/delete` endpoints that take the same filter shape as the list endpoint (query params or JSON body) with a configurable `max_rows` cap. New `GET /api/v1/dlq/groups` aggregation returns top-N error-reason buckets. The `/dlq` page in the SvelteKit UI surfaces a top-patterns chip strip (click to filter) and an additional bulk action bar when the filter matches more rows than fit on the visible page.
+- **Pipeline shadow/canary mode** (migration 0021): per-pipeline `shadow_destination_id` + `shadow_percent`. After a successful prod send, the executor ALSO publishes the same payload to the shadow destination for the configured fraction of messages, sampled deterministically by payload hash so redeliveries hit the same decision twice. Failures on the shadow path are counted (`mqconnector_shadow_sent_total` / `_failed_total`) but NEVER affect the prod commit-to-source decision. Use cases: rehearse a broker migration with a parallel candidate cluster, validate a new downstream consumer against real traffic before cutover.
+
+### Changed
+
+- **`RunStages` signature**: `StageOutcome` grows a `Runs []StageRun` field carrying per-stage `Name`, `Duration`, and `Failed` flag. Existing callers (preview handler, replay tool) get the new field for free; the executor consumes it to feed validate-attempt and per-stage-duration metrics without parsing error strings.
+- **History hygiene**: residual brand-guide phrasing removed from the frontend; the local main history was rewritten to eliminate brand-context references (the IBM software license country list was intentionally preserved — it's a third-party document, not a brand reference).
+
+### Upgrade notes
+
+- No config changes are required to upgrade — every new feature is opt-in. The default behaviour of every existing field is unchanged.
+- To turn on dedup for a pipeline: `PUT /api/v1/pipelines/{id}` with `dedup_window_seconds > 0`.
+- To turn on Vault-backed key custody: set `secrets.source: vault` plus the Vault address/mount/path in config, supply `VAULT_TOKEN`, and place the master key as `v1: <hex>` fields under the secret. `MQC_MASTER_KEY` continues to work for sites that aren't using Vault.
+- The new schema-drift alerts need the updated `mqconnector-slos.yaml` reloaded into Prometheus.
+
+---
+
 ## [1.2.0] — 2026-05-21
 
 Enterprise-hardening release. Closes every outstanding item from the May 2026 production-readiness audit, completes the Postgres production-supported backend, lands per-pipeline RBAC, and rounds out observability for the full operational surface (DLQ, leadership, encryption-at-rest, broker backlog). Breaking-for-operators: prod-mode startup now refuses without `MQC_MASTER_KEY` — set the env var or stay in dev mode.
