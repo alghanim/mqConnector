@@ -116,4 +116,45 @@ describe('StudioInspector', () => {
     // Selection clears as a side-effect of removeStage.
     expect(get(studio).selectedNodeId).toBe(null);
   });
+
+  // ─── Task 10 — per-stage editor wire-in ─────────────────────────
+  // The inspector picks the per-type editor based on stage_type and
+  // routes edits back through studio.patchStage. Two cases cover the
+  // happy path: render the right editor + propagate an edit.
+
+  it('renders FilterEditor when a filter stage is selected', async () => {
+    primeStore([makeStage(1, 'filter', 'flt-1')]);
+    studio.selectNode('flt-1');
+    const { getByText } = render(StudioInspector);
+    await waitFor(() =>
+      // FilterEditor's help string from i18n.
+      expect(getByText(/Dot-paths to strip/i)).toBeInTheDocument()
+    );
+  });
+
+  it('editor edits propagate back to the studio store', async () => {
+    primeStore([
+      {
+        id: 'flt-2',
+        stage_order: 1,
+        stage_type: 'filter',
+        stage_config: '{"paths":[]}',
+        enabled: true
+      }
+    ]);
+    studio.selectNode('flt-2');
+    const { getByText, getByPlaceholderText } = render(StudioInspector);
+    // FilterEditor input + Add button.
+    const input = await waitFor(() =>
+      getByPlaceholderText(/customer\.secret/i)
+    );
+    await fireEvent.input(input, { target: { value: 'a.b' } });
+    await fireEvent.click(getByText('Add path'));
+    // queueMicrotask + Svelte reactivity propagate the change to the
+    // store. We wait until the persisted stage_config reflects it.
+    await waitFor(() => {
+      const updated = get(studio).draft!.stages.find((s) => s.id === 'flt-2');
+      expect(updated?.stage_config || '').toContain('a.b');
+    });
+  });
 });
