@@ -185,6 +185,14 @@ func (s *Server) routes() http.Handler {
 			r.Get("/{id}/grants", s.handleListPipelineGrants)
 			r.Put("/{id}/grants/{userSub}", s.handleSetPipelineGrant)
 			r.Delete("/{id}/grants/{userSub}", s.handleDeletePipelineGrant)
+			// Per-pipeline DLQ redaction rules. PUT is admin-only
+			// because malformed rules can mask all DLQ output (visible
+			// regression) and badly-scoped rules can leak PII (silent
+			// regression); both deserve audit-log coverage that the
+			// admin path already gets via AuditAdminActions.
+			r.Get("/{id}/dlq-redaction-rules", s.handleListDLQRedactionRules)
+			r.With(s.auth.RequireRole("admin")).
+				Put("/{id}/dlq-redaction-rules", s.handleReplaceDLQRedactionRules)
 		})
 		r.Post("/api/v1/reload", s.handleReload)
 		r.Post("/api/v1/pipelines/{id}/replay", s.handleReplayPipeline)
@@ -193,6 +201,9 @@ func (s *Server) routes() http.Handler {
 			r.Get("/", s.handleListDLQ)
 			r.Post("/{id}/retry", s.handleRetryDLQ)
 			r.Delete("/{id}", s.handleDeleteDLQ)
+			// Raw payload view is admin-only; every successful read
+			// is audited as action=dlq_raw_view (see handler).
+			r.With(s.auth.RequireRole("admin")).Get("/{id}/raw", s.handleGetDLQRaw)
 		})
 
 		r.Route("/api/v1/scripts", func(r chi.Router) {

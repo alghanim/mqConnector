@@ -28,12 +28,19 @@ func (r *DLQRepo) Insert(ctx context.Context, tenantID string, e *DLQEntry) erro
 	if e.NextRetryAt != nil {
 		nextRetry = e.NextRetryAt.UTC()
 	}
+	// RawMsg is left as nil when no redaction was applied — the column
+	// has a NOT NULL constraint and DEFAULT '' so the driver coerces
+	// nil into an empty BLOB / bytea cleanly.
+	rawMsg := e.RawMsg
+	if rawMsg == nil {
+		rawMsg = []byte{}
+	}
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO dlq (id, tenant_id, pipeline_id, source_queue, original_msg, error_reason,
-		                 retry_count, created_at, next_retry_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, tenantID, nullable(e.PipelineID), e.SourceQueue, e.OriginalMsg, e.ErrorReason,
-		e.RetryCount, e.CreatedAt, nextRetry)
+		INSERT INTO dlq (id, tenant_id, pipeline_id, source_queue, original_msg, raw_msg, redacted,
+		                 error_reason, retry_count, created_at, next_retry_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, tenantID, nullable(e.PipelineID), e.SourceQueue, e.OriginalMsg, rawMsg, e.Redacted,
+		e.ErrorReason, e.RetryCount, e.CreatedAt, nextRetry)
 	if err != nil {
 		return fmt.Errorf("insert dlq: %w", err)
 	}
@@ -282,14 +289,15 @@ func (r *DLQRepo) ScheduleRetry(ctx context.Context, tenantID, id string, next *
 }
 
 const dlqSelect = `
-SELECT id, tenant_id, COALESCE(pipeline_id, ''), source_queue, original_msg, error_reason,
-       retry_count, last_retry_at, next_retry_at, created_at
+SELECT id, tenant_id, COALESCE(pipeline_id, ''), source_queue, original_msg, raw_msg, redacted,
+       error_reason, retry_count, last_retry_at, next_retry_at, created_at
 FROM dlq`
 
 func scanDLQ(s scanner) (*DLQEntry, error) {
 	e := &DLQEntry{}
 	var lastRetry, nextRetry sql.NullTime
 	err := s.Scan(&e.ID, &e.TenantID, &e.PipelineID, &e.SourceQueue, &e.OriginalMsg,
+		&e.RawMsg, &e.Redacted,
 		&e.ErrorReason, &e.RetryCount, &lastRetry, &nextRetry, &e.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound

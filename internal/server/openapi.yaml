@@ -342,10 +342,41 @@ components:
         id: { type: string, format: uuid }
         pipeline_id: { type: string, format: uuid }
         source_queue: { type: string }
-        original_msg: { type: string, format: byte, description: "base64-encoded raw payload" }
+        original_msg:
+          type: string
+          format: byte
+          description: |
+            Base64-encoded payload. When `redacted` is true, this is
+            the post-redaction form; the unmodified bytes live in
+            raw_msg (sealed) and are only retrievable via
+            GET /api/v1/dlq/{id}/raw.
+        redacted:
+          type: boolean
+          description: True when the payload was rewritten by the pipeline's redaction rules at Push time.
         error_reason: { type: string }
         retry_count: { type: integer }
         last_retry_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    DLQRedactionRule:
+      type: object
+      required: [rule_kind, pattern]
+      properties:
+        id: { type: string, format: uuid }
+        pipeline_id: { type: string, format: uuid }
+        rule_kind:
+          type: string
+          enum: [jsonpath, regex]
+          description: |
+            jsonpath: dot/bracket path against a JSON payload; the
+            matched value is replaced with mask_replace. Non-JSON
+            payloads skip the rule cleanly.
+            regex: Go regexp; every match is replaced with
+            mask_replace via ReplaceAll on a byte view of the payload.
+        pattern: { type: string }
+        mask_replace: { type: string, default: "[REDACTED]" }
+        order: { type: integer, description: "Application order; lower runs first." }
+        enabled: { type: boolean, default: true }
         created_at: { type: string, format: date-time }
 
     AuditEntry:
@@ -887,6 +918,82 @@ paths:
       responses:
         '200':
           description: Deleted.
+
+  /api/v1/dlq/{id}/raw:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      summary: Read the unredacted payload of a redacted DLQ entry.
+      description: |
+        Admin-only. Returns the pre-redaction bytes for a row whose
+        payload was masked at Push time by the pipeline's
+        dlq_redaction_rules. Every successful read is recorded in
+        the audit log under action="dlq_raw_view".
+
+        Responds with 204 No Content when the row exists but was
+        never redacted (callers should display the OriginalMsg from
+        the list endpoint directly). 503 when the row is redacted
+        but the master key is no longer configured.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Unredacted payload bytes.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '204':
+          description: Row was not redacted; nothing to disclose beyond the list payload.
+        '404':
+          description: DLQ entry not found.
+        '503':
+          description: Sealer not configured; raw payload cannot be decrypted.
+
+  /api/v1/pipelines/{id}/dlq-redaction-rules:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      summary: List the DLQ redaction rules attached to a pipeline.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Ordered rule set.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/DLQRedactionRule' }
+    put:
+      summary: Replace the DLQ redaction rules attached to a pipeline.
+      description: |
+        Admin-only. Each rule is validated up-front (regex compile,
+        jsonpath syntax). Refused with 412 when no master key is
+        configured — redaction without sealed raw storage is a
+        compliance hazard rather than a feature, so the API forces
+        the encryption posture before rules can be saved.
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items: { $ref: '#/components/schemas/DLQRedactionRule' }
+      responses:
+        '200':
+          description: Rules saved.
+        '400':
+          description: Malformed rule (bad pattern, unknown rule_kind, etc).
+        '404':
+          description: Pipeline not found.
+        '412':
+          description: Master key not configured.
 
   /api/v1/scripts:
     get:

@@ -156,12 +156,34 @@ type Schema struct {
 }
 
 // DLQEntry is a failed message awaiting retry or inspection.
+//
+// Redaction model (added in migration 0019):
+//   - OriginalMsg is the operator-visible payload. With no redaction
+//     rules configured (the default for every pre-0019 pipeline) it
+//     carries the unmodified bytes from the source broker, identical
+//     to pre-0019 behaviour.
+//   - When a pipeline carries one or more dlq_redaction_rules and at
+//     least one rule matches the payload, OriginalMsg is overwritten
+//     with the redacted form, Redacted is set to true, and the
+//     pre-redaction bytes are sealed (envelope-encrypted under the
+//     master key) into RawMsg. The raw form is only ever exposed via
+//     the dedicated raw-view endpoint, which requires admin role and
+//     writes an explicit audit-log entry on every read.
+//   - Retry pulls from RawMsg when present (re-publishing the redacted
+//     form would corrupt the destination payload); falls back to
+//     OriginalMsg for legacy rows and for pipelines without rules.
 type DLQEntry struct {
 	ID          string     `json:"id"`
 	TenantID    string     `json:"tenant_id"`
 	PipelineID  string     `json:"pipeline_id,omitempty"`
 	SourceQueue string     `json:"source_queue,omitempty"`
 	OriginalMsg []byte     `json:"original_msg"`
+	// RawMsg holds the sealed pre-redaction payload as produced by
+	// secrets.Service.Encrypt. Empty when no redaction was applied
+	// to this row. Never returned in list/get responses — the
+	// raw-view endpoint decrypts on demand.
+	RawMsg      []byte     `json:"-"`
+	Redacted    bool       `json:"redacted"`
 	ErrorReason string     `json:"error_reason"`
 	RetryCount  int        `json:"retry_count"`
 	LastRetryAt *time.Time `json:"last_retry_at,omitempty"`
@@ -171,4 +193,20 @@ type DLQEntry struct {
 	// retry policy is non-zero.
 	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// DLQRedactionRule is one redaction rule attached to a pipeline.
+// Rules are applied in `Order` order by the DLQ Push path before
+// the row is persisted. The repo's Replace method writes TenantID
+// from the pipeline's tenant — callers don't manage it directly.
+type DLQRedactionRule struct {
+	ID          string    `json:"id"`
+	TenantID    string    `json:"tenant_id"`
+	PipelineID  string    `json:"pipeline_id"`
+	RuleKind    string    `json:"rule_kind"` // "jsonpath" | "regex"
+	Pattern     string    `json:"pattern"`
+	MaskReplace string    `json:"mask_replace"`
+	Order       int       `json:"order"`
+	Enabled     bool      `json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
 }

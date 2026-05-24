@@ -49,6 +49,7 @@ type Store struct {
 	Webhooks       *WebhookRepo
 	Plugins        *PluginRepo
 	PipelineGrants *PipelineGrantsRepo
+	DLQRedaction   *DLQRedactionRepo
 }
 
 // Dialect reports which SQL flavour the underlying connection speaks.
@@ -131,6 +132,7 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 		Webhooks:       &WebhookRepo{db: wrap},
 		Plugins:        &PluginRepo{db: wrap},
 		PipelineGrants: &PipelineGrantsRepo{db: wrap},
+		DLQRedaction:   &DLQRedactionRepo{db: wrap},
 	}, nil
 }
 

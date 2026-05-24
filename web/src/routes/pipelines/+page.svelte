@@ -713,8 +713,8 @@
   /*
    * Neutral icon tint — broker is identified by the glyph itself + the
    * connection name. Vendor brand colours (#ff6600 RabbitMQ orange,
-   * #1f70c1 IBM blue, etc.) sit outside the closed brand palette and
-   * are not used; DO/DON'T #1.
+   * #1f70c1 IBM blue, etc.) sit outside the app's palette and are not
+   * used; see brand-tokens.css for the closed colour set.
    */
   .flow-ico {
     display: inline-flex;

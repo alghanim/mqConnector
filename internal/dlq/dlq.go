@@ -30,15 +30,42 @@ type EventSink interface {
 	Publish(ctx context.Context, e events.Event) int
 }
 
+// Sealer is the minimal surface dlq uses to encrypt the pre-redaction
+// payload (envelope encryption under the configured master key). The
+// concrete implementation lives in internal/secrets; a nil Sealer
+// disables redaction — the raw form is too sensitive to leave at rest
+// in plaintext, so we refuse to store it when no master key is
+// configured. Push falls back to the legacy "no redaction" path in
+// that case.
+type Sealer interface {
+	Encrypt(plaintext string) (string, error)
+	Decrypt(ciphertext string) (string, error)
+	Enabled() bool
+}
+
 // Service is the DLQ controller. It owns no goroutines; callers drive it.
 type Service struct {
 	store      *storage.Store
 	pool       *mq.Pool
 	maxRetries int
 	logger     *slog.Logger
+	redactor   *Redactor
 
 	sinkMu sync.RWMutex
 	sink   EventSink
+
+	sealerMu sync.RWMutex
+	sealer   Sealer
+}
+
+// SetSealer installs the envelope-encryption service used to seal the
+// pre-redaction payload before it lands in raw_msg. Push falls back to
+// the legacy non-redacting path when the sealer is nil or disabled —
+// the contract is "only store raw if you can store it encrypted."
+func (s *Service) SetSealer(sealer Sealer) {
+	s.sealerMu.Lock()
+	defer s.sealerMu.Unlock()
+	s.sealer = sealer
 }
 
 // SetEventSink installs the publisher Push will emit dlq.pushed to.
@@ -68,6 +95,7 @@ func NewService(store *storage.Store, pool *mq.Pool, opts Options) *Service {
 		pool:       pool,
 		maxRetries: opts.MaxRetries,
 		logger:     logger.With("component", "dlq"),
+		redactor:   NewRedactor(),
 	}
 }
 
@@ -77,6 +105,16 @@ func (s *Service) MaxRetries() int { return s.maxRetries }
 // Push satisfies pipeline.DLQSink — used by Executor to drop failed
 // messages. The entry already carries its tenant id (set by the executor
 // from the pipeline's tenant), so we pass it straight through.
+//
+// Redaction (Phase 19): before the row is persisted, Push consults the
+// pipeline's dlq_redaction_rules. If any rule matches, the
+// pre-redaction bytes are sealed under the master key and stored in
+// raw_msg; OriginalMsg is overwritten with the redacted form; the
+// Redacted flag is set so the operator UI knows to display a
+// redaction-applied affordance and (when permitted) a "show raw"
+// action. When the sealer isn't configured we refuse to store the raw
+// — Push silently skips redaction, leaving the entry untouched, so
+// the operator never ends up with a partially-protected DLQ.
 func (s *Service) Push(ctx context.Context, entry storage.DLQEntry) error {
 	tenant := entry.TenantID
 	if tenant == "" {
@@ -97,6 +135,19 @@ func (s *Service) Push(ctx context.Context, entry storage.DLQEntry) error {
 				t := time.Now().UTC().Add(delay)
 				entry.NextRetryAt = &t
 			}
+		}
+	}
+	// Redaction lookup is scoped to the pipeline. The rules table
+	// owns the (pipeline_id, tenant_id) pair so we can use the
+	// unsafe-by-pipeline-id path; the executor's binding is already
+	// trusted here.
+	if entry.PipelineID != "" && s.store.DLQRedaction != nil {
+		rules, err := s.store.DLQRedaction.ListForPipelineUnsafe(ctx, entry.PipelineID)
+		if err != nil {
+			s.logger.Warn("dlq redaction rule lookup failed",
+				"pipeline_id", entry.PipelineID, "err", err)
+		} else if len(rules) > 0 {
+			s.applyRedaction(&entry, rules)
 		}
 	}
 	if err := s.store.DLQ.Insert(ctx, tenant, &entry); err != nil {
@@ -129,8 +180,88 @@ func (s *Service) Push(ctx context.Context, entry storage.DLQEntry) error {
 	return nil
 }
 
+// applyRedaction runs the configured rules against entry.OriginalMsg.
+// If any rule mutates the payload AND the sealer is configured, the
+// pre-redaction bytes are sealed and stashed in entry.RawMsg, the
+// payload is overwritten with the redacted form, and Redacted is set.
+// If the sealer is unavailable we deliberately leave the entry alone:
+// redacting without preserving the raw would silently destroy the
+// original payload (no replay possible), while storing the raw in
+// cleartext defeats the compliance goal. The operator is expected to
+// configure MQC_MASTER_KEY before turning rules on; if they didn't,
+// the rules become a no-op and we log a warning so the misconfiguration
+// surfaces.
+func (s *Service) applyRedaction(entry *storage.DLQEntry, rules []storage.DLQRedactionRule) {
+	if s.redactor == nil || entry == nil || len(entry.OriginalMsg) == 0 {
+		return
+	}
+	s.sealerMu.RLock()
+	sealer := s.sealer
+	s.sealerMu.RUnlock()
+	if sealer == nil || !sealer.Enabled() {
+		s.logger.Warn("dlq redaction rules configured but no master key — skipping",
+			"pipeline_id", entry.PipelineID)
+		return
+	}
+	redacted, mutated := s.redactor.Apply(entry.OriginalMsg, rules)
+	if !mutated {
+		return
+	}
+	sealed, err := sealer.Encrypt(string(entry.OriginalMsg))
+	if err != nil {
+		s.logger.Error("dlq redaction seal failed — skipping to avoid plaintext raw",
+			"pipeline_id", entry.PipelineID, "err", err)
+		return
+	}
+	entry.RawMsg = []byte(sealed)
+	entry.OriginalMsg = redacted
+	entry.Redacted = true
+}
+
 // ErrMaxRetries is returned by Retry when the entry has hit the retry cap.
 var ErrMaxRetries = errors.New("dlq: max retries exceeded")
+
+// ErrRawNotAvailable indicates a request for the raw payload of a DLQ
+// row that wasn't redacted — there is no separate raw form, the
+// caller should display OriginalMsg directly.
+var ErrRawNotAvailable = errors.New("dlq: raw payload not stored (entry was not redacted)")
+
+// ErrSealerUnavailable is returned by GetRaw when the row carries a
+// sealed raw payload but the service has no sealer configured to
+// decrypt it. The almost-certain cause is a config change that
+// disabled the master key after redacted rows were written.
+var ErrSealerUnavailable = errors.New("dlq: sealer not configured; cannot decrypt raw payload")
+
+// GetRaw returns the unredacted payload of one DLQ row. Tenant-scoped
+// like the rest of the public surface. Returns ErrRawNotAvailable when
+// the row was not redacted in the first place — callers should fall
+// back to OriginalMsg from List/Get.
+//
+// The decrypt is the operator-trust boundary: every successful call
+// MUST be paired with an audit-log entry by the HTTP handler. This
+// function intentionally takes no logging-side parameters; the
+// handler-side audit middleware already captures actor + remote IP +
+// request id, and we don't want to double-log from here.
+func (s *Service) GetRaw(ctx context.Context, tenantID, id string) ([]byte, error) {
+	entry, err := s.store.DLQ.Get(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	if !entry.Redacted || len(entry.RawMsg) == 0 {
+		return nil, ErrRawNotAvailable
+	}
+	s.sealerMu.RLock()
+	sealer := s.sealer
+	s.sealerMu.RUnlock()
+	if sealer == nil || !sealer.Enabled() {
+		return nil, ErrSealerUnavailable
+	}
+	plain, err := sealer.Decrypt(string(entry.RawMsg))
+	if err != nil {
+		return nil, fmt.Errorf("dlq: decrypt raw: %w", err)
+	}
+	return []byte(plain), nil
+}
 
 // Retry re-publishes the message to the pipeline's original destination.
 // Tenant-scoped — callers (HTTP layer) must pass the active tenant.
@@ -192,7 +323,26 @@ func (s *Service) Retry(ctx context.Context, tenantID, id string) error {
 	}
 	defer release()
 
-	if err := conn.SendMessage(ctx, entry.OriginalMsg); err != nil {
+	// When the row was redacted, OriginalMsg holds the [REDACTED]-
+	// substituted form. Re-publishing that to the destination would
+	// corrupt the downstream consumer; replay must use the sealed
+	// raw payload. Falls back to OriginalMsg for legacy rows and
+	// any pipeline without redaction rules.
+	payload := entry.OriginalMsg
+	if entry.Redacted && len(entry.RawMsg) > 0 {
+		s.sealerMu.RLock()
+		sealer := s.sealer
+		s.sealerMu.RUnlock()
+		if sealer == nil || !sealer.Enabled() {
+			return ErrSealerUnavailable
+		}
+		plain, err := sealer.Decrypt(string(entry.RawMsg))
+		if err != nil {
+			return fmt.Errorf("dlq retry: decrypt raw: %w", err)
+		}
+		payload = []byte(plain)
+	}
+	if err := conn.SendMessage(ctx, payload); err != nil {
 		return fmt.Errorf("dlq retry: send: %w", err)
 	}
 	s.logger.Info("dlq message retried",

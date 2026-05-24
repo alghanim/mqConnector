@@ -215,6 +215,15 @@ func run(configPath string) error {
 		MaxRetries: cfg.Pipeline.DLQ.MaxRetries,
 		Logger:     logger,
 	})
+	// Wire the envelope-encryption sealer (when configured) so DLQ
+	// redaction rules can store the pre-redaction payload sealed at
+	// rest. Nil sealer is fine — Push detects and degrades to
+	// no-redaction on rows with rules configured, surfacing a warn
+	// log so the misconfiguration is visible in the operator's
+	// structured-log stream.
+	if sealer != nil {
+		dlqSvc.SetSealer(sealer)
+	}
 
 	// DLQ retry reaper. Walks dlq rows whose next_retry_at <= now and
 	// re-publishes through the pipeline's destination with exponential

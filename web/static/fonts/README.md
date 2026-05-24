@@ -15,9 +15,9 @@ the air-gapped department deploy stays sealed.
 
 ## Why Cairo
 
-`/brand` skill mandates Cairo as the official typeface across
-the application surface (both Latin and Arabic in a single
-variable-axis file). The fallback chain (`Inter Variable` →
+Cairo carries Latin and Arabic glyphs in a single variable-axis file,
+which keeps the embedded payload small while supporting RTL without a
+second font request. The fallback chain (`Inter Variable` →
 `Noto Kufi Arabic` → `system-ui`) only paints if Cairo fails to load
 at first paint.
 

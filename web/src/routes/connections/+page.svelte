@@ -538,7 +538,7 @@
    * icon glyph itself + the type code rendered next to the connection
    * name. We deliberately do NOT tint by vendor brand colours
    * (#ff6600 RabbitMQ orange, #1f70c1 IBM blue, etc.); those sit
-   * outside the closed brand palette and shout louder than every
+   * outside the app's closed palette and shout louder than every
    * other surface on the page.
    */
   .cell-type-icon {

@@ -593,6 +593,47 @@ var migrations = []string{
 	);
 	CREATE INDEX IF NOT EXISTS idx_pipeline_grants_user ON pipeline_grants(user_sub);
 	`,
+	// 0019 — DLQ payload redaction.
+	//
+	// Per-pipeline redaction rules let operators strip PII/PHI from DLQ
+	// payloads before they're persisted. Compliance posture: the row's
+	// payload column (the historical original_msg) now holds the
+	// redacted form, which is what every list/get response returns.
+	// The unredacted bytes are stored in raw_msg, sealed under the
+	// envelope-encryption master key, and only readable through the
+	// dedicated raw-view endpoint — which requires admin role AND
+	// produces an explicit audit-log entry for every read.
+	//
+	// When a pipeline has no redaction rules (the default), Push writes
+	// raw_msg empty and redacted=0; behaviour for those rows is byte-
+	// for-byte identical to pre-0019. Rules are pipeline-scoped (the
+	// tenant boundary follows the pipeline FK) and ordered — the engine
+	// walks them in `ord` order against each payload.
+	//
+	// rule_kind:
+	//   - 'jsonpath' — path expression matching one or more JSON values;
+	//     each matched value is replaced with mask_replace. Non-JSON
+	//     payloads skip JSONPath rules cleanly.
+	//   - 'regex'    — Go regexp; first match groups are replaced with
+	//     mask_replace via ReplaceAllString.
+	`
+	ALTER TABLE dlq ADD COLUMN raw_msg BLOB NOT NULL DEFAULT '';
+	ALTER TABLE dlq ADD COLUMN redacted INTEGER NOT NULL DEFAULT 0;
+
+	CREATE TABLE IF NOT EXISTS dlq_redaction_rules (
+		id           TEXT PRIMARY KEY,
+		pipeline_id  TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+		tenant_id    TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+		rule_kind    TEXT NOT NULL CHECK(rule_kind IN ('jsonpath','regex')),
+		pattern      TEXT NOT NULL,
+		mask_replace TEXT NOT NULL DEFAULT '[REDACTED]',
+		ord          INTEGER NOT NULL DEFAULT 0,
+		enabled      INTEGER NOT NULL DEFAULT 1,
+		created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_dlq_redaction_pipeline
+	  ON dlq_redaction_rules(pipeline_id, ord);
+	`,
 }
 
 // postgresMigrationOverrides supersedes specific entries in `migrations`
