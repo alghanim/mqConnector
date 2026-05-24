@@ -76,6 +76,8 @@ Across six broker types:
 
 Configuration is in SQLite — no etcd, no Postgres, no external state store. The admin UI ships embedded; the entire deploy is one binary and one database file.
 
+Operators configure pipelines through the **Pipeline Studio** at `/pipelines/{id}/studio` — a visual canvas + structured stage editors + dry-run dock + versioned diff / deploy / rollback ceremony. The legacy form view is still available at `/pipelines/{id}?legacy=1` as a one-release safety net; any plain visit to `/pipelines/{id}` redirects into the Studio. See [docs/FEATURES.md → Pipeline Studio (Wave 1)](docs/FEATURES.md#pipeline-studio-wave-1) for the full surface and Wave-2 deferrals.
+
 ---
 
 ## Quick start (5 minutes, Docker)
