@@ -188,6 +188,14 @@ func (s *Server) routes() http.Handler {
 			// can render both rollback previews and forward-deploy
 			// previews with the same wire shape. Viewer-readable.
 			r.Get("/{id}/revisions/{rev}/diff", s.handleDiffRevisions)
+			// Pipeline Studio Wave 1 write-through endpoints.
+			// /revisions/{rev}/rollback creates a NEW revision
+			// holding the target's snapshot and promotes it to
+			// live. /deploy promotes an EXISTING revision to
+			// live without creating a new row. Both gate on
+			// operator role per-pipeline.
+			r.Post("/{id}/revisions/{rev}/rollback", s.handleRollbackRevision)
+			r.Post("/{id}/deploy", s.handleDeployRevision)
 			// Per-pipeline RBAC grants. Mounted under the pipeline
 			// so the chi router carries the pipeline id through the
 			// handler chain via {id}; the grant subject is named

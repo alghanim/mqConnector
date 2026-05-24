@@ -953,6 +953,111 @@ paths:
         '400': { description: Revision number must be a positive integer, or against query parameter missing. }
         '404': { description: Pipeline or either revision not found. }
 
+  /api/v1/pipelines/{id}/revisions/{rev}/rollback:
+    parameters:
+      - { $ref: '#/components/parameters/pathID' }
+      - in: path
+        name: rev
+        required: true
+        schema: { type: integer, minimum: 1 }
+        description: Revision number to roll back to.
+    post:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Roll back the pipeline's live configuration to a prior revision.
+      description: |
+        Creates a NEW revision whose snapshot equals revision {rev}'s
+        snapshot, writes it through to the live pipelines / stages /
+        transforms / routing_rules tables under one transaction, marks
+        the new revision deployed, and hot-reloads the pipeline manager.
+
+        Requires operator role on the pipeline (per-pipeline gate;
+        honours grants).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                change_summary:
+                  type: string
+                  description: |
+                    Free-text summary for the new revision row. Defaults
+                    to "Rollback to revision N" when absent or empty.
+      responses:
+        '200':
+          description: Rollback applied; response carries the newly-created revision and its snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision, snapshot]
+                properties:
+                  revision: { type: object }
+                  snapshot: { type: object }
+        '400': { description: Revision number must be a positive integer, or body malformed. }
+        '403': { description: Caller lacks operator role on this pipeline. }
+        '404': { description: Pipeline not in tenant, or revision not found. }
+        '500': { description: Transactional write-through failed; live tables untouched. }
+
+  /api/v1/pipelines/{id}/deploy:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    post:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Promote an existing revision to live.
+      description: |
+        Loads the named revision, writes its snapshot through to the
+        live pipelines / stages / transforms / routing_rules tables
+        under one transaction, marks the EXISTING revision deployed
+        (no new revision row is created — that distinguishes /deploy
+        from /rollback), and hot-reloads the pipeline manager.
+
+        When the pipeline's requires_approval flag is true, the
+        request body MUST carry a non-empty `approver` field or the
+        request is rejected 409. The flag defaults false and has no
+        Wave-1 UI to flip it; the gate is implemented now so a later
+        wave can flip the flag without server changes.
+
+        Requires operator role on the pipeline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision_number]
+              properties:
+                revision_number:
+                  type: integer
+                  minimum: 1
+                  description: Revision to promote to live.
+                change_summary:
+                  type: string
+                  description: Free-text deploy note; recorded on the audit row.
+                approver:
+                  type: string
+                  description: |
+                    Required when the pipeline has requires_approval=true;
+                    optional (and ignored) otherwise.
+      responses:
+        '200':
+          description: Deploy applied; response carries the now-deployed revision and its snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision, snapshot]
+                properties:
+                  revision: { type: object }
+                  snapshot: { type: object }
+        '400': { description: Body malformed or revision_number missing/invalid. }
+        '403': { description: Caller lacks operator role on this pipeline. }
+        '404': { description: Pipeline not in tenant, or revision_number doesn't exist. }
+        '409': { description: Pipeline requires approval and `approver` field is missing. }
+        '500': { description: Transactional write-through failed; live tables untouched. }
+
   /api/v1/pipelines/{id}/grants:
     parameters: [{ $ref: '#/components/parameters/pathID' }]
     get:
