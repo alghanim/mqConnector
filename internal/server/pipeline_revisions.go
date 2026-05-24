@@ -51,7 +51,15 @@ func (s *Server) snapshotPipelineRevision(
 		authorSub = u.Sub
 		authorUsername = u.PreferredUsername
 	}
+	// Track this goroutine on pendingBackgroundOps so tests can drain
+	// it deterministically (via Server.WaitForBackgroundOps) and so
+	// graceful shutdown can give in-flight snapshots a bounded chance
+	// to land before the process exits. Add must happen on the
+	// caller's goroutine, before `go`, so a Wait() racing the spawn
+	// sees the increment.
+	s.pendingBackgroundOps.Add(1)
 	go func() {
+		defer s.pendingBackgroundOps.Done()
 		bgCtx, cancel := context.WithTimeout(context.Background(), snapshotWriteTimeout)
 		defer cancel()
 		if err := s.snapshotPipelineRevisionSync(

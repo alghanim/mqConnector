@@ -34,18 +34,18 @@ import (
 
 // Server is the wired HTTP layer.
 type Server struct {
-	cfg          config.Config
-	logger       *slog.Logger
-	httpSrv      *http.Server
-	auth         *auth.Service
-	store        *storage.Store
-	pool         *mq.Pool
-	metrics      *metrics.Store
-	dlq          *dlq.Service
-	pipeline     *pipeline.Manager
-	health       *health.Checker
-	leadership    *leadership.Lease // nil when not enabled
-	sealer        *secrets.Service  // nil when MQC_MASTER_KEY is unset
+	cfg              config.Config
+	logger           *slog.Logger
+	httpSrv          *http.Server
+	auth             *auth.Service
+	store            *storage.Store
+	pool             *mq.Pool
+	metrics          *metrics.Store
+	dlq              *dlq.Service
+	pipeline         *pipeline.Manager
+	health           *health.Checker
+	leadership       *leadership.Lease // nil when not enabled
+	sealer           *secrets.Service  // nil when MQC_MASTER_KEY is unset
 	loginLimiter     *loginLimiter
 	tenantLimiter    *tenantLimiter
 	sensitiveLimiter *sensitiveLimiter
@@ -54,6 +54,27 @@ type Server struct {
 	wasmRuntime      wazero.Runtime
 	stopGC           chan struct{}
 	stopGCOnce       sync.Once
+	// pendingBackgroundOps tracks fire-and-forget goroutines spawned
+	// off the request path (currently the snapshot helper) so tests
+	// can deterministically wait for them to drain and so graceful
+	// shutdown can give in-flight work a bounded chance to finish
+	// before the process exits. Increment with Add(1) immediately
+	// before `go` and Done() in the goroutine's defer.
+	pendingBackgroundOps sync.WaitGroup
+}
+
+// WaitForBackgroundOps blocks until every fire-and-forget goroutine
+// tracked by pendingBackgroundOps (today, the async pipeline-revision
+// snapshot dispatcher) has returned. It is intended for tests that
+// need to read state mutated by those goroutines without polling, and
+// for the graceful-shutdown path which calls it under a bounded
+// context. Production request handlers must not depend on it for
+// correctness — the underlying ops are best-effort by design.
+func (s *Server) WaitForBackgroundOps() {
+	if s == nil {
+		return
+	}
+	s.pendingBackgroundOps.Wait()
 }
 
 // shutdownGC signals the rate-limiter's GC loop to exit. Idempotent — both
@@ -87,17 +108,17 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		deps.Logger = slog.Default()
 	}
 	s := &Server{
-		cfg:          cfg,
-		logger:       deps.Logger.With("component", "server"),
-		auth:         deps.Auth,
-		store:        deps.Store,
-		pool:         deps.Pool,
-		metrics:      deps.Metrics,
-		dlq:          deps.DLQ,
-		pipeline:     deps.Pipeline,
-		health:       deps.Health,
-		leadership:   deps.Leadership,
-		sealer:        deps.Sealer,
+		cfg:              cfg,
+		logger:           deps.Logger.With("component", "server"),
+		auth:             deps.Auth,
+		store:            deps.Store,
+		pool:             deps.Pool,
+		metrics:          deps.Metrics,
+		dlq:              deps.DLQ,
+		pipeline:         deps.Pipeline,
+		health:           deps.Health,
+		leadership:       deps.Leadership,
+		sealer:           deps.Sealer,
 		loginLimiter:     newLoginLimiter(10, time.Minute),
 		tenantLimiter:    newTenantLimiter(120, time.Minute, tenantOverrideFromStore(deps.Store)),
 		sensitiveLimiter: newSensitiveLimiter(6, time.Minute),
@@ -197,13 +218,41 @@ func (s *Server) Run(ctx context.Context) error {
 			s.logger.Warn("server shutdown error", "err", err)
 		}
 		s.shutdownGC()
+		// Give in-flight best-effort background ops (snapshot writes)
+		// a bounded chance to land before the process exits, so a
+		// SIGTERM mid-PUT doesn't routinely drop the revision row
+		// the live tables just committed to. Bounded so a stuck DB
+		// can't hang shutdown indefinitely.
+		s.waitBackgroundOpsBounded(5 * time.Second)
 		return nil
 	case err := <-errCh:
 		s.shutdownGC()
+		s.waitBackgroundOpsBounded(5 * time.Second)
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return fmt.Errorf("server: %w", err)
+	}
+}
+
+// waitBackgroundOpsBounded waits for pendingBackgroundOps to drain or
+// for the timeout to elapse, whichever comes first. Used from Run's
+// shutdown path so a stuck DB can't pin the process open past the
+// configured grace period.
+func (s *Server) waitBackgroundOpsBounded(timeout time.Duration) {
+	if s == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		s.pendingBackgroundOps.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		s.logger.Warn("background ops did not drain within shutdown budget",
+			"timeout", timeout)
 	}
 }
 
