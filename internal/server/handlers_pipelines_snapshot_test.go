@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"mqConnector/internal/storage"
 )
@@ -59,6 +60,54 @@ func (f snapshotTestFixture) putJSON(t *testing.T, path, body string) *httptest.
 	return rec
 }
 
+// waitForRevisionCount polls the revisions list for one pipeline until
+// total >= want or the deadline elapses. The snapshot dispatch runs in
+// a goroutine off the request path (mirrors the audit middleware), so
+// tests can't read the row synchronously the moment PUT returns. This
+// follows the same pattern as TestAudit_MutationsRecordedWithActor.
+// Fails the test if the count never reaches want.
+func (f snapshotTestFixture) waitForRevisionCount(t *testing.T, tenantID, pipelineID string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var total int
+	for time.Now().Before(deadline) {
+		_, total, _ = f.srv.store.PipelineRevisions.List(
+			context.Background(), tenantID, pipelineID, 50, 0)
+		if total >= want {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("revision count never reached %d (last seen %d) for pipeline %s",
+		want, total, pipelineID)
+}
+
+// waitForRevisionAtLeast polls until the latest revision number is
+// >= want. Used when we only know the floor — e.g. "after a successful
+// PUT, the latest rev number should be >= the one we just observed +1"
+// — without committing to an exact total.
+func (f snapshotTestFixture) waitForRevisionAtLeast(t *testing.T, tenantID, pipelineID string, want int) *storage.PipelineRevision {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var latest *storage.PipelineRevision
+	for time.Now().Before(deadline) {
+		l, err := f.srv.store.PipelineRevisions.Latest(
+			context.Background(), tenantID, pipelineID)
+		if err == nil && l != nil && l.RevisionNumber >= want {
+			return l
+		}
+		latest = l
+		time.Sleep(25 * time.Millisecond)
+	}
+	got := -1
+	if latest != nil {
+		got = latest.RevisionNumber
+	}
+	t.Fatalf("latest revision never reached %d (last seen %d) for pipeline %s",
+		want, got, pipelineID)
+	return nil
+}
+
 // TestSnapshot_UpdatePipelineRecordsRevision covers the first PUT
 // path: PUT /api/v1/pipelines/{id} succeeds → one revision row with
 // revision_number=1, deployed_at non-NULL, the right author, the
@@ -75,6 +124,8 @@ func TestSnapshot_UpdatePipelineRecordsRevision(t *testing.T) {
 		t.Fatalf("update pipeline: %d %s", rec.Code, rec.Body)
 	}
 
+	// Snapshot dispatch is async — poll until rev 1 exists.
+	f.waitForRevisionCount(t, storage.DefaultTenantID, f.pipe.ID, 1)
 	list, total, err := f.srv.store.PipelineRevisions.List(ctx,
 		storage.DefaultTenantID, f.pipe.ID, 50, 0)
 	if err != nil {
@@ -125,6 +176,7 @@ func TestSnapshot_ReplaceStagesRecordsRevision(t *testing.T) {
 	if rec := f.putJSON(t, "/api/v1/pipelines/"+f.pipe.ID, metaBody); rec.Code != http.StatusOK {
 		t.Fatalf("seed rev 1: %d %s", rec.Code, rec.Body)
 	}
+	f.waitForRevisionCount(t, storage.DefaultTenantID, f.pipe.ID, 1)
 
 	stagesBody := `[{"stage_order":1,"stage_type":"filter","stage_config":"{}","enabled":true},` +
 		`{"stage_order":2,"stage_type":"transform","stage_config":"{}","enabled":true}]`
@@ -133,11 +185,8 @@ func TestSnapshot_ReplaceStagesRecordsRevision(t *testing.T) {
 		t.Fatalf("replace stages: %d %s", rec.Code, rec.Body)
 	}
 
-	latest, err := f.srv.store.PipelineRevisions.Latest(ctx,
-		storage.DefaultTenantID, f.pipe.ID)
-	if err != nil {
-		t.Fatalf("latest revision: %v", err)
-	}
+	latest := f.waitForRevisionAtLeast(t, storage.DefaultTenantID, f.pipe.ID, 2)
+	_ = ctx
 	if latest.RevisionNumber != 2 {
 		t.Errorf("expected rev 2, got %d", latest.RevisionNumber)
 	}
@@ -180,11 +229,7 @@ func TestSnapshot_HashDedupOnIdenticalPUTs(t *testing.T) {
 	if rec := f.putJSON(t, "/api/v1/pipelines/"+f.pipe.ID, body); rec.Code != http.StatusOK {
 		t.Fatalf("put 1: %d %s", rec.Code, rec.Body)
 	}
-	first, err := f.srv.store.PipelineRevisions.Latest(ctx,
-		storage.DefaultTenantID, f.pipe.ID)
-	if err != nil {
-		t.Fatalf("latest after put 1: %v", err)
-	}
+	first := f.waitForRevisionAtLeast(t, storage.DefaultTenantID, f.pipe.ID, 1)
 	if first.RevisionNumber != 1 {
 		t.Fatalf("first rev should be 1, got %d", first.RevisionNumber)
 	}
@@ -194,6 +239,9 @@ func TestSnapshot_HashDedupOnIdenticalPUTs(t *testing.T) {
 	if rec := f.putJSON(t, "/api/v1/pipelines/"+f.pipe.ID, body); rec.Code != http.StatusOK {
 		t.Fatalf("put 2: %d %s", rec.Code, rec.Body)
 	}
+	// Give the second async dispatch time to land (or get deduped).
+	// We can't poll for "no new row appeared" cleanly, so settle.
+	time.Sleep(150 * time.Millisecond)
 	_, total, err := f.srv.store.PipelineRevisions.List(ctx,
 		storage.DefaultTenantID, f.pipe.ID, 50, 0)
 	if err != nil {
@@ -210,6 +258,174 @@ func TestSnapshot_HashDedupOnIdenticalPUTs(t *testing.T) {
 	if deployed.ID != firstID {
 		t.Errorf("LatestDeployed should still be the original rev (%s), got %s",
 			firstID, deployed.ID)
+	}
+}
+
+// TestSnapshot_HashDedupOnIdenticalStagesPUTs locks in the per-child
+// dedup contract for the stages PUT path. StageRepo.ReplaceForPipeline
+// regenerates child UUIDs on every call, so the hash must be computed
+// over an ID-stripped projection of the snapshot — otherwise two
+// byte-identical PUTs produce two distinct hashes and dedup silently
+// fails. This is exactly the bug Issue 1 documented. Two identical
+// PUTs of the same stages payload MUST collapse to a single revision.
+func TestSnapshot_HashDedupOnIdenticalStagesPUTs(t *testing.T) {
+	f := setupSnapshotFixture(t)
+	ctx := context.Background()
+
+	stagesBody := `[{"stage_order":1,"stage_type":"filter","stage_config":"{}","enabled":true},` +
+		`{"stage_order":2,"stage_type":"transform","stage_config":"{}","enabled":true}]`
+
+	// First PUT → revision 1.
+	if rec := f.putJSON(t, "/api/v1/pipelines/"+f.pipe.ID+"/stages", stagesBody); rec.Code != http.StatusOK {
+		t.Fatalf("stages put 1: %d %s", rec.Code, rec.Body)
+	}
+	first := f.waitForRevisionAtLeast(t, storage.DefaultTenantID, f.pipe.ID, 1)
+	firstID := first.ID
+
+	// Second PUT, byte-identical body → should hash-dedup.
+	if rec := f.putJSON(t, "/api/v1/pipelines/"+f.pipe.ID+"/stages", stagesBody); rec.Code != http.StatusOK {
+		t.Fatalf("stages put 2: %d %s", rec.Code, rec.Body)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	_, total, err := f.srv.store.PipelineRevisions.List(ctx,
+		storage.DefaultTenantID, f.pipe.ID, 50, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("expected 1 revision after two identical stages PUTs (dedup), got %d", total)
+	}
+	latest, err := f.srv.store.PipelineRevisions.Latest(ctx,
+		storage.DefaultTenantID, f.pipe.ID)
+	if err != nil {
+		t.Fatalf("latest: %v", err)
+	}
+	if latest.ID != firstID {
+		t.Errorf("dedup should preserve original rev id; want %s got %s", firstID, latest.ID)
+	}
+
+	// And the stored snapshot must still carry the *full* (non-stripped)
+	// child IDs — only the hash projection strips them. Without this the
+	// rollback/replay path can't reference rows by id.
+	var snap storage.PipelineSnapshot
+	if err := json.Unmarshal([]byte(latest.Snapshot), &snap); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	if len(snap.Stages) != 2 {
+		t.Fatalf("snapshot stages len = %d, want 2", len(snap.Stages))
+	}
+	for i, st := range snap.Stages {
+		if st.ID == "" {
+			t.Errorf("stored snapshot stage[%d] missing ID — only the hash projection should strip IDs", i)
+		}
+		if st.PipelineID == "" {
+			t.Errorf("stored snapshot stage[%d] missing PipelineID", i)
+		}
+		if st.TenantID == "" {
+			t.Errorf("stored snapshot stage[%d] missing TenantID", i)
+		}
+	}
+}
+
+// TestSnapshot_HashDedupOnIdenticalTransformsPUTs is the transforms
+// twin of the stages dedup test. TransformRepo.ReplaceForPipeline also
+// regenerates child UUIDs, so it exhibits the same Issue 1 bug
+// without the canonical-hash fix.
+func TestSnapshot_HashDedupOnIdenticalTransformsPUTs(t *testing.T) {
+	f := setupSnapshotFixture(t)
+	ctx := context.Background()
+
+	body := `[{"transform_type":"rename","source_path":"a","target_path":"b","order":1},` +
+		`{"transform_type":"mask","source_path":"c","mask_pattern":".","mask_replace":"*","order":2}]`
+
+	if rec := f.putJSON(t, "/api/v1/pipelines/"+f.pipe.ID+"/transforms", body); rec.Code != http.StatusOK {
+		t.Fatalf("transforms put 1: %d %s", rec.Code, rec.Body)
+	}
+	first := f.waitForRevisionAtLeast(t, storage.DefaultTenantID, f.pipe.ID, 1)
+	firstID := first.ID
+
+	if rec := f.putJSON(t, "/api/v1/pipelines/"+f.pipe.ID+"/transforms", body); rec.Code != http.StatusOK {
+		t.Fatalf("transforms put 2: %d %s", rec.Code, rec.Body)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	_, total, err := f.srv.store.PipelineRevisions.List(ctx,
+		storage.DefaultTenantID, f.pipe.ID, 50, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("expected 1 revision after two identical transforms PUTs (dedup), got %d", total)
+	}
+	latest, err := f.srv.store.PipelineRevisions.Latest(ctx,
+		storage.DefaultTenantID, f.pipe.ID)
+	if err != nil {
+		t.Fatalf("latest: %v", err)
+	}
+	if latest.ID != firstID {
+		t.Errorf("dedup should preserve original rev id; want %s got %s", firstID, latest.ID)
+	}
+	var snap storage.PipelineSnapshot
+	if err := json.Unmarshal([]byte(latest.Snapshot), &snap); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	if len(snap.Transforms) != 2 {
+		t.Fatalf("snapshot transforms len = %d, want 2", len(snap.Transforms))
+	}
+	for i, tr := range snap.Transforms {
+		if tr.ID == "" {
+			t.Errorf("stored snapshot transform[%d] missing ID", i)
+		}
+	}
+}
+
+// TestSnapshot_HashDedupOnIdenticalRoutingRulesPUTs is the
+// routing-rules twin of the previous two. Same dedup contract,
+// same Issue 1 risk if the hash isn't projected.
+func TestSnapshot_HashDedupOnIdenticalRoutingRulesPUTs(t *testing.T) {
+	f := setupSnapshotFixture(t)
+	ctx := context.Background()
+
+	body := `[{"condition_path":"$.type","condition_operator":"eq","condition_value":"x",` +
+		`"destination_id":"` + f.dst.ID + `","priority":1,"enabled":true}]`
+
+	if rec := f.putJSON(t, "/api/v1/pipelines/"+f.pipe.ID+"/routing-rules", body); rec.Code != http.StatusOK {
+		t.Fatalf("routing-rules put 1: %d %s", rec.Code, rec.Body)
+	}
+	first := f.waitForRevisionAtLeast(t, storage.DefaultTenantID, f.pipe.ID, 1)
+	firstID := first.ID
+
+	if rec := f.putJSON(t, "/api/v1/pipelines/"+f.pipe.ID+"/routing-rules", body); rec.Code != http.StatusOK {
+		t.Fatalf("routing-rules put 2: %d %s", rec.Code, rec.Body)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	_, total, err := f.srv.store.PipelineRevisions.List(ctx,
+		storage.DefaultTenantID, f.pipe.ID, 50, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("expected 1 revision after two identical routing-rules PUTs (dedup), got %d", total)
+	}
+	latest, err := f.srv.store.PipelineRevisions.Latest(ctx,
+		storage.DefaultTenantID, f.pipe.ID)
+	if err != nil {
+		t.Fatalf("latest: %v", err)
+	}
+	if latest.ID != firstID {
+		t.Errorf("dedup should preserve original rev id; want %s got %s", firstID, latest.ID)
+	}
+	var snap storage.PipelineSnapshot
+	if err := json.Unmarshal([]byte(latest.Snapshot), &snap); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	if len(snap.RoutingRules) != 1 {
+		t.Fatalf("snapshot routing rules len = %d, want 1", len(snap.RoutingRules))
+	}
+	if snap.RoutingRules[0].ID == "" {
+		t.Errorf("stored snapshot routing rule missing ID")
 	}
 }
 
@@ -241,6 +457,9 @@ func TestSnapshot_FailureDoesNotRollbackLiveWrite(t *testing.T) {
 		t.Fatalf("PUT should still succeed despite snapshot failure: %d %s",
 			rec.Code, rec.Body)
 	}
+	// The snapshot goroutine will hit the missing table and log; give it
+	// a brief settle so any panic-or-error path would have surfaced.
+	time.Sleep(150 * time.Millisecond)
 
 	// Live table reflects the write — snapshot failure didn't
 	// reach in and roll it back.
@@ -300,7 +519,15 @@ func TestSnapshot_TenantScoping(t *testing.T) {
 		t.Fatalf("update pipeline as tenant-a: %d %s", rec.Code, rec.Body)
 	}
 
-	// Tenant A sees the revision.
+	// Tenant A sees the revision — poll for async snapshot completion.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_, n, _ := srv.store.PipelineRevisions.List(ctx, "tenant-a", pipeA.ID, 50, 0)
+		if n >= 1 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 	listA, totalA, err := srv.store.PipelineRevisions.List(ctx,
 		"tenant-a", pipeA.ID, 50, 0)
 	if err != nil {
