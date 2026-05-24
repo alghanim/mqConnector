@@ -23,21 +23,60 @@ import (
 //
 // The sample message itself is always inline as `sample`.
 type previewRequest struct {
-	PipelineID   string                  `json:"pipeline_id,omitempty"`
-	Stages       []*storage.Stage        `json:"stages,omitempty"`
-	Transforms   []*storage.Transform    `json:"transforms,omitempty"`
-	RoutingRules []*storage.RoutingRule  `json:"routing_rules,omitempty"`
+	PipelineID   string                     `json:"pipeline_id,omitempty"`
+	Stages       []*storage.Stage           `json:"stages,omitempty"`
+	Transforms   []*storage.Transform       `json:"transforms,omitempty"`
+	RoutingRules []*storage.RoutingRule     `json:"routing_rules,omitempty"`
 	Schemas      map[string]*storage.Schema `json:"schemas,omitempty"`
-	OutputFormat string                  `json:"output_format,omitempty"`
-	Sample       string                  `json:"sample"`
+	OutputFormat string                     `json:"output_format,omitempty"`
+	Sample       string                     `json:"sample"`
+}
+
+// stageRunJSON mirrors pipeline.StageRun for the /preview response. It
+// exists so the Studio dry-run dock can render a payload strip showing
+// what each stage produced (or what input the failing stage saw). Body
+// is encoded the same way as previewResponse.Output — a raw UTF-8
+// string of the byte buffer — so the front-end uses one decode path
+// for both. If Wave 2 ever needs to ship non-UTF8 bodies we can revisit
+// with a transport-level encoding flag.
+type stageRunJSON struct {
+	Name       string `json:"name"`
+	DurationNs int64  `json:"duration_ns"`
+	Failed     bool   `json:"failed"`
+	Body       string `json:"body,omitempty"`
+	Format     string `json:"format,omitempty"`
+	Err        string `json:"err,omitempty"`
 }
 
 type previewResponse struct {
-	OK     bool     `json:"ok"`
-	Output string   `json:"output"`
-	Format string   `json:"format"`
-	Routes []string `json:"routes,omitempty"`
-	Error  string   `json:"error,omitempty"`
+	OK        bool           `json:"ok"`
+	Output    string         `json:"output"`
+	Format    string         `json:"format"`
+	Routes    []string       `json:"routes,omitempty"`
+	Error     string         `json:"error,omitempty"`
+	StageRuns []stageRunJSON `json:"stage_runs,omitempty"`
+}
+
+// stageRunsJSON converts the pipeline-package observation log into the
+// JSON shape served by /preview. Always called — operators want the
+// per-stage strip even on failure, since the failure usually IS the
+// thing they're trying to diagnose.
+func stageRunsJSON(runs []pipeline.StageRun) []stageRunJSON {
+	if len(runs) == 0 {
+		return nil
+	}
+	out := make([]stageRunJSON, len(runs))
+	for i, r := range runs {
+		out[i] = stageRunJSON{
+			Name:       r.Name,
+			DurationNs: r.Duration.Nanoseconds(),
+			Failed:     r.Failed,
+			Body:       string(r.Body),
+			Format:     string(r.Format),
+			Err:        r.Err,
+		}
+	}
+	return out
 }
 
 // handlePreview runs a sample message through a pipeline definition and
@@ -98,16 +137,18 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	outcome, err := pipeline.RunStages(r.Context(), stages, []byte(req.Sample))
 	if err != nil {
 		writeJSON(w, http.StatusOK, previewResponse{
-			OK:    false,
-			Error: err.Error(),
+			OK:        false,
+			Error:     err.Error(),
+			StageRuns: stageRunsJSON(outcome.Runs),
 		})
 		return
 	}
 
 	resp := previewResponse{
-		OK:     true,
-		Output: string(outcome.Body),
-		Format: string(outcome.Format),
+		OK:        true,
+		Output:    string(outcome.Body),
+		Format:    string(outcome.Format),
+		StageRuns: stageRunsJSON(outcome.Runs),
 	}
 	if outcome.Route != nil {
 		resp.Routes = outcome.Route.Destinations
