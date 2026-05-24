@@ -453,21 +453,29 @@
               <td>
                 <div class="row-actions">
                   {#if p.id}
+                    <!--
+                      Studio is now the canonical configure path. The
+                      kebab below still surfaces the legacy form view
+                      until Task 14 makes /pipelines/{id}?legacy=1 the
+                      gated discovery path. /flow stays available as a
+                      bridge for muscle memory; Task 9 folds it into
+                      the Studio canvas.
+                    -->
                     <a
                       class="icon-action"
-                      href="/flow?pipeline={p.id}"
-                      aria-label={t($locale, 'flow.openVisual')}
-                      title={t($locale, 'flow.openVisual')}
-                    >
-                      <GitFork size={14} aria-hidden="true" />
-                    </a>
-                    <a
-                      class="icon-action"
-                      href="/pipelines/{p.id}"
+                      href="/pipelines/{p.id}/studio"
                       aria-label={t($locale, 'pipelines.configure')}
                       title={t($locale, 'pipelines.configure')}
                     >
                       <Settings2 size={14} aria-hidden="true" />
+                    </a>
+                    <a
+                      class="icon-action"
+                      href="/pipelines/{p.id}"
+                      aria-label={t($locale, 'studio.legacy.openForm')}
+                      title={t($locale, 'studio.legacy.openForm')}
+                    >
+                      <GitFork size={14} aria-hidden="true" />
                     </a>
                   {/if}
                   <button

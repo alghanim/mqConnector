@@ -12,11 +12,13 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { api, type Connection, type Pipeline, type DLQEntry } from '$lib/api';
   import { auth } from '$lib/stores/auth';
   import { tenants } from '$lib/stores/tenants';
   import { locale, t } from '$lib/stores/locale';
   import { theme } from '$lib/stores/theme';
+  import { studio, studioState } from '$lib/stores/studio';
   import {
     Search,
     LayoutDashboard,
@@ -32,7 +34,10 @@
     RotateCw,
     LogOut,
     FileText,
-    CornerDownLeft
+    CornerDownLeft,
+    Rocket,
+    GitCompare,
+    Undo2
   } from 'lucide-svelte';
 
   export let open = false;
@@ -127,8 +132,63 @@
     }
   ] as Item[];
 
+  // Studio entries are only meaningful while the user is on a Studio
+  // route (`/pipelines/<id>/studio`). The palette pre-filters them
+  // out everywhere else so they don't clutter the global launcher.
+  // Tasks 11/12 will wire the actual Validate / Compare / Deploy
+  // handlers; for Wave 1 the Deploy entry dispatches a window-level
+  // CustomEvent that StudioHeader (or any future binding) can listen
+  // for, matching the convention used by the Toaster.
+  $: onStudioRoute = /^\/pipelines\/[^/]+\/studio(\/|$|\?)/.test($page.url.pathname + ($page.url.search || ''));
+  $: studioDirty = $studioState?.dirtyCount > 0;
+
+  $: studioItems = (
+    [
+      {
+        id: 'act.studioDeploy',
+        label: t($locale, 'palette.cmd.studioDeploy'),
+        icon: Rocket,
+        action: () => {
+          // Task 11 wires the real handler. For Task 8 we surface the
+          // intent via a CustomEvent on the window — anything mounted
+          // (StudioHeader, an upcoming DeployDialog) can listen for
+          // 'studio:requestDeploy' to act on it without coupling the
+          // palette to a specific component.
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('studio:requestDeploy'));
+          }
+        }
+      },
+      {
+        id: 'act.studioCompare',
+        label: t($locale, 'palette.cmd.studioCompare'),
+        icon: GitCompare,
+        action: () => {
+          // Task 12 wires the version rail + diff viewer. Placeholder
+          // event for now — the version rail will listen.
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('studio:openCompare'));
+          }
+        }
+      },
+      {
+        id: 'act.studioDiscard',
+        label: t($locale, 'palette.cmd.studioDiscard'),
+        icon: Undo2,
+        // Always show on studio routes; disabled when nothing to discard.
+        action: () => {
+          if (studioDirty) studio.resetDraft();
+        }
+      }
+    ] as Item[]
+  ).filter((it) => {
+    if (!onStudioRoute) return false;
+    if (it.id === 'act.studioDiscard') return studioDirty;
+    return true;
+  });
+
   $: filteredNav = filterItems(navItems, query);
-  $: filteredActions = filterItems(actionItems, query);
+  $: filteredActions = filterItems([...actionItems, ...studioItems], query);
 
   function filterItems(items: Item[], q: string): Item[] {
     const needle = q.trim().toLowerCase();
