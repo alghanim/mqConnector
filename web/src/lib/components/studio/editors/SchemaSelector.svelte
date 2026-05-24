@@ -69,7 +69,14 @@
     }))
   ];
 
-  function onChange() {
+  // Watch `value` reactively (driven by Select's bind:value) and
+  // emit `pick` when it changes. This is more reliable than relying
+  // on the Select component to forward a DOM change event — Select
+  // doesn't forward `on:change`, so a parent listener attached via
+  // <Select on:change> never fires.
+  let lastEmitted = value;
+  $: if (value !== lastEmitted) {
+    lastEmitted = value;
     const picked = filtered.find((s) => s.id === value) ?? null;
     dispatch('pick', picked);
   }
@@ -79,5 +86,4 @@
   bind:value
   options={options}
   label={label || t($locale, 'studio.schemaSelector.label')}
-  on:change={onChange}
 />
