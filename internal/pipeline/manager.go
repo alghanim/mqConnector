@@ -71,6 +71,34 @@ type Manager struct {
 	// (the executor honours the field only when both the deduper is
 	// installed and the window is non-zero).
 	dedup Deduper
+
+	// tenantBudgets caches one *budget per tenant_id that has a
+	// non-zero MaxMsgsPerMinute. Built lazily on Reload — pipelines
+	// share the same budget instance across executors, so one runaway
+	// pipeline can't burn the tenant's entire quota and starve
+	// siblings. budgetMu protects the map; the budgets themselves are
+	// thread-safe.
+	budgetMu      sync.Mutex
+	tenantBudgets map[string]*budget
+}
+
+// tenantBudgetFor returns the shared budget for a tenant, building it
+// on first sight. budgetPerMinute=0 returns nil (no cap configured).
+func (m *Manager) tenantBudgetFor(tenantID string, budgetPerMinute int) *budget {
+	if budgetPerMinute <= 0 {
+		return nil
+	}
+	m.budgetMu.Lock()
+	defer m.budgetMu.Unlock()
+	if m.tenantBudgets == nil {
+		m.tenantBudgets = make(map[string]*budget)
+	}
+	if b, ok := m.tenantBudgets[tenantID]; ok {
+		return b
+	}
+	b := newBudget(budgetPerMinute, time.Minute)
+	m.tenantBudgets[tenantID] = b
+	return b
 }
 
 // SetDeduper installs the destination-side dedup store used by every
@@ -329,19 +357,31 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 	}
 
 	pipelineCtx, cancel := context.WithCancel(m.parent)
+
+	// Resolve the tenant's aggregate budget (if any). A nil store
+	// (test code path) or a tenant that doesn't exist is treated as
+	// "no cap" — the safe legacy behaviour.
+	var tenantBudget *budget
+	if m.store != nil && p.TenantID != "" {
+		if t, err := m.store.Tenants.Get(ctx, p.TenantID); err == nil && t != nil {
+			tenantBudget = m.tenantBudgetFor(p.TenantID, t.MaxMsgsPerMinute)
+		}
+	}
+
 	executor := &Executor{
-		Pipeline:    p,
-		Stages:      stages,
-		Pool:        m.pool,
-		Source:      ToMQConfig(source),
-		SourceQueue: source.QueueName,
-		DefaultDest: ToMQConfig(dest),
-		DestQueue:   dest.QueueName,
-		RouteDests:  routeDests,
-		Metrics:     m.metrics,
-		DLQ:         m.dlq,
-		Dedup:       m.dedup,
-		Logger:      m.logger,
+		Pipeline:     p,
+		Stages:       stages,
+		Pool:         m.pool,
+		Source:       ToMQConfig(source),
+		SourceQueue:  source.QueueName,
+		DefaultDest:  ToMQConfig(dest),
+		DestQueue:    dest.QueueName,
+		RouteDests:   routeDests,
+		Metrics:      m.metrics,
+		DLQ:          m.dlq,
+		Dedup:        m.dedup,
+		TenantBudget: tenantBudget,
+		Logger:       m.logger,
 	}
 
 	handle := &executorHandle{cancel: cancel, done: make(chan struct{})}

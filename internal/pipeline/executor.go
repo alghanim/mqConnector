@@ -91,6 +91,14 @@ type Executor struct {
 	// MaxMsgsPerMinute > 0. Shared across all workers so the cap
 	// applies per-pipeline, not per-worker.
 	budget *budget
+	// TenantBudget enforces tenant-aggregate fairness across every
+	// pipeline owned by the same tenant. Set by the manager when the
+	// tenant carries MaxMsgsPerMinute > 0; shared across executors
+	// of every pipeline in that tenant so one runaway pipeline can't
+	// burn the tenant's entire quota and starve sibling pipelines.
+	// Taken BEFORE the per-pipeline budget — the tenant cap is a
+	// hard ceiling.
+	TenantBudget *budget
 
 	// breaker is the per-pipeline outbound circuit breaker. Set in
 	// Run(); shared by every worker so a broker outage trips once
@@ -214,8 +222,16 @@ func (e *Executor) runWorker(ctx context.Context, workerIdx int, logger *slog.Lo
 }
 
 func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.Logger) error {
-	// Throttle. Blocks until the per-pipeline budget admits one
-	// more message or ctx cancels. No-op when budget is nil.
+	// Throttle. Tenant budget is the outer cap (shared across every
+	// pipeline of the same tenant); pipeline budget is the inner cap.
+	// Order matters — taking the tenant slot first means a pipeline
+	// can't reserve a slot it then never uses because the tenant
+	// budget rejects it. Both are no-ops when nil.
+	if e.TenantBudget != nil {
+		if err := e.TenantBudget.take(ctx); err != nil {
+			return err
+		}
+	}
 	if e.budget != nil {
 		if err := e.budget.take(ctx); err != nil {
 			return err
