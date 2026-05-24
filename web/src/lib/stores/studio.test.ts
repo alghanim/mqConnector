@@ -314,3 +314,109 @@ describe('hydrate', () => {
     expect(s.draft).not.toBe(null);
   });
 });
+
+// ─── Stage mutations (Task 9) ────────────────────────────────────────
+//
+// Each mutation test:
+//   - seeds a hydrated state (so there's a draft to mutate)
+//   - applies the mutation
+//   - asserts the draft change AND the dirty flip (state + counter)
+//
+// We don't go through hydrate again per-test — seedHydratedState above
+// loads a single-stage baseline that's enough to exercise add/remove/
+// reorder/patch.
+
+describe('addStage', () => {
+  it('appends a stage with sensible defaults, returns the new id, and marks dirty', async () => {
+    await seedHydratedState();
+    const before = get(studio);
+    const beforeCount = before.draft!.stages.length;
+    const beforeDirty = before.dirtyCount;
+
+    const newId = studio.addStage('filter');
+
+    expect(newId).toMatch(/^tmp-/);
+    const after = get(studio);
+    expect(after.draft!.stages.length).toBe(beforeCount + 1);
+    expect(after.dirtyCount).toBe(beforeDirty + 1);
+    expect(after.state).toBe('dirty');
+
+    const created = after.draft!.stages.find((st) => st.id === newId);
+    expect(created).toBeDefined();
+    expect(created!.stage_type).toBe('filter');
+    expect(created!.enabled).toBe(true);
+    // filter's minimal-valid config is {"paths":[]} — keeps the canvas
+    // from rendering a broken stage on insertion.
+    expect(created!.stage_config).toBe('{"paths":[]}');
+    // stage_order should be max(existing) + 1. Baseline seeds one stage
+    // at order 1, so the new one is 2.
+    expect(created!.stage_order).toBe(2);
+    // baseline must not be mutated.
+    expect(after.baseline!.stages.length).toBe(beforeCount);
+  });
+});
+
+describe('removeStage', () => {
+  it('drops the matching stage, renumbers the remainder, and marks dirty', async () => {
+    await seedHydratedState();
+    // Add two more so we can prove the renumber works on the middle gap.
+    const id1 = studio.addStage('filter');
+    const id2 = studio.addStage('transform');
+    const dirtyBefore = get(studio).dirtyCount;
+
+    studio.removeStage(id1);
+
+    const after = get(studio);
+    expect(after.draft!.stages.find((st) => st.id === id1)).toBeUndefined();
+    expect(after.dirtyCount).toBe(dirtyBefore + 1);
+    expect(after.state).toBe('dirty');
+    // Two stages remain — baseline (s1, order=1) and id2 — renumbered
+    // contiguously to 1, 2.
+    const orders = after.draft!.stages.map((st) => st.stage_order);
+    expect(orders).toEqual([1, 2]);
+    // The id2 stage is still present.
+    expect(after.draft!.stages.find((st) => st.id === id2)).toBeDefined();
+  });
+});
+
+describe('reorderStages', () => {
+  it('reorders the stages by the provided id list and marks dirty', async () => {
+    await seedHydratedState();
+    const id2 = studio.addStage('transform');
+    const id3 = studio.addStage('translate');
+    // After seeds + adds: s1 (baseline), id2, id3.
+    const dirtyBefore = get(studio).dirtyCount;
+
+    // Move the last one to the front.
+    studio.reorderStages([id3, 's1', id2]);
+
+    const after = get(studio);
+    const ids = after.draft!.stages.map((st) => st.id);
+    expect(ids).toEqual([id3, 's1', id2]);
+    // stage_order reassigned 1..N.
+    expect(after.draft!.stages.map((st) => st.stage_order)).toEqual([1, 2, 3]);
+    expect(after.dirtyCount).toBe(dirtyBefore + 1);
+    expect(after.state).toBe('dirty');
+  });
+});
+
+describe('patchStage', () => {
+  it('applies a partial patch to one stage and marks dirty', async () => {
+    await seedHydratedState();
+    const dirtyBefore = get(studio).dirtyCount;
+
+    // The seed has a stage with id='s1'. Flip enabled + rewrite config.
+    studio.patchStage('s1', { enabled: false, stage_config: '{"paths":["a.b"]}' });
+
+    const after = get(studio);
+    const patched = after.draft!.stages.find((st) => st.id === 's1');
+    expect(patched).toBeDefined();
+    expect(patched!.enabled).toBe(false);
+    expect(patched!.stage_config).toBe('{"paths":["a.b"]}');
+    // Other stages untouched (there's only one — but the assertion
+    // makes the test explicit about non-mutation).
+    expect(after.draft!.stages.length).toBe(1);
+    expect(after.dirtyCount).toBe(dirtyBefore + 1);
+    expect(after.state).toBe('dirty');
+  });
+});

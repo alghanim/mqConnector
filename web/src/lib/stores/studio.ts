@@ -343,6 +343,174 @@ function clearComparison(): void {
   }));
 }
 
+// ─── Stage mutations (Task 9) ──────────────────────────────────────────
+//
+// The canvas + inspector both edit the draft via these helpers rather
+// than mutating `draft.stages` directly. Each mutation:
+//
+//   1. No-ops if there's no draft (pre-hydrate).
+//   2. Replaces `draft` with a fresh object (referential change) so
+//      Svelte's reactive boundary detects it; mutating in place wouldn't
+//      re-trigger derived blocks.
+//   3. Calls markDirty() at the end to bump the counter + flip the chip.
+//
+// The mutations never touch the baseline — the user's only way to send
+// the draft to the server is the deploy flow (Task 12).
+
+// StudioStageType — the set of stage types the studio palette can place
+// onto the canvas. Extends api.StageType with 'wasm' (backend supports it
+// via migrations 0015/0016; the api.ts type predates the plugin work and
+// will catch up in a separate cleanup). Kept as a local alias so the
+// canvas/palette can reference one symbol.
+export type StudioStageType =
+  | 'filter'
+  | 'transform'
+  | 'translate'
+  | 'route'
+  | 'script'
+  | 'validate'
+  | 'wasm';
+
+// defaultStageConfig returns a minimal-valid JSON config string for each
+// stage type, picked so the stage renders + dry-runs without further
+// editing. Keeps addStage from leaving a stage in a broken state on the
+// canvas. Mirrors `defaultConfig` in /flow.
+function defaultStageConfig(stageType: StudioStageType): string {
+  switch (stageType) {
+    case 'filter':
+      return '{"paths":[]}';
+    case 'translate':
+      return '{"output_format":"same"}';
+    case 'script':
+      return '{"script":"// msg.foo = 1\\nmsg;"}';
+    case 'validate':
+      return '{"schema_id":""}';
+    case 'route':
+      return '{}';
+    case 'transform':
+      return '{}';
+    case 'wasm':
+      return '{"plugin":""}';
+    default:
+      return '{}';
+  }
+}
+
+// localStageId generates a client-side id for a freshly-added stage.
+// Server replaces it on deploy with a real ULID. The `tmp-` prefix is the
+// signal a downstream save path can use to decide whether to POST vs PUT.
+function localStageId(): string {
+  return `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function addStage(stageType: StudioStageType): string {
+  const newId = localStageId();
+  inner.update((s) => {
+    if (!s.draft) return s;
+    const stages = s.draft.stages;
+    const maxOrder = stages.reduce((m, st) => (st.stage_order > m ? st.stage_order : m), 0);
+    const next: Stage = {
+      // The server's Stage type allows `tenant_id` + `pipeline_id` but
+      // the JS interface (api.ts) only carries `id` + `pipeline_id`. We
+      // leave both empty — the deploy round-trip fills them.
+      id: newId,
+      pipeline_id: '',
+      stage_order: maxOrder + 1,
+      stage_type: stageType as Stage['stage_type'],
+      stage_config: defaultStageConfig(stageType),
+      enabled: true
+    };
+    return {
+      ...s,
+      draft: {
+        ...s.draft,
+        stages: [...stages, next]
+      }
+    };
+  });
+  markDirty();
+  return newId;
+}
+
+function removeStage(stageId: string): void {
+  let removed = false;
+  inner.update((s) => {
+    if (!s.draft) return s;
+    const before = s.draft.stages.length;
+    const stages = s.draft.stages.filter((st) => st.id !== stageId);
+    if (stages.length === before) return s;
+    removed = true;
+    // Re-number stage_order to keep the chain contiguous (1..N). The
+    // server enforces this anyway but renumbering up front keeps the
+    // canvas + inspector reading the same indices.
+    const renumbered = stages.map((st, i) => ({ ...st, stage_order: i + 1 }));
+    const selectedNodeId = s.selectedNodeId === stageId ? null : s.selectedNodeId;
+    return {
+      ...s,
+      draft: { ...s.draft, stages: renumbered },
+      selectedNodeId
+    };
+  });
+  if (removed) markDirty();
+}
+
+function reorderStages(stageIdsInOrder: string[]): void {
+  let changed = false;
+  inner.update((s) => {
+    if (!s.draft) return s;
+    const byId = new Map(s.draft.stages.map((st) => [st.id ?? '', st]));
+    const reordered: Stage[] = [];
+    for (let i = 0; i < stageIdsInOrder.length; i++) {
+      const st = byId.get(stageIdsInOrder[i]);
+      if (!st) continue;
+      reordered.push({ ...st, stage_order: i + 1 });
+    }
+    // If the caller's list is missing stages, append them in their
+    // existing order so we don't silently drop stages. Defensive — the
+    // canvas always passes the full list.
+    if (reordered.length !== s.draft.stages.length) {
+      const seen = new Set(reordered.map((st) => st.id));
+      for (const st of s.draft.stages) {
+        if (!seen.has(st.id ?? '')) {
+          reordered.push({ ...st, stage_order: reordered.length + 1 });
+        }
+      }
+    }
+    // Detect a real change before flipping dirty — re-publishing the
+    // same ordering should be a no-op.
+    const same =
+      reordered.length === s.draft.stages.length &&
+      reordered.every((st, i) => st.id === s.draft!.stages[i].id);
+    if (same) return s;
+    changed = true;
+    return {
+      ...s,
+      draft: { ...s.draft, stages: reordered }
+    };
+  });
+  if (changed) markDirty();
+}
+
+function patchStage(stageId: string, patch: Partial<Stage>): void {
+  let changed = false;
+  inner.update((s) => {
+    if (!s.draft) return s;
+    let found = false;
+    const stages = s.draft.stages.map((st) => {
+      if (st.id !== stageId) return st;
+      found = true;
+      return { ...st, ...patch };
+    });
+    if (!found) return s;
+    changed = true;
+    return {
+      ...s,
+      draft: { ...s.draft, stages }
+    };
+  });
+  if (changed) markDirty();
+}
+
 function setDryRun(result: unknown): void {
   inner.update((s) => ({
     ...s,
@@ -384,5 +552,12 @@ export const studio = {
   clearComparison,
   setDryRun,
   clearDryRun,
+  // Stage mutations (Task 9) — the canvas + inspector edit the draft
+  // through these helpers; the deploy flow (Task 12) round-trips the
+  // result to the server.
+  addStage,
+  removeStage,
+  reorderStages,
+  patchStage,
   reset
 };
