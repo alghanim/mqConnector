@@ -987,14 +987,18 @@ paths:
                     to "Rollback to revision N" when absent or empty.
       responses:
         '200':
-          description: Rollback applied; response carries the newly-created revision and its snapshot.
+          description: |
+            Rollback applied. Response is the newly-created revision's
+            metadata fields flat at the top level (revision_number,
+            deployed_at, author_sub, change_summary, etc.) plus a
+            `snapshot` field carrying the decoded PipelineSnapshot —
+            same shape as GET /revisions/{rev}.
           content:
             application/json:
               schema:
                 type: object
-                required: [revision, snapshot]
+                required: [snapshot]
                 properties:
-                  revision: { type: object }
                   snapshot: { type: object }
         '400': { description: Revision number must be a positive integer, or body malformed. }
         '403': { description: Caller lacks operator role on this pipeline. }
@@ -1043,14 +1047,18 @@ paths:
                     optional (and ignored) otherwise.
       responses:
         '200':
-          description: Deploy applied; response carries the now-deployed revision and its snapshot.
+          description: |
+            Deploy applied. Response is the now-deployed revision's
+            metadata fields flat at the top level (revision_number,
+            deployed_at, author_sub, change_summary, etc.) plus a
+            `snapshot` field carrying the decoded PipelineSnapshot —
+            same shape as GET /revisions/{rev}.
           content:
             application/json:
               schema:
                 type: object
-                required: [revision, snapshot]
+                required: [snapshot]
                 properties:
-                  revision: { type: object }
                   snapshot: { type: object }
         '400': { description: Body malformed or revision_number missing/invalid. }
         '403': { description: Caller lacks operator role on this pipeline. }

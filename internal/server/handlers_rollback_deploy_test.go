@@ -119,11 +119,19 @@ func (f rollbackDeployFixture) post(t *testing.T, path, body string) *httptest.R
 	return rec
 }
 
-// decodeApply parses an applyResponse body. Tests use this for both
-// /rollback and /deploy since the response envelope is identical.
-func decodeApply(t *testing.T, b []byte) applyResponse {
+// decodeApply parses a revisionResponse body. Tests use this for both
+// /rollback and /deploy since both endpoints return the same shape as
+// the read endpoints: the PipelineRevision metadata fields are flat at
+// the top level (via the embedded struct), and `snapshot` is the
+// decoded PipelineSnapshot — the embedded raw snapshot string is
+// shadowed by the outermost `snapshot` JSON tag.
+func decodeApply(t *testing.T, b []byte) revisionResponse {
 	t.Helper()
-	var resp applyResponse
+	var resp revisionResponse
+	// The embedded *storage.PipelineRevision pointer must be non-nil
+	// before decode so the JSON decoder fills its fields; otherwise
+	// embedded-pointer fields decode into a nil pointer and panic.
+	resp.PipelineRevision = &storage.PipelineRevision{}
 	if err := json.Unmarshal(b, &resp); err != nil {
 		t.Fatalf("decode apply response: %v (body=%s)", err, b)
 	}
@@ -176,17 +184,17 @@ func TestRollback_HappyPath(t *testing.T) {
 	}
 	resp := decodeApply(t, rec.Body.Bytes())
 
-	if resp.Revision == nil {
-		t.Fatal("response missing revision")
+	if resp.PipelineRevision == nil {
+		t.Fatal("response missing revision metadata")
 	}
-	if resp.Revision.RevisionNumber != 3 {
-		t.Errorf("new rev number = %d, want 3 (MAX(1,2)+1)", resp.Revision.RevisionNumber)
+	if resp.RevisionNumber != 3 {
+		t.Errorf("new rev number = %d, want 3 (MAX(1,2)+1)", resp.RevisionNumber)
 	}
-	if resp.Revision.DeployedAt == nil {
+	if resp.DeployedAt == nil {
 		t.Error("new revision deployed_at should be non-NULL")
 	}
-	if resp.Revision.ChangeSummary != "Rollback to revision 1" {
-		t.Errorf("default change_summary = %q", resp.Revision.ChangeSummary)
+	if resp.ChangeSummary != "Rollback to revision 1" {
+		t.Errorf("default change_summary = %q", resp.ChangeSummary)
 	}
 	if resp.Snapshot == nil {
 		t.Fatal("response missing snapshot")
@@ -345,8 +353,8 @@ func TestRollback_CustomChangeSummary(t *testing.T) {
 		t.Fatalf("rollback: %d %s", rec.Code, rec.Body)
 	}
 	resp := decodeApply(t, rec.Body.Bytes())
-	if resp.Revision.ChangeSummary != "Emergency rollback - prod incident" {
-		t.Errorf("change_summary = %q, want override", resp.Revision.ChangeSummary)
+	if resp.ChangeSummary != "Emergency rollback - prod incident" {
+		t.Errorf("change_summary = %q, want override", resp.ChangeSummary)
 	}
 }
 
@@ -470,14 +478,14 @@ func TestDeploy_HappyPath(t *testing.T) {
 		t.Fatalf("deploy: %d %s", rec.Code, rec.Body)
 	}
 	resp := decodeApply(t, rec.Body.Bytes())
-	if resp.Revision == nil {
-		t.Fatal("response missing revision")
+	if resp.PipelineRevision == nil {
+		t.Fatal("response missing revision metadata")
 	}
-	if resp.Revision.RevisionNumber != rev2.RevisionNumber {
+	if resp.RevisionNumber != rev2.RevisionNumber {
 		t.Errorf("response rev = %d, want %d (deploy must return the deployed rev, not a new one)",
-			resp.Revision.RevisionNumber, rev2.RevisionNumber)
+			resp.RevisionNumber, rev2.RevisionNumber)
 	}
-	if resp.Revision.DeployedAt == nil {
+	if resp.DeployedAt == nil {
 		t.Error("deployed_at should be non-NULL after deploy")
 	}
 

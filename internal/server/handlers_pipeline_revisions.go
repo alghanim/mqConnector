@@ -280,15 +280,14 @@ type rollbackRequest struct {
 	ChangeSummary string `json:"change_summary"`
 }
 
-// applyResponse is the shared wire shape for the rollback + deploy
-// endpoints: the revision row that is now live (newly-created for
-// rollback, promoted-from-existing for deploy) plus the decoded
-// PipelineSnapshot the Studio UI would render in the diff/preview
-// panes without a second round-trip.
-type applyResponse struct {
-	Revision *storage.PipelineRevision `json:"revision"`
-	Snapshot *storage.PipelineSnapshot `json:"snapshot"`
-}
+// The rollback + deploy endpoints share the same wire shape with the
+// read endpoints: revisionResponse (embedded PipelineRevision metadata
+// + the decoded snapshot, with the embedded raw `snapshot` string
+// shadowed by the parsed object via Go's outermost-tag-wins rule).
+// makeRevisionResponse is the single helper that produces it; reusing
+// it here keeps the wire format consistent and prevents the snapshot
+// bytes from being serialised twice (once as the embedded raw string,
+// once as the parsed object).
 
 // handleRollbackRevision serves POST
 // /api/v1/pipelines/{id}/revisions/{rev}/rollback.
@@ -420,10 +419,7 @@ func (s *Server) handleRollbackRevision(w http.ResponseWriter, r *http.Request) 
 	//    above would cancel when the response flushes.
 	go s.reloadPipelines()
 
-	writeJSON(w, http.StatusOK, applyResponse{
-		Revision: newRev,
-		Snapshot: &snap,
-	})
+	writeJSON(w, http.StatusOK, s.makeRevisionResponse(newRev))
 }
 
 // deployRequest is the body for the deploy endpoint. revision_number
@@ -545,10 +541,7 @@ func (s *Server) handleDeployRevision(w http.ResponseWriter, r *http.Request) {
 
 	go s.reloadPipelines()
 
-	writeJSON(w, http.StatusOK, applyResponse{
-		Revision: target,
-		Snapshot: &snap,
-	})
+	writeJSON(w, http.StatusOK, s.makeRevisionResponse(target))
 }
 
 // authorFromCtx extracts (sub, preferred_username) from the request
