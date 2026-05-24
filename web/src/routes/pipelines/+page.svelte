@@ -454,12 +454,12 @@
                 <div class="row-actions">
                   {#if p.id}
                     <!--
-                      Studio is now the canonical configure path. The
-                      kebab below still surfaces the legacy form view
-                      until Task 14 makes /pipelines/{id}?legacy=1 the
-                      gated discovery path. /flow stays available as a
-                      bridge for muscle memory; Task 9 folds it into
-                      the Studio canvas.
+                      Studio is the canonical configure path. The
+                      GitFork link is the gated escape hatch into the
+                      legacy form view — Task 14 made /pipelines/{id}
+                      redirect into the Studio, so the `?legacy=1`
+                      query string is now mandatory to reach the form.
+                      Wave 2 will delete both the route and this icon.
                     -->
                     <a
                       class="icon-action"
@@ -471,7 +471,7 @@
                     </a>
                     <a
                       class="icon-action"
-                      href="/pipelines/{p.id}"
+                      href="/pipelines/{p.id}?legacy=1"
                       aria-label={t($locale, 'studio.legacy.openForm')}
                       title={t($locale, 'studio.legacy.openForm')}
                     >

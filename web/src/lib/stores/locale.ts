@@ -70,6 +70,10 @@ const strings: Record<Locale, Record<string, string>> = {
     'studio.action.validate': 'Validate',
     'studio.action.deploy': 'Deploy',
     'studio.legacy.openForm': 'Open legacy form',
+    'studio.legacy.banner.title': 'Legacy form view.',
+    'studio.legacy.banner.body':
+      'The new Pipeline Studio is now the primary interface. This form view is kept as a safety net and will be removed in a future release.',
+    'studio.legacy.banner.openStudio': 'Open in Studio',
     'studio.loading': 'Loading Studio…',
     'studio.error.title': 'Failed to load Studio',
     'studio.error.retry': 'Retry',
@@ -883,6 +887,10 @@ const strings: Record<Locale, Record<string, string>> = {
     'studio.action.validate': 'تحقّق',
     'studio.action.deploy': 'نشر',
     'studio.legacy.openForm': 'فتح النموذج التقليدي',
+    'studio.legacy.banner.title': 'عرض النموذج التقليدي.',
+    'studio.legacy.banner.body':
+      'أصبح استوديو التدفّقات الجديد هو الواجهة الأساسية. يُحتفظ بعرض النموذج هذا كشبكة أمان وسيُحذف في إصدار قادم.',
+    'studio.legacy.banner.openStudio': 'فتح في الاستوديو',
     'studio.loading': 'جارٍ تحميل الاستوديو…',
     'studio.error.title': 'تعذّر تحميل الاستوديو',
     'studio.error.retry': 'إعادة المحاولة',

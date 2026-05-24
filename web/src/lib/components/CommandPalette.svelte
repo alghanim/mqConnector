@@ -265,7 +265,10 @@
         sublabel: `pipeline · ${p.output_format}`,
         icon: Workflow,
         section: 'resources',
-        action: () => goto(`/pipelines/${p.id}`)
+        // Task 14: /pipelines/{id} now redirects into the Studio anyway;
+        // jump straight there so the palette doesn't trigger the
+        // through-redirect (which would flicker an "loading" frame).
+        action: () => goto(`/pipelines/${p.id}/studio`)
       });
     }
     for (const d of foundDLQ) {
