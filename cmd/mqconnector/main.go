@@ -338,9 +338,15 @@ func run(configPath string) error {
 			logger.Error("syslog forwarder init failed; continuing without it",
 				"err", err, "url", cfg.Audit.SyslogURL)
 		} else {
+			format := strings.ToLower(strings.TrimSpace(cfg.Audit.SyslogFormat))
+			if format == "cef" {
+				sf.SetFormat(audit.FormatCEF)
+				sf.SetVersion(version)
+			}
 			store.Audit.AddSink(sf)
 			sf.Start(rootCtx)
-			logger.Info("audit syslog forwarder enabled", "url", cfg.Audit.SyslogURL)
+			logger.Info("audit syslog forwarder enabled",
+				"url", cfg.Audit.SyslogURL, "format", format)
 		}
 	}
 

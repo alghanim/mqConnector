@@ -140,6 +140,15 @@ audit:
   archive_dir: ""             # e.g. "/var/log/mqconnector/audit"
   max_age: "168h"             # archive rows older than 7 days
   sweep_interval: "1h"
+  # Real-time syslog fan-out. Independent of S3 / file archival.
+  #   "tcp://siem.example:514" or "udp://siem.example:514"
+  syslog_url: ""
+  # Wire format for the syslog fan-out.
+  #   "" / "rfc5424"  — RFC 5424 syslog with audit-row JSON in the body
+  #                    (default; rsyslog / syslog-ng / Splunk UF).
+  #   "cef"           — ArcSight Common Event Format wrapped in an
+  #                    RFC 5424 envelope (ArcSight ESM / QRadar DSM).
+  syslog_format: ""
   # Optional S3-compatible upload of rotated daily files. Leave all
   # fields empty for local-only archival (the air-gapped default).
   # When configured, each fully-written day's file is uploaded to

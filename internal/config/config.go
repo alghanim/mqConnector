@@ -112,6 +112,16 @@ type AuditConfig struct {
 	// Empty disables. Independent of S3 / file archival — both can
 	// run side by side.
 	SyslogURL string `yaml:"syslog_url"`
+	// SyslogFormat selects the wire format for audit rows sent over
+	// SyslogURL. Accepted values:
+	//   - "" (default) or "rfc5424": RFC 5424 syslog with the audit
+	//     row's JSON in the message body. Best for syslog-ng / rsyslog
+	//     / Splunk Universal Forwarder.
+	//   - "cef": ArcSight Common Event Format (CEF:0|Vendor|Product|
+	//     Version|EventClassID|Name|Severity|extension), wrapped in
+	//     an RFC 5424 envelope. Best for ArcSight / QRadar pipelines
+	//     that key on CEF-shaped events.
+	SyslogFormat string `yaml:"syslog_format"`
 }
 
 // AuditS3Config carries S3-compatible upload settings. Compatible with
