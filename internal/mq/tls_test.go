@@ -88,8 +88,19 @@ func TestBuildTLSConfig_FullMTLS(t *testing.T) {
 	if cfg.RootCAs == nil {
 		t.Error("expected RootCAs populated from ca_file")
 	}
-	if len(cfg.Certificates) != 1 {
-		t.Errorf("expected 1 client cert, got %d", len(cfg.Certificates))
+	// Client cert is wired via GetClientCertificate (hot reload) instead
+	// of cfg.Certificates so a rotated keypair is picked up on the next
+	// broker handshake without a process restart.
+	if cfg.GetClientCertificate == nil {
+		t.Error("expected GetClientCertificate populated from cert_file/key_file")
+	}
+	if len(cfg.Certificates) != 0 {
+		t.Errorf("expected Certificates to be empty (rotation uses GetClientCertificate); got %d", len(cfg.Certificates))
+	}
+	// And the callback must actually return a usable cert.
+	c, err := cfg.GetClientCertificate(nil)
+	if err != nil || c == nil || len(c.Certificate) == 0 {
+		t.Errorf("GetClientCertificate did not return a usable cert: cert=%v err=%v", c, err)
 	}
 }
 

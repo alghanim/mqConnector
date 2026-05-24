@@ -42,11 +42,20 @@ func BuildTLSConfig(t TLSConfig) (*tls.Config, error) {
 	}
 
 	if t.CertFile != "" && t.KeyFile != "" {
-		cert, err := tls.LoadX509KeyPair(t.CertFile, t.KeyFile)
+		// Hot reload: wire GetClientCertificate so a cert rotation
+		// (cert-manager, certbot, the operator's CA renewer) is
+		// picked up on the next broker handshake without restarting
+		// the process. The reloader stats the cert/key files on each
+		// handshake and reloads when mtime changes; broker handshakes
+		// are rare enough that the stat overhead is negligible.
+		// Connections established before the rotation keep using the
+		// old cert until they reconnect — see OPERATIONS.md for how
+		// to drain them via /api/v1/reload.
+		reloader, err := getOrCreateReloader(t.CertFile, t.KeyFile)
 		if err != nil {
 			return nil, fmt.Errorf("mq tls: load keypair: %w", err)
 		}
-		cfg.Certificates = []tls.Certificate{cert}
+		cfg.GetClientCertificate = reloader.GetClientCertificate
 	}
 
 	return cfg, nil
