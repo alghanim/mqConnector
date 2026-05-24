@@ -171,6 +171,110 @@ func (s *Server) auditRawView(r *http.Request, dlqID string) {
 	}(entry)
 }
 
+// handleBulkRetryDLQ serves POST /api/v1/dlq/bulk/retry. Accepts the
+// same filter shape as the list endpoint plus an optional `max_rows`
+// cap. Returns a per-id outcome summary so a partial failure
+// surfaces in the UI without forcing a per-row probe.
+func (s *Server) handleBulkRetryDLQ(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
+	f, maxRows := bulkDLQFilterFromRequest(r)
+	res, err := s.dlq.BulkRetry(r.Context(), tenant, f, maxRows)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleBulkDeleteDLQ serves POST /api/v1/dlq/bulk/delete.
+func (s *Server) handleBulkDeleteDLQ(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
+	f, maxRows := bulkDLQFilterFromRequest(r)
+	res, err := s.dlq.BulkDelete(r.Context(), tenant, f, maxRows)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// handleGroupDLQ serves GET /api/v1/dlq/groups. Returns the top-N
+// error patterns + counts for the triage UI's "what's burning?"
+// panel. `limit` query param caps the result; default 20.
+func (s *Server) handleGroupDLQ(w http.ResponseWriter, r *http.Request) {
+	tenant := auth.TenantID(r.Context())
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	groups, err := s.dlq.GroupByError(r.Context(), tenant, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]map[string]any, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, map[string]any{
+			"pattern":   g.Pattern,
+			"count":     g.Count,
+			"oldest_at": g.OldestAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// bulkDLQFilterFromRequest parses the shared filter shape (same
+// fields as handleListDLQ) for the bulk endpoints. Accepts the
+// filter either as JSON body (POST {...}) or query string (so
+// curl ergonomics aren't worse than the GET list endpoint).
+func bulkDLQFilterFromRequest(r *http.Request) (storage.DLQFilter, int) {
+	q := r.URL.Query()
+	f := storage.DLQFilter{
+		PipelineID: q.Get("pipeline_id"),
+		Error:      q.Get("error"),
+	}
+	if v := q.Get("since"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			f.Since = &t
+		}
+	}
+	if v := q.Get("until"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			f.Until = &t
+		}
+	}
+	maxRows, _ := strconv.Atoi(q.Get("max_rows"))
+
+	if r.Body != nil && r.ContentLength > 0 {
+		var body struct {
+			PipelineID string `json:"pipeline_id"`
+			Error      string `json:"error"`
+			Since      string `json:"since"`
+			Until      string `json:"until"`
+			MaxRows    int    `json:"max_rows"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			if body.PipelineID != "" {
+				f.PipelineID = body.PipelineID
+			}
+			if body.Error != "" {
+				f.Error = body.Error
+			}
+			if body.Since != "" {
+				if t, err := time.Parse(time.RFC3339, body.Since); err == nil {
+					f.Since = &t
+				}
+			}
+			if body.Until != "" {
+				if t, err := time.Parse(time.RFC3339, body.Until); err == nil {
+					f.Until = &t
+				}
+			}
+			if body.MaxRows > 0 {
+				maxRows = body.MaxRows
+			}
+		}
+	}
+	return f, maxRows
+}
+
 // handleListDLQRedactionRules serves GET /api/v1/pipelines/{id}/dlq-redaction-rules.
 func (s *Server) handleListDLQRedactionRules(w http.ResponseWriter, r *http.Request) {
 	tenant := auth.TenantID(r.Context())

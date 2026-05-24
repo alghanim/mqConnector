@@ -199,11 +199,20 @@ func (s *Server) routes() http.Handler {
 
 		r.Route("/api/v1/dlq", func(r chi.Router) {
 			r.Get("/", s.handleListDLQ)
+			r.Get("/groups", s.handleGroupDLQ)
 			r.Post("/{id}/retry", s.handleRetryDLQ)
 			r.Delete("/{id}", s.handleDeleteDLQ)
 			// Raw payload view is admin-only; every successful read
 			// is audited as action=dlq_raw_view (see handler).
 			r.With(s.auth.RequireRole("admin")).Get("/{id}/raw", s.handleGetDLQRaw)
+			// Bulk triage. Operator role gates write — bulk replay
+			// can wake up an entire downstream consumer set; bulk
+			// delete is irreversible at the row level. The
+			// sensitive-route limiter also fires.
+			r.With(s.auth.RequireRole("operator"), s.rateLimitSensitive("/api/v1/dlq/bulk")).
+				Post("/bulk/retry", s.handleBulkRetryDLQ)
+			r.With(s.auth.RequireRole("operator"), s.rateLimitSensitive("/api/v1/dlq/bulk")).
+				Post("/bulk/delete", s.handleBulkDeleteDLQ)
 		})
 
 		r.Route("/api/v1/scripts", func(r chi.Router) {

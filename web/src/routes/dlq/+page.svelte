@@ -197,41 +197,101 @@
 
   // ─── Bulk actions ───────────────────────────────────────────────
   let bulkAction: 'retry' | 'delete' | null = null;
+  // bulkScope decides whether the confirm path hits the per-id
+  // endpoints (selection-driven) or the server-side bulk endpoint
+  // keyed on the active filter. The latter is the only way to reach
+  // rows that don't fit in the current page.
+  let bulkScope: 'selection' | 'filter' = 'selection';
   let bulkBusy = false;
 
   function askBulkRetry() {
     if (selected.size === 0) return;
+    bulkScope = 'selection';
     bulkAction = 'retry';
   }
   function askBulkDelete() {
     if (selected.size === 0) return;
+    bulkScope = 'selection';
+    bulkAction = 'delete';
+  }
+  // ask*MatchingFilter targets every row that matches the current
+  // filter (server-side), not just the visible-page selection. Only
+  // active when at least one filter is set — bulk-deleting the entire
+  // table by accident is exactly the misclick this guards against.
+  function askBulkRetryMatching() {
+    if (!filterActive) return;
+    bulkScope = 'filter';
+    bulkAction = 'retry';
+  }
+  function askBulkDeleteMatching() {
+    if (!filterActive) return;
+    bulkScope = 'filter';
     bulkAction = 'delete';
   }
   async function confirmBulk() {
     if (!bulkAction) return;
     bulkBusy = true;
-    const ids = Array.from(selected);
     try {
-      // Parallel — the per-id endpoints handle individually and there's
-      // no server-side bulk endpoint. Use Promise.allSettled so one
-      // failure doesn't abort the rest.
-      const results = await Promise.allSettled(
-        ids.map((id) =>
-          bulkAction === 'retry' ? api.post(`/v1/dlq/${id}/retry`) : api.del(`/v1/dlq/${id}`)
-        )
-      );
-      const failures = results.filter((r) => r.status === 'rejected').length;
-      if (failures > 0) {
-        error = `${failures}/${ids.length} ${bulkAction} failed`;
+      if (bulkScope === 'filter') {
+        // Server-side bulk: one call, one transaction. Maps to the
+        // new POST /v1/dlq/bulk/{retry,delete} endpoint that accepts
+        // the same filter shape as the list endpoint.
+        const since = windowToSince(filterWindow);
+        const body: Record<string, unknown> = { max_rows: 1000 };
+        if (filterPipeline) body.pipeline_id = filterPipeline;
+        if (filterError) body.error = filterError;
+        if (since) body.since = since;
+        const res = await api.post<{
+          succeeded: number;
+          failed: number;
+          failures?: Record<string, string>;
+        }>(`/v1/dlq/bulk/${bulkAction}`, body);
+        if (res.failed > 0) {
+          error = `${res.failed}/${res.succeeded + res.failed} ${bulkAction} failed`;
+        }
+      } else {
+        const ids = Array.from(selected);
+        const results = await Promise.allSettled(
+          ids.map((id) =>
+            bulkAction === 'retry' ? api.post(`/v1/dlq/${id}/retry`) : api.del(`/v1/dlq/${id}`)
+          )
+        );
+        const failures = results.filter((r) => r.status === 'rejected').length;
+        if (failures > 0) {
+          error = `${failures}/${ids.length} ${bulkAction} failed`;
+        }
       }
       selected = new Set();
       bulkAction = null;
       await refresh();
+      await refreshGroups();
     } catch (e: unknown) {
       error = (e as { message?: string }).message || `${bulkAction} failed`;
     } finally {
       bulkBusy = false;
     }
+  }
+
+  $: filterActive = !!filterPipeline || !!filterError || filterWindow !== 'all';
+
+  // ─── Top error patterns ─────────────────────────────────────────
+  // Surfaces what's burning so an oncall can triage on pattern first,
+  // rows second. Backed by GET /v1/dlq/groups — server-side aggregate,
+  // so the answer is meaningful even when total >> visible window.
+  type ErrorGroup = { pattern: string; count: number; oldest_at: string };
+  let groups: ErrorGroup[] = [];
+  async function refreshGroups() {
+    try {
+      const res = await api.get<{ items: ErrorGroup[] }>(`/v1/dlq/groups?limit=5`);
+      groups = res.items ?? [];
+    } catch {
+      groups = [];
+    }
+  }
+  onMount(refreshGroups);
+  function adoptGroupAsFilter(pattern: string) {
+    filterError = pattern;
+    refresh();
   }
 
   // ─── Detail drawer ──────────────────────────────────────────────
@@ -437,6 +497,33 @@
     </Card>
   </section>
 
+  <!-- ─── Top error patterns ──────────────────────────────────────
+       Server-side aggregate (GET /v1/dlq/groups). Lets the operator
+       triage by pattern before drilling into rows. Click a pattern
+       to set it as the error filter. -->
+  {#if groups.length > 0}
+    <section class="dlq-groups" aria-label="DLQ top error patterns">
+      <header class="dlq-groups-header">
+        <h2>Top error patterns</h2>
+        <span class="dlq-groups-hint">click to filter</span>
+      </header>
+      <ul class="dlq-groups-list">
+        {#each groups as g}
+          <li>
+            <button
+              type="button"
+              class="dlq-group-pill"
+              on:click={() => adoptGroupAsFilter(g.pattern.slice(0, 40))}
+            >
+              <span class="dlq-group-pattern" title={g.pattern}>{g.pattern}</span>
+              <Badge variant="neutral">{g.count}</Badge>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
   <!-- ─── Bulk action bar ───────────────────────────────────────── -->
   {#if selected.size > 0}
     <section class="dlq-bulk-bar" aria-label={t($locale, 'dlq.bulk.region')}>
@@ -452,6 +539,22 @@
           {t($locale, 'dlq.bulk.deleteAll')}
         </Button>
         <Button on:click={askBulkRetry}>{t($locale, 'dlq.bulk.retryAll')}</Button>
+      </div>
+    </section>
+  {:else if filterActive && total > entries.length}
+    <!-- When a filter is active and matches more rows than fit on the
+         current page, surface the server-side bulk affordance — the
+         only way to act on the entire match-set in one go. -->
+    <section class="dlq-bulk-bar" aria-label="Bulk on filter">
+      <span class="dlq-bulk-count" aria-live="polite">
+        <Badge variant="neutral">{total}</Badge>
+        rows match this filter — apply to all?
+      </span>
+      <div class="flex gap-2">
+        <Button variant="outline" on:click={askBulkDeleteMatching}>
+          Delete all matching
+        </Button>
+        <Button on:click={askBulkRetryMatching}>Retry all matching</Button>
       </div>
     </section>
   {/if}
@@ -771,6 +874,66 @@
     gap: 8px;
     color: var(--text);
     font-size: 14px;
+  }
+
+  /* ─── Top error patterns panel ──────────────────────────────── */
+  .dlq-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+  }
+  .dlq-groups-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .dlq-groups-header h2 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .dlq-groups-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .dlq-groups-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .dlq-group-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+    font: inherit;
+    color: var(--text);
+    max-width: 100%;
+  }
+  .dlq-group-pill:hover {
+    border-color: var(--primary);
+  }
+  .dlq-group-pattern {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 36ch;
+    font-size: 13px;
   }
 
   /* ─── Table ──────────────────────────────────────────────────── */

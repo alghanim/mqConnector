@@ -933,6 +933,109 @@ paths:
         '200':
           description: Deleted.
 
+  /api/v1/dlq/groups:
+    get:
+      summary: Aggregate DLQ rows by error-reason prefix (top-N).
+      description: |
+        Returns the top error patterns observed in the DLQ table for the
+        active tenant, sorted by count descending. Each entry carries
+        the leading characters of the error_reason (sufficient to
+        identify the failure family), the row count, and the
+        timestamp of the oldest row in the bucket.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+      responses:
+        '200':
+          description: Top error patterns.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        pattern:  { type: string }
+                        count:    { type: integer }
+                        oldest_at: { type: string, format: date-time }
+
+  /api/v1/dlq/bulk/retry:
+    post:
+      summary: Bulk-retry every DLQ row matching a filter.
+      description: |
+        Operator-only. Replays every row that matches the supplied
+        filter (same shape as GET /api/v1/dlq), capped at `max_rows`
+        (default 100). Each row goes through the standard Retry path
+        — rows past their retry budget land in the `failures` map
+        rather than the destination.
+
+        Filter fields can be supplied either as query parameters or
+        as a JSON body. JSON-body fields override query parameters.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pipeline_id: { type: string, format: uuid }
+                error:       { type: string }
+                since:       { type: string, format: date-time }
+                until:       { type: string, format: date-time }
+                max_rows:    { type: integer, default: 100 }
+      responses:
+        '200':
+          description: Per-row outcome summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  succeeded: { type: integer }
+                  failed:    { type: integer }
+                  failures:
+                    type: object
+                    additionalProperties: { type: string }
+
+  /api/v1/dlq/bulk/delete:
+    post:
+      summary: Bulk-delete every DLQ row matching a filter.
+      description: |
+        Operator-only. Removes every row matching the filter, capped
+        at `max_rows` (default 1000). Same filter shape as the list
+        endpoint; same body/query-param handling as bulk/retry.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pipeline_id: { type: string, format: uuid }
+                error:       { type: string }
+                since:       { type: string, format: date-time }
+                until:       { type: string, format: date-time }
+                max_rows:    { type: integer, default: 1000 }
+      responses:
+        '200':
+          description: Count of rows deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  succeeded: { type: integer }
+
   /api/v1/dlq/{id}/raw:
     parameters: [{ $ref: '#/components/parameters/pathID' }]
     get:

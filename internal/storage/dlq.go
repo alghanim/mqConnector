@@ -151,6 +151,188 @@ func (r *DLQRepo) Delete(ctx context.Context, tenantID, id string) error {
 	return nil
 }
 
+// DeleteByFilter removes every DLQ row matching the same DLQFilter
+// shape the List endpoints accept. Returns the number of rows
+// removed. Tenant-scoped — a missing tenantID is rejected. Callers
+// (the bulk-triage handler) supply the cap explicitly via maxRows;
+// SQLite supports DELETE ... LIMIT only with the right build flags
+// so we apply the limit via a SELECT-then-DELETE-by-ID pattern.
+func (r *DLQRepo) DeleteByFilter(ctx context.Context, tenantID string, f DLQFilter, maxRows int) (int64, error) {
+	if tenantID == "" {
+		return 0, ErrTenantRequired
+	}
+	if maxRows <= 0 {
+		maxRows = 1000
+	}
+	ids, err := r.IDsByFilter(ctx, tenantID, f, maxRows)
+	if err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	return r.deleteByIDs(ctx, tenantID, ids)
+}
+
+// IDsByFilter returns up to maxRows DLQ ids matching f. Used by the
+// bulk-action handlers to materialise the affected set before
+// applying retry/delete row-by-row.
+func (r *DLQRepo) IDsByFilter(ctx context.Context, tenantID string, f DLQFilter, maxRows int) ([]string, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	if maxRows <= 0 {
+		maxRows = 1000
+	}
+	where := "tenant_id = ?"
+	args := []any{tenantID}
+	if f.PipelineID != "" {
+		where += " AND pipeline_id = ?"
+		args = append(args, f.PipelineID)
+	}
+	if f.Error != "" {
+		where += " AND LOWER(error_reason) LIKE LOWER(?)"
+		args = append(args, "%"+f.Error+"%")
+	}
+	if f.Since != nil {
+		where += " AND created_at >= ?"
+		args = append(args, *f.Since)
+	}
+	if f.Until != nil {
+		where += " AND created_at < ?"
+		args = append(args, *f.Until)
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id FROM dlq WHERE `+where+` ORDER BY created_at DESC LIMIT ?`,
+		append(args, maxRows)...)
+	if err != nil {
+		return nil, fmt.Errorf("list dlq ids: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func (r *DLQRepo) deleteByIDs(ctx context.Context, tenantID string, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	// Build a parametrised IN clause. SQLite handles up to 999 params
+	// per statement comfortably; the bulk-cap (maxRows) is enforced
+	// by the caller well below that ceiling.
+	placeholders := make([]byte, 0, len(ids)*2)
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, tenantID)
+	for i, id := range ids {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args = append(args, id)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM dlq WHERE tenant_id = ? AND id IN (`+string(placeholders)+`)`,
+		args...)
+	if err != nil {
+		return 0, fmt.Errorf("bulk delete: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// ErrorGroup is one bucket of the DLQ-by-error-reason aggregation.
+// Pattern is the first dlqErrorPatternHead characters of the
+// error_reason (sufficient to identify the failure family;
+// distinguishes "validate: required field x missing" from
+// "send: dial tcp 10.0.0.1:5672: connect: refused" even though both
+// share a prefix), Count is the number of rows in that bucket, and
+// OldestAt is the earliest created_at among them.
+type ErrorGroup struct {
+	Pattern  string
+	Count    int64
+	OldestAt time.Time
+}
+
+// dlqErrorPatternHead is how many chars of error_reason we group on.
+// Long enough to keep distinct failure modes separate, short enough
+// to collapse "field 'x'" vs "field 'y'" into one bucket.
+const dlqErrorPatternHead = 80
+
+// GroupByError aggregates DLQ rows by error_reason prefix for the
+// triage UI. Returns the top `limit` buckets, sorted by count desc.
+// Tenant-scoped.
+func (r *DLQRepo) GroupByError(ctx context.Context, tenantID string, limit int) ([]ErrorGroup, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT SUBSTR(error_reason, 1, ?) AS pattern,
+		       COUNT(1) AS cnt,
+		       MIN(created_at) AS oldest
+		FROM dlq
+		WHERE tenant_id = ?
+		GROUP BY pattern
+		ORDER BY cnt DESC
+		LIMIT ?`, dlqErrorPatternHead, tenantID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("dlq group by error: %w", err)
+	}
+	defer rows.Close()
+	var out []ErrorGroup
+	for rows.Next() {
+		var g ErrorGroup
+		// SQLite returns aggregate timestamps as TEXT; pgx returns
+		// time.Time. Scan via sql.NullString to accept both, then
+		// parse on the SQLite path.
+		var oldestRaw sql.NullString
+		var oldestT sql.NullTime
+		if err := rows.Scan(&g.Pattern, &g.Count, &oldestRaw); err == nil {
+			if oldestRaw.Valid {
+				if t, perr := parseSQLiteTimestamp(oldestRaw.String); perr == nil {
+					g.OldestAt = t
+				}
+			}
+		} else if err2 := rows.Scan(&g.Pattern, &g.Count, &oldestT); err2 != nil {
+			return nil, err
+		} else if oldestT.Valid {
+			g.OldestAt = oldestT.Time
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// parseSQLiteTimestamp accepts the handful of formats SQLite emits
+// when an aggregate (MIN, MAX) is applied to a DATETIME column.
+// pgx returns time.Time directly so this is only invoked on the
+// SQLite path.
+func parseSQLiteTimestamp(s string) (time.Time, error) {
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05Z07:00",
+		"2006-01-02 15:04:05",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("dlq: unparseable timestamp %q", s)
+}
+
 // DLQStat is one row of the per-pipeline DLQ aggregate. OldestAt is
 // the timestamp of the longest-resident message for that pipeline —
 // alerting on its age catches a stuck retry loop or a broken

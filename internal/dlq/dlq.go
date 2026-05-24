@@ -368,3 +368,78 @@ func (s *Service) List(ctx context.Context, tenantID string, page, perPage int) 
 func (s *Service) ListFiltered(ctx context.Context, tenantID string, f storage.DLQFilter, page, perPage int) ([]*storage.DLQEntry, int, error) {
 	return s.store.DLQ.ListFiltered(ctx, tenantID, f, page, perPage)
 }
+
+// BulkResult bundles the outcome of a bulk-action call. Succeeded +
+// Failed sum to the count of rows the action attempted (i.e. the
+// row count matched by the filter, capped at maxRows). Failures map
+// the row id to the human-readable error for the UI's "5 of 50
+// failed — show me which" affordance.
+type BulkResult struct {
+	Succeeded int            `json:"succeeded"`
+	Failed    int            `json:"failed"`
+	Failures  map[string]string `json:"failures,omitempty"`
+}
+
+// BulkDelete removes every DLQ row matching the filter, capped at
+// maxRows. Tenant-scoped via the storage repo. The capping is
+// deliberate: a misclicked "delete all" against a million-row DLQ
+// would otherwise hold the SQLite writer for minutes.
+func (s *Service) BulkDelete(ctx context.Context, tenantID string, f storage.DLQFilter, maxRows int) (BulkResult, error) {
+	if maxRows <= 0 {
+		maxRows = 1000
+	}
+	n, err := s.store.DLQ.DeleteByFilter(ctx, tenantID, f, maxRows)
+	if err != nil {
+		return BulkResult{}, err
+	}
+	s.logger.Info("dlq bulk delete",
+		"tenant_id", tenantID, "rows", n, "filter_error", f.Error, "filter_pipeline", f.PipelineID)
+	return BulkResult{Succeeded: int(n)}, nil
+}
+
+// BulkRetry replays every DLQ row matching the filter, capped at
+// maxRows. Each row goes through Retry — which respects the
+// per-pipeline retry budget — so rows that have already exhausted
+// their retries land in Failures rather than the queue.
+//
+// Rows are processed sequentially to avoid hammering the destination
+// broker with N concurrent sends; the throughput here is
+// triage-grade, not production-grade.
+func (s *Service) BulkRetry(ctx context.Context, tenantID string, f storage.DLQFilter, maxRows int) (BulkResult, error) {
+	if maxRows <= 0 {
+		maxRows = 100
+	}
+	ids, err := s.store.DLQ.IDsByFilter(ctx, tenantID, f, maxRows)
+	if err != nil {
+		return BulkResult{}, err
+	}
+	out := BulkResult{Failures: map[string]string{}}
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		if err := s.Retry(ctx, tenantID, id); err != nil {
+			out.Failed++
+			out.Failures[id] = err.Error()
+			continue
+		}
+		// Successful retry — delete the row so the operator doesn't
+		// re-replay it on the next sweep. Best-effort: a delete
+		// failure here doesn't unsend the message.
+		_ = s.store.DLQ.Delete(ctx, tenantID, id)
+		out.Succeeded++
+	}
+	if len(out.Failures) == 0 {
+		out.Failures = nil
+	}
+	s.logger.Info("dlq bulk retry",
+		"tenant_id", tenantID, "succeeded", out.Succeeded, "failed", out.Failed)
+	return out, nil
+}
+
+// GroupByError forwards to the storage aggregation; exposed at the
+// service level so the HTTP layer doesn't reach into store.DLQ
+// directly (consistent with the other read methods on Service).
+func (s *Service) GroupByError(ctx context.Context, tenantID string, limit int) ([]storage.ErrorGroup, error) {
+	return s.store.DLQ.GroupByError(ctx, tenantID, limit)
+}
