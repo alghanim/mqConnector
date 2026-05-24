@@ -886,6 +886,73 @@ paths:
         '400': { description: Revision number must be a positive integer. }
         '404': { description: Pipeline or revision not found. }
 
+  /api/v1/pipelines/{id}/revisions/{rev}/diff:
+    parameters:
+      - { $ref: '#/components/parameters/pathID' }
+      - in: path
+        name: rev
+        required: true
+        schema: { type: integer, minimum: 1 }
+        description: Baseline revision number (the "from" side of the diff).
+    get:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Diff two pipeline revisions (positional, structural).
+      description: |
+        Returns a structured diff describing what would change if the
+        operator moved FROM `rev` TO `against`. Used by the Pipeline
+        Studio diff viewer for both rollback previews
+        (rev=current, against=older) and forward-deploy previews
+        (rev=current, against=newer draft).
+
+        Child rows (stages, transforms, routing rules) are matched
+        positionally by their executor-visible ordering field
+        (stage_order, order, priority). This is pragmatic: the legacy
+        "replace all children" save path regenerates row UUIDs on
+        every PUT, so identity-based matching can't survive a save.
+        Pipeline scalar fields are diffed by JSON tag with
+        created_at / updated_at excluded.
+      parameters:
+        - in: query
+          name: against
+          required: true
+          schema: { type: integer, minimum: 1 }
+          description: Target revision number (the "to" side of the diff).
+      responses:
+        '200':
+          description: Structured diff.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, diff]
+                properties:
+                  from:
+                    type: integer
+                    description: "Echo of {rev} — the baseline."
+                  to:
+                    type: integer
+                    description: "Echo of against — the target."
+                  diff:
+                    type: object
+                    properties:
+                      pipeline_fields:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            path:   { type: string }
+                            before: {}
+                            after:  {}
+                      stages:        { type: object }
+                      transforms:    { type: object }
+                      routing_rules: { type: object }
+                      schema_version:
+                        type: object
+                        nullable: true
+        '400': { description: Revision number must be a positive integer, or against query parameter missing. }
+        '404': { description: Pipeline or either revision not found. }
+
   /api/v1/pipelines/{id}/grants:
     parameters: [{ $ref: '#/components/parameters/pathID' }]
     get:

@@ -178,11 +178,16 @@ func (s *Server) routes() http.Handler {
 			r.Get("/{id}/routing-rules", s.handleListRoutingRules)
 			r.Put("/{id}/routing-rules", s.handleReplaceRoutingRules)
 			// Revision history (Pipeline Studio Wave 1). Read-only;
-			// authenticated viewers can browse. Diff / rollback /
+			// authenticated viewers can browse. Rollback /
 			// save-draft / deploy land in later waves.
 			r.Get("/{id}/revisions", s.handleListRevisions)
 			r.Get("/{id}/revisions/current", s.handleGetCurrentRevision)
 			r.Get("/{id}/revisions/{rev}", s.handleGetRevision)
+			// Structured diff between two revisions. Direction is
+			// from {rev} → to against, so the Studio diff viewer
+			// can render both rollback previews and forward-deploy
+			// previews with the same wire shape. Viewer-readable.
+			r.Get("/{id}/revisions/{rev}/diff", s.handleDiffRevisions)
 			// Per-pipeline RBAC grants. Mounted under the pipeline
 			// so the chi router carries the pipeline id through the
 			// handler chain via {id}; the grant subject is named

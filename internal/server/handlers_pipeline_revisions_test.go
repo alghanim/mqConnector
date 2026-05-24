@@ -471,3 +471,212 @@ func TestRevisionsHandler_ViewerCanRead(t *testing.T) {
 		})
 	}
 }
+
+// ─── Diff ───────────────────────────────────────────────────────────
+
+// diffWireResponse mirrors diffResponse so tests can decode the body
+// without an `any`-soup dance. Diff is left as a raw map for
+// flexibility — the structural assertions live in
+// snapshot_diff_test.go; the handler tests just verify the envelope +
+// shape.
+type diffWireResponse struct {
+	From int             `json:"from"`
+	To   int             `json:"to"`
+	Diff json.RawMessage `json:"diff"`
+}
+
+// TestRevisionsHandler_Diff_HappyPath confirms the handler wires
+// fromRev → before and toRev → after, and that the body matches what
+// DiffSnapshots produces directly off the same stored snapshots.
+func TestRevisionsHandler_Diff_HappyPath(t *testing.T) {
+	f := setupRevisionHandlerFixture(t)
+	rev1 := f.seedRevision(t, 1)
+	rev2 := f.seedRevision(t, 2)
+
+	path := fmt.Sprintf("/api/v1/pipelines/%s/revisions/%d/diff?against=%d",
+		f.pipe.ID, rev1.RevisionNumber, rev2.RevisionNumber)
+	rec := f.get(t, path)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("diff: %d %s", rec.Code, rec.Body)
+	}
+	var resp diffWireResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode diff: %v (body=%s)", err, rec.Body)
+	}
+	if resp.From != rev1.RevisionNumber {
+		t.Errorf("from = %d, want %d", resp.From, rev1.RevisionNumber)
+	}
+	if resp.To != rev2.RevisionNumber {
+		t.Errorf("to = %d, want %d", resp.To, rev2.RevisionNumber)
+	}
+	if len(resp.Diff) == 0 || string(resp.Diff) == "null" {
+		t.Fatalf("diff body missing: %s", rec.Body)
+	}
+
+	// Cross-check against the pure helper: same direction must produce
+	// the same wire bytes after round-trip.
+	var before, after storage.PipelineSnapshot
+	if err := json.Unmarshal([]byte(rev1.Snapshot), &before); err != nil {
+		t.Fatalf("decode rev1 snapshot: %v", err)
+	}
+	if err := json.Unmarshal([]byte(rev2.Snapshot), &after); err != nil {
+		t.Fatalf("decode rev2 snapshot: %v", err)
+	}
+	want := DiffSnapshots(&before, &after)
+	wantBytes, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("marshal want diff: %v", err)
+	}
+	// Re-marshal the resp.Diff so both byte streams are produced by
+	// json.Marshal on a SnapshotDiff value — protects against
+	// whitespace / key-order differences the http body may have.
+	var gotDiff SnapshotDiff
+	if err := json.Unmarshal(resp.Diff, &gotDiff); err != nil {
+		t.Fatalf("decode got diff: %v", err)
+	}
+	gotBytes, err := json.Marshal(&gotDiff)
+	if err != nil {
+		t.Fatalf("marshal got diff: %v", err)
+	}
+	if string(gotBytes) != string(wantBytes) {
+		t.Errorf("diff body mismatch.\n got: %s\nwant: %s", gotBytes, wantBytes)
+	}
+
+	// Pipeline name went from rev-pipe-v1 to rev-pipe-v2 in the
+	// seedRevision helper — assert that at least surfaces.
+	if len(gotDiff.PipelineFields) == 0 {
+		t.Error("expected pipeline_fields to contain the name change")
+	}
+}
+
+func TestRevisionsHandler_Diff_MissingAgainst(t *testing.T) {
+	f := setupRevisionHandlerFixture(t)
+	f.seedRevision(t, 1)
+	rec := f.get(t,
+		fmt.Sprintf("/api/v1/pipelines/%s/revisions/1/diff", f.pipe.ID))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing against: %d, want 400 (body=%s)", rec.Code, rec.Body)
+	}
+}
+
+func TestRevisionsHandler_Diff_BadAgainst(t *testing.T) {
+	f := setupRevisionHandlerFixture(t)
+	f.seedRevision(t, 1)
+	for _, bad := range []string{"abc", "-1", "0"} {
+		t.Run("against="+bad, func(t *testing.T) {
+			rec := f.get(t,
+				fmt.Sprintf("/api/v1/pipelines/%s/revisions/1/diff?against=%s",
+					f.pipe.ID, bad))
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("against=%s: %d, want 400", bad, rec.Code)
+			}
+		})
+	}
+}
+
+func TestRevisionsHandler_Diff_BadRev(t *testing.T) {
+	f := setupRevisionHandlerFixture(t)
+	f.seedRevision(t, 1)
+	for _, bad := range []string{"abc", "-1", "0"} {
+		t.Run("rev="+bad, func(t *testing.T) {
+			rec := f.get(t,
+				fmt.Sprintf("/api/v1/pipelines/%s/revisions/%s/diff?against=1",
+					f.pipe.ID, bad))
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("rev=%s: %d, want 400", bad, rec.Code)
+			}
+		})
+	}
+}
+
+func TestRevisionsHandler_Diff_UnknownRev(t *testing.T) {
+	f := setupRevisionHandlerFixture(t)
+	f.seedRevision(t, 1)
+	rec := f.get(t,
+		fmt.Sprintf("/api/v1/pipelines/%s/revisions/999/diff?against=1",
+			f.pipe.ID))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown rev: %d, want 404", rec.Code)
+	}
+}
+
+func TestRevisionsHandler_Diff_UnknownAgainst(t *testing.T) {
+	f := setupRevisionHandlerFixture(t)
+	f.seedRevision(t, 1)
+	rec := f.get(t,
+		fmt.Sprintf("/api/v1/pipelines/%s/revisions/1/diff?against=999",
+			f.pipe.ID))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown against: %d, want 404", rec.Code)
+	}
+}
+
+// TestRevisionsHandler_Diff_CrossTenant confirms tenant B can't peek
+// at tenant A's revisions through the diff endpoint — even when both
+// revisions exist (under tenant A) and the request would otherwise
+// succeed. ensurePipelineInTenant fires first, so the 404 comes from
+// the pipeline lookup.
+func TestRevisionsHandler_Diff_CrossTenant(t *testing.T) {
+	h, srv, _ := newTestServer(t)
+	cookie := loginCookie(t, h, "alice", "wonderland")
+	srv.auth.SetTenantResolver(tenantSwitcher{
+		defaultTenant: "tenant-a", defaultRole: "owner"})
+
+	ctx := context.Background()
+	for _, tid := range []string{"tenant-a", "tenant-b"} {
+		_ = srv.store.Tenants.Create(ctx, &storage.Tenant{
+			ID: tid, Slug: tid, Name: tid, Status: "active"})
+		_ = srv.store.Memberships.Upsert(ctx, &storage.Membership{
+			TenantID: tid, UserSub: "alice", Username: "alice",
+			Role: storage.RoleOwner})
+	}
+	connA := &storage.Connection{Name: "ca", Type: "rabbitmq", URL: "amqp://a"}
+	if err := srv.store.Connections.Create(ctx, "tenant-a", connA); err != nil {
+		t.Fatal(err)
+	}
+	pipeA := &storage.Pipeline{Name: "pa", SourceID: connA.ID,
+		DestinationID: connA.ID, OutputFormat: "same", Enabled: false}
+	if err := srv.store.Pipelines.Create(ctx, "tenant-a", pipeA); err != nil {
+		t.Fatal(err)
+	}
+	// Seed two revisions under tenant-a so a same-tenant call would
+	// otherwise return 200.
+	for i := 1; i <= 2; i++ {
+		snap := storage.PipelineSnapshot{
+			Pipeline: &storage.Pipeline{ID: pipeA.ID,
+				Name: fmt.Sprintf("pa-v%d", i)},
+			SchemaVersion: 1,
+		}
+		bytes, _ := json.Marshal(snap)
+		rev := &storage.PipelineRevision{
+			PipelineID: pipeA.ID, Snapshot: string(bytes),
+			SnapshotHash:   fmt.Sprintf("h%d", i),
+			AuthorSub:      "alice",
+			AuthorUsername: "alice",
+		}
+		if err := srv.store.PipelineRevisions.Create(ctx, "tenant-a", rev); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	doAsTenant := func(asTenant, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("X-Test-Tenant", asTenant)
+		attachSession(req, cookie)
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	diffPath := "/api/v1/pipelines/" + pipeA.ID + "/revisions/1/diff?against=2"
+
+	// Sanity: tenant-a can see the diff.
+	if rec := doAsTenant("tenant-a", diffPath); rec.Code != http.StatusOK {
+		t.Fatalf("tenant-a own diff: %d %s", rec.Code, rec.Body)
+	}
+	// Tenant-b gets 404 (never 403) — same convention as the other
+	// revision endpoints.
+	if rec := doAsTenant("tenant-b", diffPath); rec.Code != http.StatusNotFound {
+		t.Errorf("cross-tenant diff: %d, want 404 (never 403)", rec.Code)
+	}
+}
