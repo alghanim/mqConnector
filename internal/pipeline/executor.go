@@ -38,6 +38,11 @@ type MetricsSink interface {
 	// from the embedded Grafana dashboard without a separate trace
 	// backend.
 	RecordStageDuration(pipelineID, stageName string, durationMs float64)
+	// RecordShadow counts shadow-send attempts on a pipeline.
+	// ok=true increments mqconnector_shadow_sent_total; false also
+	// increments mqconnector_shadow_failed_total. Used to verify the
+	// candidate destination is keeping up during a migration drill.
+	RecordShadow(pipelineID string, ok bool)
 	// SetSourceDepth is called by the depth-sampling goroutine when
 	// the source connector implements mq.DepthReporter. A negative
 	// value clears the most recent reading (so the Prometheus
@@ -81,6 +86,14 @@ type Executor struct {
 	// resolved mq.Config — needed because routing rules emit destination IDs
 	// at runtime and the executor must already have the configs in hand.
 	RouteDests map[string]mq.Config
+
+	// ShadowDest is the resolved configuration of the shadow
+	// destination, when one is configured on the pipeline. The
+	// executor publishes a sampled fraction of successfully-processed
+	// payloads to this destination AFTER the prod send completes.
+	// Failures are counted (mqconnector_shadow_failed_total) but
+	// never bubble into the prod commit-to-source decision.
+	ShadowDest *mq.Config
 
 	Metrics MetricsSink
 	DLQ     DLQSink
@@ -396,8 +409,74 @@ func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.L
 			int64(len(current)),
 			float64(time.Since(start).Milliseconds()))
 	}
+
+	// Shadow send. Fire-and-forget after the prod send + metrics
+	// record. Failures stay isolated to the shadow path so a flaky
+	// candidate broker can't degrade prod. Sampled deterministically
+	// by hashing the payload so the same message routed twice (e.g.
+	// broker redelivery on a Nack we then recovered from) hits the
+	// same sample decision both times — that keeps the shadow
+	// dataset interpretable.
+	if e.ShadowDest != nil && e.Pipeline.ShadowPercent > 0 {
+		if shadowSampleHit(current, e.Pipeline.ShadowPercent) {
+			e.shadowSend(ctx, current, logger)
+		}
+	}
+
 	e.finalize(ctx, source, true, logger)
 	return nil
+}
+
+// shadowSend publishes a payload to the configured shadow destination
+// best-effort. A short timeout caps the latency hit on the prod hot
+// path; shadow is observation-only, never a blocking dependency. The
+// pool key is derived from the pipeline id so connection caching
+// works across messages.
+func (e *Executor) shadowSend(ctx context.Context, payload []byte, logger *slog.Logger) {
+	shadowCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	key := "shadow-" + e.Pipeline.ID
+	conn, release, err := e.Pool.Get(shadowCtx, key, *e.ShadowDest)
+	if err != nil {
+		if e.Metrics != nil {
+			e.Metrics.RecordShadow(e.Pipeline.ID, false)
+		}
+		logger.Warn("shadow get failed", "err", err)
+		return
+	}
+	defer release()
+	if err := conn.SendMessage(shadowCtx, payload); err != nil {
+		if e.Metrics != nil {
+			e.Metrics.RecordShadow(e.Pipeline.ID, false)
+		}
+		logger.Warn("shadow send failed", "err", err)
+		return
+	}
+	if e.Metrics != nil {
+		e.Metrics.RecordShadow(e.Pipeline.ID, true)
+	}
+}
+
+// shadowSampleHit decides whether a given payload is part of the
+// shadow sample. Deterministic on the payload bytes so the sampling
+// decision is reproducible across redeliveries.
+func shadowSampleHit(payload []byte, percent int) bool {
+	if percent >= 100 {
+		return true
+	}
+	if percent <= 0 {
+		return false
+	}
+	// Sum the first 16 bytes (cheap; randomly distributed enough for
+	// percentage sampling). If the payload is shorter we wrap.
+	var sum uint32
+	if len(payload) == 0 {
+		return false
+	}
+	for i := 0; i < 16; i++ {
+		sum = sum*131 + uint32(payload[i%len(payload)])
+	}
+	return int(sum%100) < percent
 }
 
 // finalize closes out the per-message ack/nack with the source broker.

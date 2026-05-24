@@ -311,5 +311,14 @@ func validatePipelineTuning(p *storage.Pipeline) error {
 	if p.MaxMsgsPerMinute < 0 || p.MaxMsgsPerMinute > 1_000_000 {
 		return fmt.Errorf("max_msgs_per_minute must be between 0 and 1000000 (got %d)", p.MaxMsgsPerMinute)
 	}
+	if p.DedupWindowSeconds < 0 || p.DedupWindowSeconds > 7*24*60*60 {
+		return fmt.Errorf("dedup_window_seconds must be between 0 and 604800 (got %d)", p.DedupWindowSeconds)
+	}
+	if p.ShadowPercent < 0 || p.ShadowPercent > 100 {
+		return fmt.Errorf("shadow_percent must be between 0 and 100 (got %d)", p.ShadowPercent)
+	}
+	if p.ShadowDestinationID != "" && p.ShadowDestinationID == p.DestinationID {
+		return fmt.Errorf("shadow_destination_id must differ from destination_id")
+	}
 	return nil
 }

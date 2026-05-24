@@ -34,11 +34,13 @@ func (r *PipelineRepo) Create(ctx context.Context, tenantID string, p *Pipeline)
 		INSERT INTO pipelines (id, tenant_id, name, source_id, destination_id, output_format,
 		                       schema_id, filter_paths, enabled, workers, retry_max,
 		                       retry_backoff_ms, max_msgs_per_minute, dedup_window_seconds,
+		                       shadow_destination_id, shadow_percent,
 		                       created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, tenantID, p.Name, p.SourceID, p.DestinationID, p.OutputFormat,
 		nullable(p.SchemaID), string(pathsJSON), p.Enabled,
 		p.Workers, p.RetryMax, p.RetryBackoffMs, p.MaxMsgsPerMinute, p.DedupWindowSeconds,
+		nullable(p.ShadowDestinationID), p.ShadowPercent,
 		p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert pipeline: %w", err)
@@ -59,11 +61,13 @@ func (r *PipelineRepo) Update(ctx context.Context, tenantID string, p *Pipeline)
 		UPDATE pipelines SET name=?, source_id=?, destination_id=?, output_format=?,
 		                     schema_id=?, filter_paths=?, enabled=?,
 		                     workers=?, retry_max=?, retry_backoff_ms=?,
-		                     max_msgs_per_minute=?, dedup_window_seconds=?, updated_at=?
+		                     max_msgs_per_minute=?, dedup_window_seconds=?,
+		                     shadow_destination_id=?, shadow_percent=?, updated_at=?
 		WHERE id=? AND tenant_id=?`,
 		p.Name, p.SourceID, p.DestinationID, p.OutputFormat,
 		nullable(p.SchemaID), string(pathsJSON), p.Enabled,
 		p.Workers, p.RetryMax, p.RetryBackoffMs, p.MaxMsgsPerMinute, p.DedupWindowSeconds,
+		nullable(p.ShadowDestinationID), p.ShadowPercent,
 		p.UpdatedAt, p.ID, tenantID)
 	if err != nil {
 		return fmt.Errorf("update pipeline: %w", err)
@@ -149,7 +153,8 @@ func (r *PipelineRepo) ListAll(ctx context.Context) ([]*Pipeline, error) {
 const pipelineSelect = `
 SELECT id, tenant_id, name, source_id, destination_id, output_format, COALESCE(schema_id,''),
        filter_paths, enabled, workers, retry_max, retry_backoff_ms, max_msgs_per_minute,
-       dedup_window_seconds, created_at, updated_at
+       dedup_window_seconds, COALESCE(shadow_destination_id,''), shadow_percent,
+       created_at, updated_at
 FROM pipelines`
 
 func scanPipeline(s scanner) (*Pipeline, error) {
@@ -158,6 +163,7 @@ func scanPipeline(s scanner) (*Pipeline, error) {
 	err := s.Scan(&p.ID, &p.TenantID, &p.Name, &p.SourceID, &p.DestinationID, &p.OutputFormat,
 		&p.SchemaID, &pathsJSON, &p.Enabled,
 		&p.Workers, &p.RetryMax, &p.RetryBackoffMs, &p.MaxMsgsPerMinute, &p.DedupWindowSeconds,
+		&p.ShadowDestinationID, &p.ShadowPercent,
 		&p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound

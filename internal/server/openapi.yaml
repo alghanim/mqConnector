@@ -246,6 +246,27 @@ components:
             handled) so the broker doesn't redeliver. 0 = disabled (default,
             preserves the global at-least-once contract).
           default: 0
+        shadow_destination_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Optional canary/shadow destination. When set together with
+            shadow_percent > 0, the executor — after a successful prod
+            send — ALSO publishes the same payload to this destination
+            (sampled deterministically by payload hash). Failures on the
+            shadow path are counted but never affect the prod
+            commit-to-source decision. Used to rehearse broker migrations
+            or validate a candidate consumer against real traffic.
+        shadow_percent:
+          type: integer
+          description: |
+            0-100. Fraction of post-stage payloads also forwarded to
+            shadow_destination_id. 0 disables shadow even when the
+            destination is configured.
+          default: 0
+          minimum: 0
+          maximum: 100
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         effective_role:

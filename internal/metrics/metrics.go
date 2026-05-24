@@ -30,9 +30,16 @@ type Pipeline struct {
 	// subset that errored. The ratio feeds the schema-drift alarm —
 	// a sharp jump in failures-per-attempt is the canonical signal
 	// that an upstream producer changed its schema.
-	ValidateAttempts int64     `json:"validate_attempts"`
-	ValidateFailures int64     `json:"validate_failures"`
-	LastMessageTime  time.Time `json:"last_message_time"`
+	ValidateAttempts int64 `json:"validate_attempts"`
+	ValidateFailures int64 `json:"validate_failures"`
+	// ShadowSent counts payloads successfully forwarded to the
+	// pipeline's shadow destination; ShadowFailed counts shadow-path
+	// errors. The shadow path is fire-and-forget and never affects
+	// prod; the counters answer "is my candidate broker keeping up?"
+	// during a broker-migration drill.
+	ShadowSent      int64     `json:"shadow_sent"`
+	ShadowFailed    int64     `json:"shadow_failed"`
+	LastMessageTime time.Time `json:"last_message_time"`
 	AvgLatencyMs    float64   `json:"avg_latency_ms"`
 	Status          string    `json:"status"`
 	LastError       string    `json:"last_error,omitempty"`
@@ -238,6 +245,24 @@ func (s *Store) RecordValidateAttempt(pipelineID string, ok bool) {
 	}
 }
 
+// RecordShadow bumps the shadow-path counters. ok=true means the
+// candidate destination accepted the payload; ok=false also bumps
+// the failure counter.
+func (s *Store) RecordShadow(pipelineID string, ok bool) {
+	s.mu.RLock()
+	e, present := s.pipelines[pipelineID]
+	s.mu.RUnlock()
+	if !present {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.data.ShadowSent++
+	if !ok {
+		e.data.ShadowFailed++
+	}
+}
+
 // RecordStageDuration appends one stage-duration observation to the
 // per-(pipeline, stage) histogram. Air-gapped operators that don't
 // run a trace backend can still answer "which stage is slow?" from
@@ -417,6 +442,20 @@ func (s *Store) Prometheus() string {
 	for _, m := range all {
 		fmt.Fprintf(&b, "mqconnector_validate_failures_total{pipeline_id=%q,source=%q,dest=%q} %d\n",
 			m.PipelineID, m.SourceQueue, m.DestQueue, m.ValidateFailures)
+	}
+
+	b.WriteString("# HELP mqconnector_shadow_sent_total Payloads forwarded to the pipeline's shadow destination (success+failure)\n")
+	b.WriteString("# TYPE mqconnector_shadow_sent_total counter\n")
+	for _, m := range all {
+		fmt.Fprintf(&b, "mqconnector_shadow_sent_total{pipeline_id=%q,source=%q,dest=%q} %d\n",
+			m.PipelineID, m.SourceQueue, m.DestQueue, m.ShadowSent)
+	}
+
+	b.WriteString("# HELP mqconnector_shadow_failed_total Shadow-path send failures (subset of shadow_sent)\n")
+	b.WriteString("# TYPE mqconnector_shadow_failed_total counter\n")
+	for _, m := range all {
+		fmt.Fprintf(&b, "mqconnector_shadow_failed_total{pipeline_id=%q,source=%q,dest=%q} %d\n",
+			m.PipelineID, m.SourceQueue, m.DestQueue, m.ShadowFailed)
 	}
 
 	b.WriteString("# HELP mqconnector_avg_latency_ms Average processing latency in milliseconds\n")

@@ -91,9 +91,24 @@ type Pipeline struct {
 	// global at-least-once contract; downstream consumers that aren't
 	// idempotent (counters, charges, alerts) opt in pipeline-by-
 	// pipeline. The dedup table is pruned by the retention sweeper.
-	DedupWindowSeconds int       `json:"dedup_window_seconds,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	DedupWindowSeconds int `json:"dedup_window_seconds,omitempty"`
+	// ShadowDestinationID, when set, enables canary/shadow mode: the
+	// executor publishes successfully-processed payloads to this
+	// secondary destination AS WELL AS the primary, for the
+	// ShadowPercent fraction of messages. Failures on the shadow path
+	// never affect prod commit semantics — shadow is observation-only.
+	// Use cases: rehearse a broker migration with a parallel candidate
+	// cluster, validate a new downstream consumer against real traffic
+	// before cutover.
+	ShadowDestinationID string `json:"shadow_destination_id,omitempty"`
+	// ShadowPercent (0-100) is the fraction of post-stage payloads
+	// also sent to the shadow destination. 0 disables shadow even when
+	// a shadow_destination_id is set (operator wants the config row to
+	// stick around without active shadowing). 100 mirrors every
+	// message.
+	ShadowPercent int       `json:"shadow_percent,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Stage is one step in a pipeline's processing chain.

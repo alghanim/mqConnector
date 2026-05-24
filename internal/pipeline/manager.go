@@ -368,6 +368,26 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 		}
 	}
 
+	// Optional shadow destination. A configured ShadowDestinationID
+	// that doesn't resolve (deleted connection) leaves the pipeline
+	// running without shadow rather than refusing to start — the
+	// operator gets a structured log line instead.
+	var shadowDest *mq.Config
+	if p.ShadowDestinationID != "" && p.ShadowPercent > 0 {
+		if sh, err := m.store.Connections.GetUnsafe(ctx, p.ShadowDestinationID); err == nil && sh != nil {
+			if sh.TenantID == p.TenantID {
+				cfg := ToMQConfig(sh)
+				shadowDest = &cfg
+			} else {
+				m.logger.Warn("shadow destination is cross-tenant; ignoring",
+					"pipeline_id", p.ID, "shadow_destination_id", p.ShadowDestinationID)
+			}
+		} else {
+			m.logger.Warn("shadow destination not resolvable; ignoring",
+				"pipeline_id", p.ID, "shadow_destination_id", p.ShadowDestinationID, "err", err)
+		}
+	}
+
 	executor := &Executor{
 		Pipeline:     p,
 		Stages:       stages,
@@ -377,6 +397,7 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 		DefaultDest:  ToMQConfig(dest),
 		DestQueue:    dest.QueueName,
 		RouteDests:   routeDests,
+		ShadowDest:   shadowDest,
 		Metrics:      m.metrics,
 		DLQ:          m.dlq,
 		Dedup:        m.dedup,

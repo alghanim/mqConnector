@@ -666,6 +666,22 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_pipeline_dedup_last_seen
 	  ON pipeline_dedup(last_seen_at);
 	`,
+	// 0021 — pipeline shadow mode.
+	//
+	// Operators rolling out a new destination broker (broker upgrade,
+	// migration to a new cluster, evaluating a candidate consumer)
+	// need to compare what the candidate sees against what production
+	// is sending. Shadow mode: when shadow_destination_id is set,
+	// the executor — after a successful send to the primary
+	// destination — ALSO publishes the same payload to the shadow
+	// destination for shadow_percent of messages. Failures on the
+	// shadow path are counted (mqconnector_shadow_failed_total) but
+	// NEVER affect the prod commit-to-source decision.
+	`
+	ALTER TABLE pipelines ADD COLUMN shadow_destination_id TEXT
+	  REFERENCES connections(id) ON DELETE SET NULL;
+	ALTER TABLE pipelines ADD COLUMN shadow_percent INTEGER NOT NULL DEFAULT 0;
+	`,
 }
 
 // postgresMigrationOverrides supersedes specific entries in `migrations`
