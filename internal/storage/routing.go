@@ -75,7 +75,7 @@ func (r *RoutingRuleRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipe
 
 // ReplaceForPipelineTx is the tx-aware variant of ReplaceForPipeline.
 // Caller owns tx lifecycle.
-func (r *RoutingRuleRepo) ReplaceForPipelineTx(ctx context.Context, tx *txWrap, tenantID, pipelineID string, rules []*RoutingRule) error {
+func (r *RoutingRuleRepo) ReplaceForPipelineTx(ctx context.Context, tx *Tx, tenantID, pipelineID string, rules []*RoutingRule) error {
 	if tenantID == "" {
 		return ErrTenantRequired
 	}

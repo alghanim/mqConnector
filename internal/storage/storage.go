@@ -32,7 +32,11 @@ const (
 // Store wraps the database handle and exposes one repository per entity. Its
 // zero value is not usable — construct it with Open.
 type Store struct {
-	DB                *sql.DB
+	DB *sql.DB
+	// wrap is the shared *dbWrap held by every repo. Kept on the Store
+	// so Store.BeginTx can reuse it instead of allocating a fresh
+	// wrapper per call.
+	wrap              *dbWrap
 	dialect           Dialect
 	Connections       *ConnectionRepo
 	Pipelines         *PipelineRepo
@@ -118,6 +122,7 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 	wrap := &dbWrap{db: db, dialect: dialect}
 	return &Store{
 		DB:                db,
+		wrap:              wrap,
 		dialect:           dialect,
 		Connections:       &ConnectionRepo{db: wrap},
 		Pipelines:         &PipelineRepo{db: wrap},
@@ -138,6 +143,22 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 		Dedup:             &DedupRepo{db: wrap},
 		PipelineRevisions: &PipelineRevisionRepo{db: wrap},
 	}, nil
+}
+
+// BeginTx returns a wrapped transaction sharing the same placeholder-
+// rewrite plumbing as the rest of the repo layer. Callers (today: the
+// server-layer applyRevisionLive helper) thread the returned *Tx into
+// each tx-aware repo method so pipeline + stages + transforms +
+// routing rules all commit or roll back together.
+//
+// Callers own the lifecycle: Commit or Rollback exactly once. The
+// returned handle is safe to defer-Rollback in the error path — a
+// committed tx's Rollback returns sql.ErrTxDone, which is harmless.
+func (s *Store) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) {
+	if s == nil || s.wrap == nil {
+		return nil, errors.New("storage: BeginTx on nil store")
+	}
+	return s.wrap.BeginTx(ctx, opts)
 }
 
 // Close closes the underlying database. Safe to call on a nil Store.

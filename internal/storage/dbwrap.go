@@ -77,8 +77,23 @@ func (d *dbWrap) Conn(ctx context.Context) (*sql.Conn, error) {
 // *sql.DB.Stats(). Exposed for the /api/health endpoint.
 func (d *dbWrap) Stats() sql.DBStats { return d.db.Stats() }
 
+// Tx is the storage package's exported handle for a wrapped
+// transaction. It is the same type repos accept on their *Tx-aware
+// methods (StageRepo.ReplaceForPipelineTx, etc.); the server-layer
+// apply-revision helper calls Store.BeginTx to obtain one and threads
+// it through the per-table replacements so all four writes commit (or
+// roll back) together.
+//
+// Internally this is exactly the same struct as txWrap was before
+// being exported. Aliasing keeps the original `tx *txWrap` parameter
+// names elsewhere in the package compiling without churn — and gives
+// external callers an opaque exported handle.
+type Tx = txWrap
+
 // txWrap mirrors dbWrap for transactions. Each tx-bound call goes
-// through the same placeholder rewrite.
+// through the same placeholder rewrite. Kept internal-named because
+// most call sites in this package still refer to it as txWrap; the
+// public name is Tx (an alias above).
 type txWrap struct {
 	tx      *sql.Tx
 	dialect Dialect

@@ -75,7 +75,7 @@ func (r *TransformRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipeli
 
 // ReplaceForPipelineTx is the tx-aware variant of ReplaceForPipeline.
 // Caller owns tx lifecycle.
-func (r *TransformRepo) ReplaceForPipelineTx(ctx context.Context, tx *txWrap, tenantID, pipelineID string, rules []*Transform) error {
+func (r *TransformRepo) ReplaceForPipelineTx(ctx context.Context, tx *Tx, tenantID, pipelineID string, rules []*Transform) error {
 	if tenantID == "" {
 		return ErrTenantRequired
 	}

@@ -107,7 +107,7 @@ func (r *StageRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipelineID
 // lifecycle of tx (BeginTx + Commit/Rollback); this method only emits
 // statements. tenantID gate applies here too — an empty tenant id is
 // an immediate error rather than a silent no-op against every row.
-func (r *StageRepo) ReplaceForPipelineTx(ctx context.Context, tx *txWrap, tenantID, pipelineID string, stages []*Stage) error {
+func (r *StageRepo) ReplaceForPipelineTx(ctx context.Context, tx *Tx, tenantID, pipelineID string, stages []*Stage) error {
 	if tenantID == "" {
 		return ErrTenantRequired
 	}

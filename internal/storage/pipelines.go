@@ -55,8 +55,10 @@ func (r *PipelineRepo) Update(ctx context.Context, tenantID string, p *Pipeline)
 // UpdateTx is the tx-aware variant of Update. Mirrors the contract of
 // Update exactly — the only difference is the executor. Used by the
 // server-layer applyRevisionLive helper so the pipeline write and the
-// child-row replacements all commit (or roll back) together.
-func (r *PipelineRepo) UpdateTx(ctx context.Context, tx *txWrap, tenantID string, p *Pipeline) error {
+// child-row replacements all commit (or roll back) together. Accepts
+// the exported *Tx so external callers don't need access to the
+// unexported wrapper type.
+func (r *PipelineRepo) UpdateTx(ctx context.Context, tx *Tx, tenantID string, p *Pipeline) error {
 	return r.updateExec(ctx, tx, tenantID, p)
 }
 
