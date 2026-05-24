@@ -106,9 +106,18 @@ type Pipeline struct {
 	// a shadow_destination_id is set (operator wants the config row to
 	// stick around without active shadowing). 100 mirrors every
 	// message.
-	ShadowPercent int       `json:"shadow_percent,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ShadowPercent int `json:"shadow_percent,omitempty"`
+	// RequiresApproval gates the deploy endpoint: when true, callers of
+	// POST /api/v1/pipelines/{id}/deploy MUST supply an `approver`
+	// field in the request body or the request is rejected 409. Added
+	// in migration 0022 alongside pipeline_revisions; default false so
+	// existing pipelines keep their save-and-ship behaviour. No UI to
+	// flip the flag in Wave 1 — the gate is latent until later waves
+	// add it. Persisted as 0/1 in SQLite; omitempty keeps the JSON
+	// shape tight for the default-false case.
+	RequiresApproval bool      `json:"requires_approval,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // Stage is one step in a pipeline's processing chain.

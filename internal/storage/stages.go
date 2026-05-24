@@ -81,6 +81,13 @@ func (r *StageRepo) Create(ctx context.Context, tenantID string, s *Stage) error
 // don't own. Cross-tenant attempts are silently no-ops (the DELETE
 // matches zero rows, then the INSERT writes nothing because the loop
 // runs over the supplied stages — to a tenant the caller does control).
+//
+// Two-call shape: the public method opens a fresh transaction and
+// delegates to ReplaceForPipelineTx so callers that need to bundle the
+// replace into a wider transaction (the server-layer
+// applyRevisionLive helper that writes pipeline + stages + transforms
+// + routing-rules under a single atomic unit) can share the same
+// statements without code duplication.
 func (r *StageRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipelineID string, stages []*Stage) error {
 	if tenantID == "" {
 		return ErrTenantRequired
@@ -90,6 +97,20 @@ func (r *StageRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipelineID
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	if err := r.ReplaceForPipelineTx(ctx, tx, tenantID, pipelineID, stages); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ReplaceForPipelineTx is the tx-aware variant. The caller owns the
+// lifecycle of tx (BeginTx + Commit/Rollback); this method only emits
+// statements. tenantID gate applies here too — an empty tenant id is
+// an immediate error rather than a silent no-op against every row.
+func (r *StageRepo) ReplaceForPipelineTx(ctx context.Context, tx *txWrap, tenantID, pipelineID string, stages []*Stage) error {
+	if tenantID == "" {
+		return ErrTenantRequired
+	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM stages WHERE pipeline_id=? AND tenant_id=?`, pipelineID, tenantID); err != nil {
 		return fmt.Errorf("clear stages: %w", err)
@@ -110,7 +131,7 @@ func (r *StageRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipelineID
 			return fmt.Errorf("insert stage: %w", err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func scanStage(rows *sql.Rows) (*Stage, error) {

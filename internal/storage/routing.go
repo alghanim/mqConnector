@@ -55,6 +55,9 @@ func (r *RoutingRuleRepo) listByPipeline(ctx context.Context, pipelineID string,
 	return out, rows.Err()
 }
 
+// ReplaceForPipeline opens its own tx and delegates to ReplaceForPipelineTx
+// so callers (the server-layer applyRevisionLive helper) that need to bundle
+// the replace into a wider transaction can share the same statements.
 func (r *RoutingRuleRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipelineID string, rules []*RoutingRule) error {
 	if tenantID == "" {
 		return ErrTenantRequired
@@ -64,6 +67,18 @@ func (r *RoutingRuleRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipe
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	if err := r.ReplaceForPipelineTx(ctx, tx, tenantID, pipelineID, rules); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ReplaceForPipelineTx is the tx-aware variant of ReplaceForPipeline.
+// Caller owns tx lifecycle.
+func (r *RoutingRuleRepo) ReplaceForPipelineTx(ctx context.Context, tx *txWrap, tenantID, pipelineID string, rules []*RoutingRule) error {
+	if tenantID == "" {
+		return ErrTenantRequired
+	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM routing_rules WHERE pipeline_id=? AND tenant_id=?`, pipelineID, tenantID); err != nil {
 		return fmt.Errorf("clear routing rules: %w", err)
@@ -83,5 +98,5 @@ func (r *RoutingRuleRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipe
 			return fmt.Errorf("insert routing rule: %w", err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
