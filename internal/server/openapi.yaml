@@ -822,6 +822,70 @@ paths:
         '200':
           description: Replaced.
 
+  /api/v1/pipelines/{id}/revisions:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: List pipeline revisions, newest-first.
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 25 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Revisions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revisions:
+                    type: array
+                    items: { type: object }
+                  total:  { type: integer }
+                  limit:  { type: integer }
+                  offset: { type: integer }
+        '404': { description: Pipeline not found. }
+
+  /api/v1/pipelines/{id}/revisions/current:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Get the latest deployed revision for this pipeline.
+      responses:
+        '200':
+          description: Latest deployed revision.
+          content:
+            application/json:
+              schema: { type: object }
+        '404': { description: Pipeline not found or no deployed revision. }
+
+  /api/v1/pipelines/{id}/revisions/{rev}:
+    parameters:
+      - { $ref: '#/components/parameters/pathID' }
+      - in: path
+        name: rev
+        required: true
+        schema: { type: integer, minimum: 1 }
+        description: Revision number assigned at save time.
+    get:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Get one pipeline revision by revision number.
+      responses:
+        '200':
+          description: Revision.
+          content:
+            application/json:
+              schema: { type: object }
+        '400': { description: Revision number must be a positive integer. }
+        '404': { description: Pipeline or revision not found. }
+
   /api/v1/pipelines/{id}/grants:
     parameters: [{ $ref: '#/components/parameters/pathID' }]
     get:
