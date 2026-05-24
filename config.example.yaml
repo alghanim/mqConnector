@@ -153,3 +153,34 @@ audit:
     access_key: ""
     secret_key: ""
     delete_after_upload: false # keep local copy on disk after upload
+
+# Envelope-encryption key source.
+#
+#   source: "env"   (default) — read MQC_MASTER_KEY / MQC_MASTER_KEYS
+#                   from the process environment. No external keystore.
+#   source: "file"  — read keys from secrets.file.path. Drop-in
+#                   target for Vault Agent sidecar, k8s Secret mount,
+#                   sealed-secrets, SOPS-decrypted artifacts.
+#                   Format: bare 32-byte hex/base64 for a single v1
+#                   key, OR one v{N}=hex per line for multi-version.
+#                   Comments start with `#`.
+#   source: "vault" — fetch from a HashiCorp Vault KV v2 secret.
+#                   Bridge holds the key in memory; no per-message
+#                   round trip. Rotation = `vault kv put ...` then
+#                   POST /api/v1/secrets/rotate to re-read.
+#
+# Only one source is active at a time.
+secrets:
+  source: "env"
+  file:
+    path: ""                  # e.g. "/etc/mqconnector/master_keys"
+  vault:
+    address: ""               # e.g. "https://vault.local:8200"
+    token: ""                 # or set VAULT_TOKEN env (token_env overrides)
+    token_env: ""             # env var name to read token from (default VAULT_TOKEN)
+    namespace: ""             # Vault Enterprise namespace header
+    mount: "secret"           # KV v2 mount path
+    path: "mqconnector/master" # KV v2 secret path
+    ca_file: ""               # optional PEM CA bundle for Vault TLS
+    insecure_skip_verify: false
+    timeout: "10s"

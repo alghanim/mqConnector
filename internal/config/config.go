@@ -28,6 +28,50 @@ type Config struct {
 	Script     ScriptConfig     `yaml:"script"`
 	Leadership LeadershipConfig `yaml:"leadership"`
 	Audit      AuditConfig      `yaml:"audit"`
+	Secrets    SecretsConfig    `yaml:"secrets"`
+}
+
+// SecretsConfig selects the envelope-encryption key source.
+//
+// Source values:
+//
+//   - "" or "env" — read MQC_MASTER_KEY / MQC_MASTER_KEYS from the
+//     process environment. The historical default, preserved so
+//     pre-Phase-21 deployments keep working unchanged.
+//   - "file"      — read a key file at File.Path. Use when a Vault
+//     Agent sidecar / k8s Secret / sealed-secrets controller drops a
+//     file at a fixed path; the bridge reads it at boot.
+//   - "vault"     — fetch from a HashiCorp Vault KV v2 secret. Vault
+//     holds the master key in its own storage backend; the bridge
+//     reads it at boot and holds it in memory for the lifetime of
+//     the process. Rotation happens via /api/v1/secrets/rotate which
+//     re-reads the same provider.
+//
+// Only one source is active. A future AWS KMS / GCP KMS provider
+// plugs in here with no surface-level change to call sites.
+type SecretsConfig struct {
+	Source string              `yaml:"source"` // env (default) | file | vault
+	File   SecretsFileConfig   `yaml:"file"`
+	Vault  SecretsVaultConfig  `yaml:"vault"`
+}
+
+// SecretsFileConfig configures the file-based key provider.
+type SecretsFileConfig struct {
+	Path string `yaml:"path"` // e.g. /etc/mqconnector/master_keys
+}
+
+// SecretsVaultConfig configures the HashiCorp Vault KV v2 provider.
+// All fields except Address, Mount, Path are optional.
+type SecretsVaultConfig struct {
+	Address            string        `yaml:"address"`
+	Token              string        `yaml:"token"`     // or set VAULT_TOKEN env
+	TokenEnv           string        `yaml:"token_env"` // env var to read the token from; defaults to VAULT_TOKEN
+	Namespace          string        `yaml:"namespace"` // Vault Enterprise namespace header
+	Mount              string        `yaml:"mount"`     // KV v2 mount path (e.g. "secret")
+	Path               string        `yaml:"path"`      // KV v2 secret path (e.g. "mqconnector/master")
+	CAFile             string        `yaml:"ca_file"`
+	InsecureSkipVerify bool          `yaml:"insecure_skip_verify"`
+	Timeout            time.Duration `yaml:"timeout"`
 }
 
 // TracingConfig configures the OpenTelemetry OTLP/HTTP exporter. Empty

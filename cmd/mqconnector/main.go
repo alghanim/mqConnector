@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -91,6 +92,48 @@ func main() {
 	}
 }
 
+// buildSealer constructs the envelope-encryption Service from the
+// configured source. Returns (nil, nil) when no source is configured
+// and the env is also empty — that's the legacy "encryption disabled"
+// path the dev-mode warning relies on.
+func buildSealer(ctx context.Context, cfg config.SecretsConfig, logger *slog.Logger) (*secrets.Service, error) {
+	source := strings.ToLower(strings.TrimSpace(cfg.Source))
+	switch source {
+	case "", "env":
+		return secrets.FromProvider(ctx, secrets.EnvProvider{})
+	case "file":
+		logger.Info("loading master key from file", "path", cfg.File.Path)
+		return secrets.FromProvider(ctx, secrets.FileProvider{Path: cfg.File.Path})
+	case "vault":
+		token := cfg.Vault.Token
+		if token == "" {
+			env := cfg.Vault.TokenEnv
+			if env == "" {
+				env = "VAULT_TOKEN"
+			}
+			token = os.Getenv(env)
+		}
+		if cfg.Vault.InsecureSkipVerify {
+			logger.Warn("vault TLS verification disabled — dev only",
+				"address", cfg.Vault.Address)
+		}
+		logger.Info("loading master key from vault",
+			"address", cfg.Vault.Address, "mount", cfg.Vault.Mount, "path", cfg.Vault.Path)
+		return secrets.FromProvider(ctx, &secrets.VaultProvider{
+			Address:            cfg.Vault.Address,
+			Token:              token,
+			Namespace:          cfg.Vault.Namespace,
+			Mount:              cfg.Vault.Mount,
+			Path:               cfg.Vault.Path,
+			CAFile:             cfg.Vault.CAFile,
+			InsecureSkipVerify: cfg.Vault.InsecureSkipVerify,
+			Timeout:            cfg.Vault.Timeout,
+		})
+	default:
+		return nil, fmt.Errorf("unknown secrets.source %q (want env|file|vault)", cfg.Source)
+	}
+}
+
 func run(configPath string) error {
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -165,7 +208,16 @@ func run(configPath string) error {
 	// mandatory — an enterprise deployment must not store broker
 	// credentials at rest in plaintext. Dev mode tolerates an unset key
 	// so a developer can poke at a local SQLite file without ceremony.
-	sealer, err := secrets.FromEnv()
+	//
+	// Source selection (cfg.Secrets.Source):
+	//   - "" / "env" : read MQC_MASTER_KEY / MQC_MASTER_KEYS (legacy
+	//     default, preserves prior behaviour).
+	//   - "file"     : read a key file dropped by Vault Agent / k8s
+	//     Secret / sealed-secrets / SOPS.
+	//   - "vault"    : pull from a Vault KV v2 secret. The key stays
+	//     in memory only — see internal/secrets/vault.go for why we
+	//     avoid the transit-engine per-message round trip.
+	sealer, err := buildSealer(rootCtx, cfg.Secrets, logger)
 	if err != nil {
 		return fmt.Errorf("init secrets: %w", err)
 	}
