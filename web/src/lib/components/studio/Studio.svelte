@@ -21,6 +21,7 @@
 <script lang="ts">
   import { studio, type StudioStateData, type StudioStageType } from '$lib/stores/studio';
   import { locale, t } from '$lib/stores/locale';
+  import { toasts } from '$lib/stores/toasts';
   import type { Stage } from '$lib/api';
   import Card from '$lib/components/Card.svelte';
   import StudioHeader from './StudioHeader.svelte';
@@ -28,6 +29,9 @@
   import StudioCanvas from './StudioCanvas.svelte';
   import StudioInspector from './StudioInspector.svelte';
   import DryRunDock from './dryrun/DryRunDock.svelte';
+  import VersionRail from './versions/VersionRail.svelte';
+  import DeployDialog from './versions/DeployDialog.svelte';
+  import DiffViewer, { type SnapshotDiff } from './versions/DiffViewer.svelte';
 
   export let pipelineId: string;
 
@@ -50,13 +54,10 @@
     onDeploy();
   }
   function onWindowCompareRequest() {
-    // Task 12 will own the actual VersionRail open + diff fetch. For
-    // Wave 1 the placeholder just flips state so the chrome animation
-    // demos end-to-end.
-    if (s?.latestRev) {
-      studio.setComparison(s.latestRev.revision_number, s.deployedRev?.revision_number ?? 0, null);
-      setTimeout(() => studio.clearComparison(), 1200);
-    }
+    // Expand the rail (via its exposed method) and stage the latest
+    // revision for compare. The operator then taps Compare from the
+    // rail toolbar to fire the diff.
+    railRef?.expandForCompare();
   }
   onMount(() => {
     if (typeof window === 'undefined') return;
@@ -67,6 +68,52 @@
       window.removeEventListener('studio:openCompare', onWindowCompareRequest);
     };
   });
+
+  // ─── Version rail / Deploy dialog state ────────────────────────────
+  //
+  // The rail handles its own diff fetch + emits `compare` with the
+  // result — Studio just plugs the diff into the store so the canvas
+  // can flip to read-only mode (StudioCanvas keys off
+  // s.state === 'version-comparing').
+  //
+  // Rollback flow: rail emits `rollback {rev}`; we open the dialog
+  // with kind='rollback' and let the dialog do the POST. On `done`
+  // the dialog already called studio.hydrate; we just close.
+  //
+  // Deploy flow: rail emits `deploy {rev}` for the explicit re-deploy
+  // path. The header's Deploy button is wired separately to onDeploy
+  // (Wave 1 simplification — see notes below).
+  let railRef: VersionRail | null = null;
+  let deployDialogOpen = false;
+  let deployDialogKind: 'deploy' | 'rollback' = 'deploy';
+  let deployDialogTargetRev = 0;
+  let deployDialogLiveRev: number | null = null;
+  let deployDialogDiff: SnapshotDiff | null = null;
+
+  function openDeployDialog(kind: 'deploy' | 'rollback', targetRev: number) {
+    deployDialogKind = kind;
+    deployDialogTargetRev = targetRev;
+    deployDialogLiveRev = s?.deployedRev?.revision_number ?? null;
+    deployDialogDiff = null; // DeployDialog will fetch on mount.
+    deployDialogOpen = true;
+  }
+
+  function closeDeployDialog() {
+    deployDialogOpen = false;
+  }
+
+  function onRailCompare(e: CustomEvent<{ from: number; to: number; diff: unknown }>) {
+    studio.setComparison(e.detail.from, e.detail.to, e.detail.diff);
+  }
+  function onRailRollback(e: CustomEvent<{ rev: number }>) {
+    openDeployDialog('rollback', e.detail.rev);
+  }
+  function onRailDeploy(e: CustomEvent<{ rev: number }>) {
+    openDeployDialog('deploy', e.detail.rev);
+  }
+  function onExitComparison() {
+    studio.clearComparison();
+  }
 
   // The header binds enabled two-way through Switch. Pipeline enabled
   // lives on draft.pipeline; we expose a derived view for the binding
@@ -100,8 +147,35 @@
     setTimeout(() => studio.setState(s.dirtyCount > 0 ? 'dirty' : 'building'), 600);
   }
 
+  // Wave 1 simplification — see header docs of Task 12 (and Wave 1
+  // plan §1.5). The Header's Deploy button has two paths:
+  //
+  //   - draft is dirty: open the deploy dialog against the LATEST
+  //     existing revision (the legacy save-and-ship PUTs already
+  //     marked everything deployed, so this is a no-op-on-snapshot,
+  //     but it round-trips the operator through the same approval/
+  //     summary ceremony as a re-deploy). A future "save draft as
+  //     new revision" path will land in Wave 2.
+  //
+  //   - draft is clean: open the deploy dialog against the latest
+  //     revision (re-deploy of current — useful after a hot-reload
+  //     skip on the operator side, or just to verify the ceremony).
+  //
+  // If there is no revision history at all (a brand-new pipeline with
+  // no deploys), we fall back to the old chrome-only animation so the
+  // operator at least sees feedback — a Wave-2 "save draft creates
+  // first revision" patch will replace this branch.
   function onDeploy() {
     studio.clearError();
+    const targetRev = s?.latestRev?.revision_number ?? s?.deployedRev?.revision_number ?? null;
+    if (targetRev !== null) {
+      openDeployDialog('deploy', targetRev);
+      return;
+    }
+    // Fallback: no revision history yet. Toast + chrome animation so
+    // the operator sees that the action fired even though there's
+    // nothing to deploy.
+    toasts.warning('No revision available to deploy yet.');
     studio.setState('deploying');
     setTimeout(() => studio.setState(s.dirtyCount > 0 ? 'dirty' : 'building'), 1200);
   }
@@ -186,19 +260,61 @@
     <div class="studio-body">
       <aside class="studio-left" aria-label="Studio palette and version rail">
         <StudioPalette on:select={handlePaletteSelect} />
-        <Card padding="sm">
-          <p class="studio-stub-label">{t($locale, 'studio.placeholder.versionRail')}</p>
-        </Card>
+        <VersionRail
+          bind:this={railRef}
+          on:compare={onRailCompare}
+          on:rollback={onRailRollback}
+          on:deploy={onRailDeploy}
+        />
       </aside>
 
       <main class="studio-canvas" aria-label="Studio canvas">
-        <StudioCanvas />
+        {#if s.state === 'version-comparing' && s.comparison}
+          <div class="studio-compare-overlay">
+            <header class="studio-compare-head">
+              <span class="studio-compare-title">
+                Comparing #{s.comparison.from} → #{s.comparison.to}
+              </span>
+              <button type="button" class="studio-compare-close" on:click={onExitComparison}>
+                Exit comparison
+              </button>
+            </header>
+            <div class="studio-compare-body">
+              <DiffViewer
+                revA={s.comparison.from}
+                revB={s.comparison.to}
+                diff={(s.comparison.diff as SnapshotDiff) ?? {
+                  pipeline_fields: [],
+                  stages: { added: [], removed: [], modified: [] },
+                  transforms: { added: [], removed: [], modified: [] },
+                  routing_rules: { added: [], removed: [], modified: [] }
+                }}
+                onRollback={(rev) => openDeployDialog('rollback', rev)}
+              />
+            </div>
+          </div>
+        {:else}
+          <StudioCanvas />
+        {/if}
       </main>
 
       <aside class="studio-right" aria-label="Studio inspector" bind:this={inspectorSlotEl}>
         <StudioInspector />
       </aside>
     </div>
+
+    {#if deployDialogOpen}
+      <DeployDialog
+        kind={deployDialogKind}
+        pipelineId={pipelineId}
+        targetRev={deployDialogTargetRev}
+        liveRev={deployDialogLiveRev}
+        diff={deployDialogDiff}
+        requiresApproval={s.draft?.pipeline?.requires_approval ?? false}
+        on:done={closeDeployDialog}
+        on:cancel={closeDeployDialog}
+      />
+    {/if}
 
     <footer class="studio-dock" aria-label="Studio dry-run dock">
       <DryRunDock bind:this={dockRef} />
@@ -257,12 +373,48 @@
     min-block-size: 4rem;
   }
 
-  .studio-stub-label {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 0.8125rem;
-    font-style: italic;
-    text-align: center;
+  /* Comparison overlay replaces the canvas while
+     state === 'version-comparing'. Kept inside studio-canvas so the
+     grid sizing stays consistent. */
+  .studio-compare-overlay {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    min-block-size: 0;
+  }
+  .studio-compare-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface);
+    border-block-end: 1px solid var(--border);
+  }
+  .studio-compare-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .studio-compare-close {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.6875rem;
+    cursor: pointer;
+  }
+  .studio-compare-close:hover {
+    border-color: var(--accent);
+  }
+  .studio-compare-body {
+    padding: 0.75rem;
+    overflow: auto;
+    min-block-size: 0;
   }
 
   /* Narrow viewports — collapse the side panels above the canvas so

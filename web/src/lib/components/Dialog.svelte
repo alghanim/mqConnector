@@ -40,6 +40,10 @@
   /** Set true while the action is in-flight; locks the confirm button
    *  and prevents Escape from cancelling mid-request. */
   export let busy = false;
+  /** Set true to lock the confirm button independently of `busy` — for
+   *  caller-side validation gates (e.g. "Approver required" on the
+   *  DeployDialog). Unlike `busy`, this does NOT block Escape. */
+  export let confirmDisabled = false;
 
   const dispatch = createEventDispatcher<{ confirm: void; cancel: void }>();
 
@@ -147,7 +151,7 @@
           type="button"
           class="btn btn-primary"
           on:click={() => dispatch('confirm')}
-          disabled={busy}
+          disabled={busy || confirmDisabled}
         >
           {confirmLabel}
         </button>

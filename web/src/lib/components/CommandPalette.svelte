@@ -135,10 +135,9 @@
   // Studio entries are only meaningful while the user is on a Studio
   // route (`/pipelines/<id>/studio`). The palette pre-filters them
   // out everywhere else so they don't clutter the global launcher.
-  // Tasks 11/12 will wire the actual Validate / Compare / Deploy
-  // handlers; for Wave 1 the Deploy entry dispatches a window-level
-  // CustomEvent that StudioHeader (or any future binding) can listen
-  // for, matching the convention used by the Toaster.
+  // The Studio shell listens for the window-level events the palette
+  // dispatches here ('studio:requestDeploy' / 'studio:openCompare') —
+  // see Studio.svelte.onWindow* handlers for the Task-12 wiring.
   $: onStudioRoute = /^\/pipelines\/[^/]+\/studio(\/|$|\?)/.test($page.url.pathname + ($page.url.search || ''));
   $: studioDirty = $studioState?.dirtyCount > 0;
 
@@ -149,11 +148,12 @@
         label: t($locale, 'palette.cmd.studioDeploy'),
         icon: Rocket,
         action: () => {
-          // Task 11 wires the real handler. For Task 8 we surface the
-          // intent via a CustomEvent on the window — anything mounted
-          // (StudioHeader, an upcoming DeployDialog) can listen for
-          // 'studio:requestDeploy' to act on it without coupling the
-          // palette to a specific component.
+          // Studio.svelte's window listener opens the DeployDialog
+          // against the latest revision (re-deploy of current) or
+          // surfaces a toast when there's no revision history yet.
+          // Wave 1 doesn't have a separate "save draft" path, so the
+          // dirty branch falls through to the same dialog — Wave 2
+          // will introduce explicit draft-vs-deploy separation.
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('studio:requestDeploy'));
           }
@@ -164,8 +164,9 @@
         label: t($locale, 'palette.cmd.studioCompare'),
         icon: GitCompare,
         action: () => {
-          // Task 12 wires the version rail + diff viewer. Placeholder
-          // event for now — the version rail will listen.
+          // Studio.svelte expands the VersionRail (via its exposed
+          // expandForCompare method) and stages the latest revision
+          // for compare. The operator then taps Compare from the rail.
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('studio:openCompare'));
           }

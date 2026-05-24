@@ -165,6 +165,11 @@ export interface Pipeline {
   schema_id?: string;
   filter_paths: string[];
   enabled: boolean;
+  // requires_approval gates the /deploy endpoint: when true, callers
+  // must supply a non-empty `approver` field or the server returns 409.
+  // Surfaced here so the DeployDialog can show/hide the approver input
+  // and the front-end can pre-validate before the round trip.
+  requires_approval?: boolean;
   created_at?: string;
   updated_at?: string;
   // effective_role is the caller's resolved role for this pipeline:
