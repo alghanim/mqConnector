@@ -11,8 +11,8 @@
       After Svelte hydrates, stores/theme.ts rewrites this from the
       live `--bg` so a runtime theme toggle stays consistent.
     -->
-    <meta name="theme-color" content="#222A31" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#F7F5F3" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#222A31" media="(prefers-color-scheme: dark)" /> <!-- check-no-hex: ignore -->
+    <meta name="theme-color" content="#F7F5F3" media="(prefers-color-scheme: light)" /> <!-- check-no-hex: ignore -->
     <title>mqConnector</title>
     <!-- No-FOUC theme switch: read stored preference before SvelteKit hydrates. -->
     <script>

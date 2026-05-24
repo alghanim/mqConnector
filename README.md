@@ -431,6 +431,17 @@ For changes that span both halves, the typical loop is:
 2. Backend: `Ctrl-C` + `go run` after each Go change (or use `air`)
 3. `npm run check` + `go test ./...` before committing
 
+### Pre-commit checks
+
+Before committing frontend changes, run [`./scripts/check-no-hex.sh`](scripts/check-no-hex.sh)
+to verify no raw hex colors have leaked outside `web/src/lib/brand-tokens.css`.
+All component colors must come from CSS custom properties — the script is the
+tripwire that catches `color: #fff` slipping in. CI runs the same check after
+`npm run build`. The script honors `/* check-no-hex: ignore */` and
+`<!-- check-no-hex: ignore -->` markers for the rare line where an inline hex
+is unavoidable (e.g. the `<meta name="theme-color">` tag the browser reads
+before any stylesheet loads).
+
 ---
 
 ## Testing

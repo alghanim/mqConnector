@@ -96,6 +96,14 @@ jobs:
         working-directory: web
         run: npm run build
 
+      # Brand-token discipline: fail the build if any component carries a
+      # raw hex outside web/src/lib/brand-tokens.css. The branding guide
+      # locks color to a token system; a raw hex anywhere else silently
+      # drifts off-brand the next palette rev. Runs after `npm run build`
+      # so a build failure surfaces first.
+      - name: check-no-hex (brand token discipline)
+        run: ./scripts/check-no-hex.sh
+
   integration:
     name: Integration (real brokers)
     runs-on: ubuntu-latest
