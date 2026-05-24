@@ -74,6 +74,24 @@ type entry struct {
 	// MessagesProcessed (every observation falls at or below +Inf).
 	latencyBucketCounts []uint64
 	latencySumMs        float64
+
+	// Per-stage duration histograms, keyed by stage name. Populated
+	// by RecordStageDuration; emitted by the Prometheus exposition
+	// as mqconnector_stage_duration_ms_{bucket,sum,count} with a
+	// `stage` label. Lazy-allocated so pipelines that haven't run
+	// yet don't carry empty maps.
+	stageHist map[string]*stageHistogram
+}
+
+// stageHistogram is the per-stage latency observation aggregate.
+// Shape mirrors the per-pipeline message-latency histogram: cumulative
+// bucket counts using the package-level latencyBuckets, a running
+// total of observed durations, and a sample count. Kept private —
+// the Prometheus renderer reads it via the entry's mutex.
+type stageHistogram struct {
+	bucketCounts []uint64
+	sumMs        float64
+	count        uint64
 }
 
 // Store is the thread-safe global metrics store.
@@ -220,6 +238,41 @@ func (s *Store) RecordValidateAttempt(pipelineID string, ok bool) {
 	}
 }
 
+// RecordStageDuration appends one stage-duration observation to the
+// per-(pipeline, stage) histogram. Air-gapped operators that don't
+// run a trace backend can still answer "which stage is slow?" from
+// the Grafana dashboard via mqconnector_stage_duration_ms_bucket.
+func (s *Store) RecordStageDuration(pipelineID, stageName string, durationMs float64) {
+	if stageName == "" {
+		return
+	}
+	s.mu.RLock()
+	e, present := s.pipelines[pipelineID]
+	s.mu.RUnlock()
+	if !present {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.stageHist == nil {
+		e.stageHist = make(map[string]*stageHistogram, 4)
+	}
+	h, ok := e.stageHist[stageName]
+	if !ok {
+		h = &stageHistogram{
+			bucketCounts: make([]uint64, len(latencyBuckets)),
+		}
+		e.stageHist[stageName] = h
+	}
+	h.sumMs += durationMs
+	h.count++
+	for i, ub := range latencyBuckets {
+		if durationMs <= ub {
+			h.bucketCounts[i]++
+		}
+	}
+}
+
 // Snapshot returns a copy of all per-pipeline metrics.
 func (s *Store) Snapshot() map[string]Pipeline {
 	s.mu.RLock()
@@ -262,6 +315,51 @@ func (s *Store) latencyHistogramFor(pipelineID string) (counts []uint64, sumMs f
 	counts = make([]uint64, len(e.latencyBucketCounts))
 	copy(counts, e.latencyBucketCounts)
 	return counts, e.latencySumMs, e.data.MessagesProcessed, true
+}
+
+// stageHistogramSnapshot is one stage's observation aggregate, copied
+// out of an entry's locked state so the Prometheus renderer can emit
+// it without re-taking the entry mutex.
+type stageHistogramSnapshot struct {
+	StageName    string
+	BucketCounts []uint64
+	SumMs        float64
+	Count        uint64
+}
+
+// stageHistogramsFor copies out every per-stage histogram for one
+// pipeline. Returned slice is sorted by stage name so the Prometheus
+// exposition is byte-stable between scrapes.
+func (s *Store) stageHistogramsFor(pipelineID string) []stageHistogramSnapshot {
+	s.mu.RLock()
+	e, ok := s.pipelines[pipelineID]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.stageHist) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(e.stageHist))
+	for name := range e.stageHist {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]stageHistogramSnapshot, 0, len(names))
+	for _, name := range names {
+		h := e.stageHist[name]
+		buckets := make([]uint64, len(h.bucketCounts))
+		copy(buckets, h.bucketCounts)
+		out = append(out, stageHistogramSnapshot{
+			StageName:    name,
+			BucketCounts: buckets,
+			SumMs:        h.sumMs,
+			Count:        h.count,
+		})
+	}
+	return out
 }
 
 // Uptime returns how long the store has been running.
@@ -362,6 +460,34 @@ func (s *Store) Prometheus() string {
 		fmt.Fprintf(&b,
 			"mqconnector_pipeline_latency_ms_count{pipeline_id=%q,source=%q,dest=%q} %d\n",
 			m.PipelineID, m.SourceQueue, m.DestQueue, total)
+	}
+
+	// Per-stage latency histogram. The label set carries pipeline_id
+	// + stage so operators can answer "which stage is slow?" from
+	// Grafana without a separate trace backend (Tempo/Jaeger). One
+	// histogram per (pipeline, stage) pair; pipelines with no stage
+	// observations emit nothing.
+	b.WriteString("# HELP mqconnector_stage_duration_ms Per-stage processing duration in milliseconds\n")
+	b.WriteString("# TYPE mqconnector_stage_duration_ms histogram\n")
+	for _, id := range ids {
+		m := all[id]
+		stages := s.stageHistogramsFor(id)
+		for _, sh := range stages {
+			for i, ub := range latencyBuckets {
+				fmt.Fprintf(&b,
+					"mqconnector_stage_duration_ms_bucket{pipeline_id=%q,source=%q,dest=%q,stage=%q,le=%q} %d\n",
+					m.PipelineID, m.SourceQueue, m.DestQueue, sh.StageName, formatBound(ub), sh.BucketCounts[i])
+			}
+			fmt.Fprintf(&b,
+				"mqconnector_stage_duration_ms_bucket{pipeline_id=%q,source=%q,dest=%q,stage=%q,le=\"+Inf\"} %d\n",
+				m.PipelineID, m.SourceQueue, m.DestQueue, sh.StageName, sh.Count)
+			fmt.Fprintf(&b,
+				"mqconnector_stage_duration_ms_sum{pipeline_id=%q,source=%q,dest=%q,stage=%q} %.2f\n",
+				m.PipelineID, m.SourceQueue, m.DestQueue, sh.StageName, sh.SumMs)
+			fmt.Fprintf(&b,
+				"mqconnector_stage_duration_ms_count{pipeline_id=%q,source=%q,dest=%q,stage=%q} %d\n",
+				m.PipelineID, m.SourceQueue, m.DestQueue, sh.StageName, sh.Count)
+		}
 	}
 
 	// Per-pipeline source backlog. Only emitted for pipelines whose

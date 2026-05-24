@@ -33,6 +33,11 @@ type MetricsSink interface {
 	// pipeline routed the message to DLQ. The pair feeds the schema
 	// drift alarm — see deploy/prometheus/mqconnector-slos.yaml.
 	RecordValidateAttempt(pipelineID string, ok bool)
+	// RecordStageDuration appends one (pipeline, stage) duration
+	// observation. Lets operators answer "which stage is slow?"
+	// from the embedded Grafana dashboard without a separate trace
+	// backend.
+	RecordStageDuration(pipelineID, stageName string, durationMs float64)
 	// SetSourceDepth is called by the depth-sampling goroutine when
 	// the source connector implements mq.DepthReporter. A negative
 	// value clears the most recent reading (so the Prometheus
@@ -405,6 +410,8 @@ func (e *Executor) recordStageObservations(runs []StageRun) {
 		return
 	}
 	for _, run := range runs {
+		durationMs := float64(run.Duration.Nanoseconds()) / 1e6
+		e.Metrics.RecordStageDuration(e.Pipeline.ID, run.Name, durationMs)
 		if run.Name == "validate" {
 			e.Metrics.RecordValidateAttempt(e.Pipeline.ID, !run.Failed)
 		}
