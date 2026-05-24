@@ -32,25 +32,26 @@ const (
 // Store wraps the database handle and exposes one repository per entity. Its
 // zero value is not usable — construct it with Open.
 type Store struct {
-	DB           *sql.DB
-	dialect      Dialect
-	Connections  *ConnectionRepo
-	Pipelines    *PipelineRepo
-	Stages       *StageRepo
-	Transforms   *TransformRepo
-	RoutingRules *RoutingRuleRepo
-	DLQ          *DLQRepo
-	Scripts      *ScriptRepo
-	Schemas      *SchemaRepo
-	Audit        *AuditRepo
-	Tenants      *TenantRepo
-	Memberships  *MembershipRepo
-	APITokens    *APITokenRepo
-	Webhooks       *WebhookRepo
-	Plugins        *PluginRepo
-	PipelineGrants *PipelineGrantsRepo
-	DLQRedaction   *DLQRedactionRepo
-	Dedup          *DedupRepo
+	DB                *sql.DB
+	dialect           Dialect
+	Connections       *ConnectionRepo
+	Pipelines         *PipelineRepo
+	Stages            *StageRepo
+	Transforms        *TransformRepo
+	RoutingRules      *RoutingRuleRepo
+	DLQ               *DLQRepo
+	Scripts           *ScriptRepo
+	Schemas           *SchemaRepo
+	Audit             *AuditRepo
+	Tenants           *TenantRepo
+	Memberships       *MembershipRepo
+	APITokens         *APITokenRepo
+	Webhooks          *WebhookRepo
+	Plugins           *PluginRepo
+	PipelineGrants    *PipelineGrantsRepo
+	DLQRedaction      *DLQRedactionRepo
+	Dedup             *DedupRepo
+	PipelineRevisions *PipelineRevisionRepo
 }
 
 // Dialect reports which SQL flavour the underlying connection speaks.
@@ -116,25 +117,26 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 	// unchanged.
 	wrap := &dbWrap{db: db, dialect: dialect}
 	return &Store{
-		DB:           db,
-		dialect:      dialect,
-		Connections:  &ConnectionRepo{db: wrap},
-		Pipelines:    &PipelineRepo{db: wrap},
-		Stages:       &StageRepo{db: wrap},
-		Transforms:   &TransformRepo{db: wrap},
-		RoutingRules: &RoutingRuleRepo{db: wrap},
-		DLQ:          &DLQRepo{db: wrap},
-		Scripts:      &ScriptRepo{db: wrap},
-		Schemas:      &SchemaRepo{db: wrap},
-		Audit:        &AuditRepo{db: wrap},
-		Tenants:      &TenantRepo{db: wrap},
-		Memberships:  &MembershipRepo{db: wrap},
-		APITokens:    &APITokenRepo{db: wrap},
-		Webhooks:       &WebhookRepo{db: wrap},
-		Plugins:        &PluginRepo{db: wrap},
-		PipelineGrants: &PipelineGrantsRepo{db: wrap},
-		DLQRedaction:   &DLQRedactionRepo{db: wrap},
-		Dedup:          &DedupRepo{db: wrap},
+		DB:                db,
+		dialect:           dialect,
+		Connections:       &ConnectionRepo{db: wrap},
+		Pipelines:         &PipelineRepo{db: wrap},
+		Stages:            &StageRepo{db: wrap},
+		Transforms:        &TransformRepo{db: wrap},
+		RoutingRules:      &RoutingRuleRepo{db: wrap},
+		DLQ:               &DLQRepo{db: wrap},
+		Scripts:           &ScriptRepo{db: wrap},
+		Schemas:           &SchemaRepo{db: wrap},
+		Audit:             &AuditRepo{db: wrap},
+		Tenants:           &TenantRepo{db: wrap},
+		Memberships:       &MembershipRepo{db: wrap},
+		APITokens:         &APITokenRepo{db: wrap},
+		Webhooks:          &WebhookRepo{db: wrap},
+		Plugins:           &PluginRepo{db: wrap},
+		PipelineGrants:    &PipelineGrantsRepo{db: wrap},
+		DLQRedaction:      &DLQRedactionRepo{db: wrap},
+		Dedup:             &DedupRepo{db: wrap},
+		PipelineRevisions: &PipelineRevisionRepo{db: wrap},
 	}, nil
 }
 
