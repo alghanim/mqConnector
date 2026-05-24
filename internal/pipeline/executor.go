@@ -22,11 +22,25 @@ type MetricsSink interface {
 	SetStatus(pipelineID, status, lastError string)
 	RecordSuccess(pipelineID string, bytes int64, latencyMs float64)
 	RecordFailure(pipelineID string)
+	// RecordDedupSkipped counts outbound sends short-circuited by the
+	// dedup window. Always paired with a finalize(...,true) so the
+	// source still gets committed (the operator opted in to "treat
+	// these as the same message").
+	RecordDedupSkipped(pipelineID string)
 	// SetSourceDepth is called by the depth-sampling goroutine when
 	// the source connector implements mq.DepthReporter. A negative
 	// value clears the most recent reading (so the Prometheus
 	// renderer drops the series instead of reporting stale data).
 	SetSourceDepth(pipelineID string, depth int64)
+}
+
+// Deduper is the minimal surface the executor uses to consult the
+// dedup window before forwarding to the destination. A nil Deduper
+// (or a window of 0) disables the check entirely — the original
+// at-least-once contract is preserved by default. The concrete
+// implementation lives in internal/storage.DedupRepo.
+type Deduper interface {
+	CheckAndRecord(ctx context.Context, pipelineID, payloadHash string, windowSeconds int) (bool, error)
 }
 
 // DLQSink is the minimal surface the executor uses to push failures into the
@@ -59,6 +73,7 @@ type Executor struct {
 
 	Metrics MetricsSink
 	DLQ     DLQSink
+	Dedup   Deduper // nil disables dedup; honoured only when Pipeline.DedupWindowSeconds > 0
 	Logger  *slog.Logger
 
 	// budget is set in Run() when the pipeline carries
@@ -275,6 +290,33 @@ func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.L
 		case <-time.After(time.Second):
 		}
 		return nil
+	}
+
+	// Destination-side dedup gate. Pipelines opt in via
+	// DedupWindowSeconds > 0. The hash is computed over the post-stage
+	// payload — so two source messages that transform into the same
+	// outbound payload still collapse cleanly, which is the whole
+	// point. A check failure is logged but doesn't block delivery (a
+	// dedup-store outage would otherwise reduce availability of the
+	// pipeline; we prefer at-least-once + log over fail-closed here).
+	if e.Pipeline.DedupWindowSeconds > 0 && e.Dedup != nil {
+		hash := payloadHash(current)
+		dupe, err := e.Dedup.CheckAndRecord(ctx, e.Pipeline.ID, hash, e.Pipeline.DedupWindowSeconds)
+		if err != nil {
+			logger.Warn("dedup check failed; forwarding anyway", "err", err)
+		} else if dupe {
+			if e.Metrics != nil {
+				e.Metrics.RecordDedupSkipped(e.Pipeline.ID)
+			}
+			logger.Debug("dedup hit; skipping send",
+				"window_seconds", e.Pipeline.DedupWindowSeconds)
+			// Treat as handled: the operator opted in to "this
+			// payload is equivalent to one already delivered."
+			// Committing the source stops broker redelivery; the
+			// downstream stays consistent.
+			e.finalize(ctx, source, true, logger)
+			return nil
+		}
 	}
 
 	// Forward

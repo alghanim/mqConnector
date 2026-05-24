@@ -65,7 +65,18 @@ type Manager struct {
 	// Optional WASM runtime — injected by the server. nil means
 	// stages with stage_type=wasm will fail Build.
 	wasmRuntime wazero.Runtime
+
+	// Optional dedup store — injected by main during boot. nil
+	// disables dedup regardless of any pipeline's DedupWindowSeconds
+	// (the executor honours the field only when both the deduper is
+	// installed and the window is non-zero).
+	dedup Deduper
 }
+
+// SetDeduper installs the destination-side dedup store used by every
+// executor this Manager spawns. Idempotent; nil is a deliberate
+// "disable dedup for this process" knob useful in tests.
+func (m *Manager) SetDeduper(d Deduper) { m.dedup = d }
 
 // SetWasmRuntime installs the wazero runtime used to compile plugin
 // blobs at pipeline build time. The server owns the runtime
@@ -329,6 +340,7 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 		RouteDests:  routeDests,
 		Metrics:     m.metrics,
 		DLQ:         m.dlq,
+		Dedup:       m.dedup,
 		Logger:      m.logger,
 	}
 

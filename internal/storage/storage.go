@@ -50,6 +50,7 @@ type Store struct {
 	Plugins        *PluginRepo
 	PipelineGrants *PipelineGrantsRepo
 	DLQRedaction   *DLQRedactionRepo
+	Dedup          *DedupRepo
 }
 
 // Dialect reports which SQL flavour the underlying connection speaks.
@@ -133,6 +134,7 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 		Plugins:        &PluginRepo{db: wrap},
 		PipelineGrants: &PipelineGrantsRepo{db: wrap},
 		DLQRedaction:   &DLQRedactionRepo{db: wrap},
+		Dedup:          &DedupRepo{db: wrap},
 	}, nil
 }
 

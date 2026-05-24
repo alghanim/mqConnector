@@ -83,9 +83,17 @@ type Pipeline struct {
 	// same destination broker or overwhelm a downstream that has its
 	// own SLA. Independent of the per-tenant rate limit that gates
 	// admin API calls.
-	MaxMsgsPerMinute int       `json:"max_msgs_per_minute,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	MaxMsgsPerMinute int `json:"max_msgs_per_minute,omitempty"`
+	// DedupWindowSeconds opts the pipeline into destination-side
+	// idempotency. When > 0 the executor SHA-256s the post-stage
+	// outbound payload and skips the send when an identical payload
+	// hashed within the window. Default 0 (disabled) preserves the
+	// global at-least-once contract; downstream consumers that aren't
+	// idempotent (counters, charges, alerts) opt in pipeline-by-
+	// pipeline. The dedup table is pruned by the retention sweeper.
+	DedupWindowSeconds int       `json:"dedup_window_seconds,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // Stage is one step in a pipeline's processing chain.

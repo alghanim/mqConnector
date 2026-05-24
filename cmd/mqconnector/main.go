@@ -304,7 +304,42 @@ func run(configPath string) error {
 	// Pipeline manager
 	mgr := pipeline.NewManager(rootCtx, store, pool, metricsStore, dlqSvc, logger)
 	mgr.SetEventSink(eventBus)
+	// Destination-side dedup. Opt-in per pipeline via
+	// DedupWindowSeconds; the executor honours it only when this
+	// deduper is installed. Cheap to wire unconditionally — the
+	// check short-circuits before any DB call when the window is 0.
+	mgr.SetDeduper(store.Dedup)
 	dlqSvc.SetEventSink(eventBus)
+
+	// Background prune for the pipeline_dedup table. The dedup repo's
+	// CheckAndRecord transaction expires per-row entries on demand,
+	// but a row whose pipeline goes quiet would sit forever otherwise.
+	// One sweep every dedupPruneInterval clears anything older than
+	// dedupPruneCutoff (24h, sized for the longest reasonable per-
+	// pipeline window). Failures are logged but never fatal.
+	go func() {
+		const (
+			dedupPruneInterval = 15 * time.Minute
+			dedupPruneCutoff   = 24 * time.Hour
+		)
+		t := time.NewTicker(dedupPruneInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-t.C:
+				n, err := store.Dedup.Prune(rootCtx, time.Now().UTC().Add(-dedupPruneCutoff))
+				if err != nil {
+					logger.Warn("dedup prune failed", "err", err)
+					continue
+				}
+				if n > 0 {
+					logger.Info("dedup pruned expired rows", "rows", n)
+				}
+			}
+		}
+	}()
 	// Graceful drain: give in-flight messages 30s to finish their
 	// receive → stages → send round trip before the process exits.
 	// Fire-and-forget Stop() runs anyway as a backstop if the deferred

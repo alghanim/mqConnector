@@ -634,6 +634,38 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_dlq_redaction_pipeline
 	  ON dlq_redaction_rules(pipeline_id, ord);
 	`,
+	// 0020 — destination-side dedup window.
+	//
+	// Opt-in per pipeline. When dedup_window_seconds > 0 the executor
+	// computes SHA-256 of the post-stage outbound payload and checks
+	// the pipeline_dedup table before forwarding. A row that's still
+	// inside the window is a duplicate and the send is skipped; the
+	// source is committed (the operator already promised this message
+	// is "the same" so re-publishing it would break the contract).
+	//
+	// This upgrades the at-least-once delivery contract to effectively-
+	// once for the configured window — without changing the global
+	// contract, so non-idempotent destinations (counters, billing,
+	// notifications) can opt in pipeline-by-pipeline.
+	//
+	// Storage: (pipeline_id, payload_hash) is unique; first_seen_at
+	// pins the window's start, last_seen_at is bumped on every hit so
+	// a long burst of dupes keeps refreshing the entry. The retention
+	// sweeper prunes rows whose last_seen_at + window has expired.
+	`
+	ALTER TABLE pipelines ADD COLUMN dedup_window_seconds INTEGER NOT NULL DEFAULT 0;
+
+	CREATE TABLE IF NOT EXISTS pipeline_dedup (
+		pipeline_id   TEXT NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+		payload_hash  TEXT NOT NULL,
+		first_seen_at DATETIME NOT NULL,
+		last_seen_at  DATETIME NOT NULL,
+		hits          INTEGER NOT NULL DEFAULT 1,
+		PRIMARY KEY (pipeline_id, payload_hash)
+	);
+	CREATE INDEX IF NOT EXISTS idx_pipeline_dedup_last_seen
+	  ON pipeline_dedup(last_seen_at);
+	`,
 }
 
 // postgresMigrationOverrides supersedes specific entries in `migrations`

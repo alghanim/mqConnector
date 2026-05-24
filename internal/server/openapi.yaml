@@ -232,6 +232,20 @@ components:
           type: array
           items: { type: string }
         enabled: { type: boolean, default: true }
+        workers: { type: integer, description: "Source-drain goroutine count; 0 means default 1." }
+        retry_max: { type: integer, description: "Per-pipeline DLQ retry cap; 0 uses the service-wide default." }
+        retry_backoff_ms: { type: integer, description: "Base backoff between DLQ retries in ms; 0 uses 5000." }
+        max_msgs_per_minute: { type: integer, description: "Per-pipeline source-drain throughput cap; 0 = unlimited." }
+        dedup_window_seconds:
+          type: integer
+          description: |
+            Destination-side dedup window. When > 0, the executor SHA-256s
+            the post-stage outbound payload and skips forwarding to the
+            destination if an identical payload was seen on this pipeline
+            within the last N seconds. The source is committed (treated as
+            handled) so the broker doesn't redeliver. 0 = disabled (default,
+            preserves the global at-least-once contract).
+          default: 0
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         effective_role:

@@ -20,10 +20,15 @@ type Pipeline struct {
 	MessagesProcessed int64     `json:"messages_processed"`
 	MessagesFailed    int64     `json:"messages_failed"`
 	BytesProcessed    int64     `json:"bytes_processed"`
-	LastMessageTime   time.Time `json:"last_message_time"`
-	AvgLatencyMs      float64   `json:"avg_latency_ms"`
-	Status            string    `json:"status"`
-	LastError         string    `json:"last_error,omitempty"`
+	// DedupSkipped counts outbound sends that were short-circuited by
+	// the dedup window because an identical payload was already
+	// observed for this pipeline. Only ever > 0 when the pipeline
+	// opted into dedup via dedup_window_seconds > 0.
+	DedupSkipped    int64     `json:"dedup_skipped"`
+	LastMessageTime time.Time `json:"last_message_time"`
+	AvgLatencyMs    float64   `json:"avg_latency_ms"`
+	Status          string    `json:"status"`
+	LastError       string    `json:"last_error,omitempty"`
 	// SourceDepth is the most recent broker-side backlog measurement
 	// for the pipeline's source. -1 means "not sampled yet" or "source
 	// connector doesn't report depth"; the Prometheus renderer skips
@@ -175,6 +180,21 @@ func (s *Store) RecordFailure(pipelineID string) {
 	e.data.MessagesFailed++
 }
 
+// RecordDedupSkipped bumps the dedup-skipped counter for one pipeline.
+// Called by the executor when the dedup window short-circuits an
+// outbound send.
+func (s *Store) RecordDedupSkipped(pipelineID string) {
+	s.mu.RLock()
+	e, ok := s.pipelines[pipelineID]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.data.DedupSkipped++
+}
+
 // Snapshot returns a copy of all per-pipeline metrics.
 func (s *Store) Snapshot() map[string]Pipeline {
 	s.mu.RLock()
@@ -253,6 +273,13 @@ func (s *Store) Prometheus() string {
 	for _, m := range all {
 		fmt.Fprintf(&b, "mqconnector_bytes_processed_total{pipeline_id=%q,source=%q,dest=%q} %d\n",
 			m.PipelineID, m.SourceQueue, m.DestQueue, m.BytesProcessed)
+	}
+
+	b.WriteString("# HELP mqconnector_dedup_skipped_total Outbound sends short-circuited by the dedup window\n")
+	b.WriteString("# TYPE mqconnector_dedup_skipped_total counter\n")
+	for _, m := range all {
+		fmt.Fprintf(&b, "mqconnector_dedup_skipped_total{pipeline_id=%q,source=%q,dest=%q} %d\n",
+			m.PipelineID, m.SourceQueue, m.DestQueue, m.DedupSkipped)
 	}
 
 	b.WriteString("# HELP mqconnector_avg_latency_ms Average processing latency in milliseconds\n")
