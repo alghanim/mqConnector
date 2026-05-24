@@ -432,6 +432,15 @@ func TestPipelineRevisions_TenantIsolation(t *testing.T) {
 		t.Error("cross-tenant MarkDeployed must error")
 	}
 
+	// Deploy revA for tenant A so we can verify tenant B cannot see it
+	// via LatestDeployed.
+	if err := s.PipelineRevisions.MarkDeployed(ctx, DefaultTenantID, pidA, 1, "req-a"); err != nil {
+		t.Fatalf("MarkDeployed A: %v", err)
+	}
+	if _, err := s.PipelineRevisions.LatestDeployed(ctx, otherTenant, pidA); err != ErrNotFound {
+		t.Errorf("cross-tenant LatestDeployed must return ErrNotFound, got %v", err)
+	}
+
 	// Tenant B's own pipeline keeps revision numbers independent.
 	revB := &PipelineRevision{
 		PipelineID:   pidB,
