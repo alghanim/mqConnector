@@ -48,6 +48,19 @@ If the failure mode is "the source itself is producing bad messages" and you don
 After fixing the upstream:
 
 1. Replay the DLQ rows that *would have succeeded* under the new rules. The UI has bulk-select on `/dlq`.
+
+   ⚠ **`max retries exceeded` on replay:** if the outage lasted longer than the DLQ reaper's retry budget (`pipelines.retry_max`, default 3), the rows are at the cap and `POST /api/v1/dlq/{id}/retry` returns `400`. Two options:
+
+   - **Raise the retry budget first**, then replay:
+     ```sh
+     # bump retry_max to 10 for the affected pipeline
+     curl -sk -b "$JAR" -H "X-CSRF-Token: $CSRF" \
+       -X PUT "https://$HOST/api/v1/pipelines/$PIPELINE_ID" \
+       -d '{...existing fields..., "retry_max": 10}'
+     # then bulk-replay via the UI
+     ```
+   - **Republish from the original payload** (the DLQ row carries `original_msg` base64-encoded). Decode and publish back onto the source queue, then delete the DLQ row. Use this when the destination semantics are idempotent — the original producer is the source of truth and the DLQ row is just a paper trail.
+
 2. Delete rows that can never succeed (e.g. truly malformed payloads that the producer has stopped emitting). The audit trail keeps the deletion record.
 
 ## Postmortem

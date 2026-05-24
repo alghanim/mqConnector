@@ -19,8 +19,14 @@ docker compose stop mqconnector
 # 2. Move the corrupted DB out of the way.
 mv /var/lib/mqconnector/mqc.db /var/lib/mqconnector/mqc.db.corrupt
 
-# 3. Copy the snapshot in.
+# 3. Copy the snapshot in. ⚠ Ownership is load-bearing — the
+#    distroless runtime image runs as UID 65532 (`nonroot`). If the cp
+#    executes as root (the default for `docker run --rm -v` helper
+#    containers), the binary will report
+#    `attempt to write a readonly database (SQLITE_READONLY)` on
+#    startup and CrashLoopBackOff. Always chown after the cp.
 cp /backups/mqc.db.<timestamp> /var/lib/mqconnector/mqc.db
+chown 65532:65532 /var/lib/mqconnector/mqc.db
 chmod 0640 /var/lib/mqconnector/mqc.db
 
 # 4. Start. The schema_migrations table is part of the snapshot, so
