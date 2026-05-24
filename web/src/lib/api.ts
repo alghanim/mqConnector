@@ -190,11 +190,25 @@ export type StageType = 'filter' | 'transform' | 'translate' | 'route' | 'script
 
 export interface Schema {
   id?: string;
+  tenant_id?: string;
   name: string;
-  schema_type: 'json_schema' | 'xsd';
+  schema_type: 'json_schema' | 'xsd' | 'protobuf';
   content: string;
   created_at?: string;
   updated_at?: string;
+}
+
+// Plugin metadata returned by GET /api/v1/plugins. The blob bytes are
+// never sent to the browser — the list view + dropdown just need name,
+// size, and upload time. Upload happens via multipart POST elsewhere.
+export interface Plugin {
+  id?: string;
+  tenant_id?: string;
+  name: string;
+  sha256?: string;
+  size_bytes?: number;
+  uploaded_by?: string;
+  uploaded_at?: string;
 }
 
 export interface Stage {
