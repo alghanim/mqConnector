@@ -19,10 +19,13 @@
   implementer can wire components in without touching the shell.
 -->
 <script lang="ts">
-  import { studio, type StudioStateData } from '$lib/stores/studio';
+  import { studio, type StudioStateData, type StudioStageType } from '$lib/stores/studio';
   import { locale, t } from '$lib/stores/locale';
   import Card from '$lib/components/Card.svelte';
   import StudioHeader from './StudioHeader.svelte';
+  import StudioPalette from './StudioPalette.svelte';
+  import StudioCanvas from './StudioCanvas.svelte';
+  import StudioInspector from './StudioInspector.svelte';
 
   export let pipelineId: string;
 
@@ -104,6 +107,17 @@
   function onRetry() {
     void studio.hydrate(pipelineId);
   }
+
+  // Palette → canvas. A click on a palette card emits `select` with the
+  // stage type; we append the stage to the chain and select it so the
+  // inspector immediately shows its (Task-10) editor. Drag-drop takes
+  // a different code path — StudioCanvas calls `studio.addStage`
+  // directly from its drop handler so the stage lands wherever the
+  // operator released the mouse (currently always "end of chain").
+  function handlePaletteSelect(e: CustomEvent<StudioStageType>) {
+    const newId = studio.addStage(e.detail);
+    studio.selectNode(newId);
+  }
 </script>
 
 {#if s?.state === 'error' && !s.draft}
@@ -144,24 +158,18 @@
 
     <div class="studio-body">
       <aside class="studio-left" aria-label="Studio palette and version rail">
-        <Card padding="sm">
-          <p class="studio-stub-label">{t($locale, 'studio.placeholder.palette')}</p>
-        </Card>
+        <StudioPalette on:select={handlePaletteSelect} />
         <Card padding="sm">
           <p class="studio-stub-label">{t($locale, 'studio.placeholder.versionRail')}</p>
         </Card>
       </aside>
 
       <main class="studio-canvas" aria-label="Studio canvas">
-        <Card padding="md">
-          <p class="studio-stub-label">{t($locale, 'studio.placeholder.canvas')}</p>
-        </Card>
+        <StudioCanvas />
       </main>
 
       <aside class="studio-right" aria-label="Studio inspector">
-        <Card padding="sm">
-          <p class="studio-stub-label">{t($locale, 'studio.placeholder.inspector')}</p>
-        </Card>
+        <StudioInspector />
       </aside>
     </div>
 

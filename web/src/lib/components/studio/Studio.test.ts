@@ -50,12 +50,16 @@ describe('Studio shell', () => {
     expect(container.querySelector('.studio-header')).not.toBeNull();
     expect(getByText('My Pipeline')).toBeInTheDocument();
 
-    // All four placeholder labels present.
-    expect(getByText(/Palette \(Task 9\)/)).toBeInTheDocument();
-    expect(getByText(/Canvas \(Task 9\)/)).toBeInTheDocument();
-    expect(getByText(/Inspector \(Task 10\)/)).toBeInTheDocument();
+    // Task 9 replaced the Palette / Canvas / Inspector stubs with real
+    // components — those three labels are no longer present in the
+    // tree. The Dock + Version Rail stubs remain (Tasks 11/12).
     expect(getByText(/Dry-run Dock \(Task 11\)/)).toBeInTheDocument();
     expect(getByText(/Version Rail \(Task 12\)/)).toBeInTheDocument();
+    // The palette renders its own heading ("Stages") and the inspector
+    // shows the "Nothing selected" empty state on a fresh hydrate.
+    expect(container.querySelector('.studio-palette')).not.toBeNull();
+    expect(container.querySelector('.studio-canvas')).not.toBeNull();
+    expect(container.querySelector('.studio-inspector')).not.toBeNull();
   });
 
   it('renders the loading affordance when no draft is present yet', () => {
