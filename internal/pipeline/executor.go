@@ -27,6 +27,12 @@ type MetricsSink interface {
 	// source still gets committed (the operator opted in to "treat
 	// these as the same message").
 	RecordDedupSkipped(pipelineID string)
+	// RecordValidateAttempt is called once per validate-stage
+	// execution. ok=true means the schema accepted the payload;
+	// ok=false means the validate stage returned an error and the
+	// pipeline routed the message to DLQ. The pair feeds the schema
+	// drift alarm — see deploy/prometheus/mqconnector-slos.yaml.
+	RecordValidateAttempt(pipelineID string, ok bool)
 	// SetSourceDepth is called by the depth-sampling goroutine when
 	// the source connector implements mq.DepthReporter. A negative
 	// value clears the most recent reading (so the Prometheus
@@ -250,6 +256,11 @@ func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.L
 	defer span.End(nil)
 
 	outcome, runErr := RunStages(ctx, e.Stages, message)
+	// Per-stage observations regardless of whether the chain errored.
+	// Drift detection relies on attempts (success+failure) being
+	// counted on both paths; a failing stage is the last entry in
+	// outcome.Runs.
+	e.recordStageObservations(outcome.Runs)
 	if runErr != nil {
 		logger.Warn("stage failed, sending to DLQ", "err", runErr)
 		// At-least-once handoff: a stage failure is "handled" once the
@@ -381,6 +392,22 @@ func (e *Executor) finalize(ctx context.Context, source mq.Connector, handled bo
 	}
 	if err := source.Nack(ctx, true); err != nil {
 		logger.Warn("source nack failed", "err", err)
+	}
+}
+
+// recordStageObservations forwards per-stage outcomes to the metrics
+// sink. Currently it only emits validate-stage observations — the
+// foundation of the schema-drift alarm. Other per-stage signals
+// (latency histograms, error breakdown by stage) layer in here
+// without touching the executor's hot path.
+func (e *Executor) recordStageObservations(runs []StageRun) {
+	if e.Metrics == nil || len(runs) == 0 {
+		return
+	}
+	for _, run := range runs {
+		if run.Name == "validate" {
+			e.Metrics.RecordValidateAttempt(e.Pipeline.ID, !run.Failed)
+		}
 	}
 }
 

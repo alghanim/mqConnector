@@ -24,8 +24,15 @@ type Pipeline struct {
 	// the dedup window because an identical payload was already
 	// observed for this pipeline. Only ever > 0 when the pipeline
 	// opted into dedup via dedup_window_seconds > 0.
-	DedupSkipped    int64     `json:"dedup_skipped"`
-	LastMessageTime time.Time `json:"last_message_time"`
+	DedupSkipped int64 `json:"dedup_skipped"`
+	// ValidateAttempts is the count of validate-stage executions for
+	// this pipeline (success or failure). ValidateFailures is the
+	// subset that errored. The ratio feeds the schema-drift alarm —
+	// a sharp jump in failures-per-attempt is the canonical signal
+	// that an upstream producer changed its schema.
+	ValidateAttempts int64     `json:"validate_attempts"`
+	ValidateFailures int64     `json:"validate_failures"`
+	LastMessageTime  time.Time `json:"last_message_time"`
 	AvgLatencyMs    float64   `json:"avg_latency_ms"`
 	Status          string    `json:"status"`
 	LastError       string    `json:"last_error,omitempty"`
@@ -195,6 +202,24 @@ func (s *Store) RecordDedupSkipped(pipelineID string) {
 	e.data.DedupSkipped++
 }
 
+// RecordValidateAttempt bumps the validate-stage observation counters.
+// Called once per validate-stage execution by the executor: ok=true
+// when the schema accepted the payload, ok=false on rejection.
+func (s *Store) RecordValidateAttempt(pipelineID string, ok bool) {
+	s.mu.RLock()
+	e, present := s.pipelines[pipelineID]
+	s.mu.RUnlock()
+	if !present {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.data.ValidateAttempts++
+	if !ok {
+		e.data.ValidateFailures++
+	}
+}
+
 // Snapshot returns a copy of all per-pipeline metrics.
 func (s *Store) Snapshot() map[string]Pipeline {
 	s.mu.RLock()
@@ -280,6 +305,20 @@ func (s *Store) Prometheus() string {
 	for _, m := range all {
 		fmt.Fprintf(&b, "mqconnector_dedup_skipped_total{pipeline_id=%q,source=%q,dest=%q} %d\n",
 			m.PipelineID, m.SourceQueue, m.DestQueue, m.DedupSkipped)
+	}
+
+	b.WriteString("# HELP mqconnector_validate_attempts_total Validate-stage executions per pipeline (success+failure)\n")
+	b.WriteString("# TYPE mqconnector_validate_attempts_total counter\n")
+	for _, m := range all {
+		fmt.Fprintf(&b, "mqconnector_validate_attempts_total{pipeline_id=%q,source=%q,dest=%q} %d\n",
+			m.PipelineID, m.SourceQueue, m.DestQueue, m.ValidateAttempts)
+	}
+
+	b.WriteString("# HELP mqconnector_validate_failures_total Validate-stage rejections per pipeline (subset of attempts)\n")
+	b.WriteString("# TYPE mqconnector_validate_failures_total counter\n")
+	for _, m := range all {
+		fmt.Fprintf(&b, "mqconnector_validate_failures_total{pipeline_id=%q,source=%q,dest=%q} %d\n",
+			m.PipelineID, m.SourceQueue, m.DestQueue, m.ValidateFailures)
 	}
 
 	b.WriteString("# HELP mqconnector_avg_latency_ms Average processing latency in milliseconds\n")

@@ -375,3 +375,73 @@ groups:
             destination is slower than the source — bump
             pipelines.workers, raise max_msgs_per_minute, or scale the
             destination broker.
+
+  # ── 10) Schema drift on the validate stage ──────────────────────
+  # The validate stage runs once per message on pipelines that have a
+  # schema attached (json_schema / xsd / protobuf). A sustained spike
+  # in failure-rate is the canonical "upstream producer changed the
+  # schema" signal — DLQ-depth alarms catch it eventually, but only
+  # AFTER thousands of messages have been quarantined. This rule
+  # fires earlier, on the inflection point itself.
+  #
+  # Guard: only fire when actual validate traffic exists (attempts
+  # rate > 0.1/s). A pipeline that does no validation, or one that's
+  # idle, can't drift.
+  - name: mqconnector.schema_drift.recording
+    interval: 30s
+    rules:
+      - record: mqconnector:validate_attempts:rate5m
+        expr: sum by (pipeline_id) (rate(mqconnector_validate_attempts_total[5m]))
+      - record: mqconnector:validate_failures:rate5m
+        expr: sum by (pipeline_id) (rate(mqconnector_validate_failures_total[5m]))
+      - record: mqconnector:validate_failure_ratio:rate5m
+        expr: |
+          mqconnector:validate_failures:rate5m
+          /
+          clamp_min(mqconnector:validate_attempts:rate5m, 0.001)
+
+  - name: mqconnector.schema_drift.alerts
+    rules:
+      - alert: mqConnectorSchemaDriftSuspected
+        expr: |
+          mqconnector:validate_failure_ratio:rate5m > 0.20
+          AND
+          mqconnector:validate_attempts:rate5m > 0.1
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: schema drift suspected ({{ $value | humanizePercentage }} validate failure)"
+          description: |
+            Validate-stage failure rate on pipeline
+            {{ $labels.pipeline_id }} is {{ $value | humanizePercentage }}
+            over the last 5 minutes (sustained 3 min), with
+            attempts rate > 0.1/s.
+
+            Likely cause: an upstream producer changed the payload
+            schema (renamed/removed a required field, changed a type,
+            etc.) and the pipeline's validate stage is now rejecting
+            most messages. The rejections are landing in DLQ — query
+            /api/v1/dlq?pipeline_id={{ $labels.pipeline_id }}&error=validate
+            to see the failing payloads, then diff them against the
+            schema referenced by the pipeline.
+
+            If the schema change is intended, update the validate
+            stage's schema_id (or the pipeline's SchemaID) to match.
+            If it is not, contact the upstream producer team.
+
+      - alert: mqConnectorSchemaDriftSevere
+        expr: |
+          mqconnector:validate_failure_ratio:rate5m > 0.80
+          AND
+          mqconnector:validate_attempts:rate5m > 0.1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mqConnector pipeline {{ $labels.pipeline_id }}: validate is rejecting almost everything"
+          description: |
+            >80% of messages are failing the validate stage on
+            {{ $labels.pipeline_id }}. The pipeline is effectively
+            offline — every message is going to DLQ. Page on-call.
+            See OPERATIONS.md / dlq-growing runbook.
