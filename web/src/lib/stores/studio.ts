@@ -99,6 +99,10 @@ export interface StudioStateData {
   selectedNodeId: string | null;
   comparison: ComparisonState | null;
   dryRun: unknown | null;
+  // dockError: dry-run-specific error channel. Distinct from `error` so a
+  // dry-run failure (typically "build: foo" or "stage X failed") doesn't
+  // pollute the build-error chip in the header. Task 11.
+  dockError: string | null;
 }
 
 export interface ComparisonState {
@@ -123,7 +127,8 @@ export function emptyData(pipelineId: string): StudioStateData {
     dirtyCount: 0,
     selectedNodeId: null,
     comparison: null,
-    dryRun: null
+    dryRun: null,
+    dockError: null
   };
 }
 
@@ -277,7 +282,8 @@ async function hydrate(pipelineId: string): Promise<void> {
     dirtyCount: 0,
     selectedNodeId: null,
     comparison: null,
-    dryRun: null
+    dryRun: null,
+    dockError: null
   });
 }
 
@@ -515,7 +521,8 @@ function setDryRun(result: unknown): void {
   inner.update((s) => ({
     ...s,
     state: 'simulating',
-    dryRun: result
+    dryRun: result,
+    dockError: null
   }));
 }
 
@@ -523,8 +530,50 @@ function clearDryRun(): void {
   inner.update((s) => ({
     ...s,
     state: s.dirtyCount > 0 ? 'dirty' : 'building',
-    dryRun: null
+    dryRun: null,
+    dockError: null
   }));
+}
+
+// beginDryRun — flip to 'simulating' and clear any prior dry-run + dock
+// error so the spinner replaces a stale strip. The DryRunDock (Task 11)
+// calls this before its fetch fires so the chip + Run-button pulse start
+// immediately, regardless of how long the network takes. Pinned by
+// studio.test.ts.
+function beginDryRun(): void {
+  inner.update((s) => ({
+    ...s,
+    state: 'simulating',
+    dryRun: null,
+    dockError: null
+  }));
+}
+
+// finishDryRun — store a successful preview result. Keeps state at
+// 'simulating' so the chrome reflects "a dry-run is on screen"; the
+// operator clears the result explicitly via Clear (clearDryRun) which
+// returns to building/dirty. Behaviour matches setDryRun — kept as a
+// named alias so the dock's pre/post pair reads symmetrically.
+function finishDryRun(result: unknown): void {
+  setDryRun(result);
+}
+
+// failDryRun — record a dry-run error WITHOUT polluting the build-error
+// channel. The header chip stays at building/dirty (the operator's edits
+// aren't broken — the dry-run sample / inline draft is) and the dock
+// renders the message inline. Clearing the dock or running another
+// dry-run wipes it.
+function failDryRun(message: string): void {
+  inner.update((s) => ({
+    ...s,
+    state: s.dirtyCount > 0 ? 'dirty' : 'building',
+    dryRun: null,
+    dockError: message
+  }));
+}
+
+function clearDockError(): void {
+  inner.update((s) => ({ ...s, dockError: null }));
 }
 
 // reset wipes the store. Used by route teardown so a navigation away
@@ -552,6 +601,10 @@ export const studio = {
   clearComparison,
   setDryRun,
   clearDryRun,
+  beginDryRun,
+  finishDryRun,
+  failDryRun,
+  clearDockError,
   // Stage mutations (Task 9) — the canvas + inspector edit the draft
   // through these helpers; the deploy flow (Task 12) round-trips the
   // result to the server.

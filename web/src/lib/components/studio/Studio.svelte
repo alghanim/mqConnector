@@ -21,11 +21,13 @@
 <script lang="ts">
   import { studio, type StudioStateData, type StudioStageType } from '$lib/stores/studio';
   import { locale, t } from '$lib/stores/locale';
+  import type { Stage } from '$lib/api';
   import Card from '$lib/components/Card.svelte';
   import StudioHeader from './StudioHeader.svelte';
   import StudioPalette from './StudioPalette.svelte';
   import StudioCanvas from './StudioCanvas.svelte';
   import StudioInspector from './StudioInspector.svelte';
+  import DryRunDock from './dryrun/DryRunDock.svelte';
 
   export let pipelineId: string;
 
@@ -118,6 +120,31 @@
     const newId = studio.addStage(e.detail);
     studio.selectNode(newId);
   }
+
+  // Task 11 wiring — the inspector re-emits a 'test' CustomEvent on its
+  // <aside> when a per-stage editor's "Test on sample" button fires
+  // (Task 10). The event bubbles up through the DOM, but Svelte's
+  // typed `on:` handlers only know about standard HTMLElement events,
+  // so we attach a manual addEventListener on a wrapper <div> via
+  // bind:this. Studio.svelte bridges to the DryRunDock via a
+  // bind:this reference; the dock exposes runSingleStage() which
+  // builds a single-stage /preview request against the current sample.
+  let dockRef: DryRunDock | null = null;
+  let inspectorSlotEl: HTMLElement | null = null;
+  function handleInspectorTest(e: Event) {
+    const detail = (e as CustomEvent<{ stage: Stage | null; payload: unknown }>).detail;
+    if (!detail || !detail.stage) return;
+    void dockRef?.runSingleStage(detail.stage, detail.payload);
+  }
+  // The aside's `on:test` listener is registered after the element is
+  // bound; we re-register if the element rotates (e.g. error → hydrate
+  // sequence remounts the layout). Cleaned up on destroy.
+  $: if (inspectorSlotEl) {
+    inspectorSlotEl.addEventListener('test', handleInspectorTest as EventListener);
+  }
+  onDestroy(() => {
+    inspectorSlotEl?.removeEventListener('test', handleInspectorTest as EventListener);
+  });
 </script>
 
 {#if s?.state === 'error' && !s.draft}
@@ -168,15 +195,13 @@
         <StudioCanvas />
       </main>
 
-      <aside class="studio-right" aria-label="Studio inspector">
+      <aside class="studio-right" aria-label="Studio inspector" bind:this={inspectorSlotEl}>
         <StudioInspector />
       </aside>
     </div>
 
     <footer class="studio-dock" aria-label="Studio dry-run dock">
-      <Card padding="sm">
-        <p class="studio-stub-label">{t($locale, 'studio.placeholder.dock')}</p>
-      </Card>
+      <DryRunDock bind:this={dockRef} />
     </footer>
   </div>
 {/if}

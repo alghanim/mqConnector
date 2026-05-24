@@ -95,7 +95,8 @@ describe('emptyData', () => {
       dirtyCount: 0,
       selectedNodeId: null,
       comparison: null,
-      dryRun: null
+      dryRun: null,
+      dockError: null
     });
   });
 });
@@ -212,6 +213,39 @@ describe('setDryRun / clearDryRun', () => {
     const s = get(studio);
     expect(s.dryRun).toBe(null);
     expect(s.state).toBe('building');
+  });
+});
+
+// ─── Task 11 — dry-run dock lifecycle mutations ─────────────────────
+//
+// The DryRunDock orchestrates a fetch-then-store sequence: beginDryRun
+// before the network call (flips chrome to 'simulating'), then either
+// finishDryRun(result) on success or failDryRun(message) on error. The
+// failure path keeps the build-error channel clean — `error` stays null
+// and `dockError` carries the message so the dock can surface it inline.
+describe('beginDryRun / finishDryRun / failDryRun', () => {
+  it('beginDryRun flips to simulating and clears prior result + dockError', () => {
+    studio.setDryRun({ ok: true, stages: [] });
+    studio.beginDryRun();
+    const s = get(studio);
+    expect(s.state).toBe('simulating');
+    expect(s.dryRun).toBe(null);
+    expect(s.dockError).toBe(null);
+  });
+
+  it('failDryRun records dockError WITHOUT touching the build-error channel', () => {
+    studio.setState('building');
+    studio.markDirty();
+    studio.beginDryRun();
+    studio.failDryRun('preview: build: filter requires paths');
+    const s = get(studio);
+    // dock-specific error surface
+    expect(s.dockError).toBe('preview: build: filter requires paths');
+    // build-error channel UNCHANGED — the header chip stays at dirty
+    expect(s.error).toBe(null);
+    expect(s.state).toBe('dirty');
+    // and the prior dry-run is wiped (the strip should disappear)
+    expect(s.dryRun).toBe(null);
   });
 });
 
