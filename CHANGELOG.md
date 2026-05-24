@@ -26,6 +26,55 @@ This section accumulates changes between tagged releases. Move entries into a ne
 
 ---
 
+## 1.4.0 — Pipeline Studio (Wave 1) — 2026-05-25
+
+### Added — Operator experience
+
+- **Pipeline Studio** — a new visual pipeline workflow at `/pipelines/{id}/studio`. Replaces forms-first config with a three-pane shell: drag-drop stage palette, SVG canvas (source → stages → destination + routing branches), structured per-stage editors (Filter / Transform / Translate / Route / Script / Validate / WASM) replacing raw-JSON textareas.
+- **Live dry-run dock** — paste a sample message and inspect per-stage outcomes (timing, body, format, error) with click-to-diff between adjacent stages. Hand-rolled LCS diff renders side-by-side with line-level highlights.
+- **Version rail + diff viewer + deploy ceremony** — every save snapshots a `pipeline_revisions` row; explicit "Deploy" dialog shows the diff vs live, captures a change summary, and enforces an optional approver gate. "Rollback to revision N" creates a new revision from the target snapshot and write-throughs transactionally.
+- **CommandPalette Studio entries** — `Deploy`, `Compare to live`, `Discard draft`.
+- **Legacy form view** preserved at `/pipelines/{id}?legacy=1` (one-release safety net); `/pipelines/{id}` now 307-redirects to `/studio`.
+
+### Added — Backend primitives
+
+- **`pipeline_revisions` table** — append-only snapshots (pipeline + stages + transforms + routing rules). Canonical-JSON hash dedup (excludes child IDs and timestamps from the hash projection so identical PUTs collapse). Per-pipeline mutex makes revision-number assignment race-free.
+- **6 new HTTP endpoints**:
+  - `GET /api/v1/pipelines/{id}/revisions` (paginated list)
+  - `GET /api/v1/pipelines/{id}/revisions/current` (latest deployed)
+  - `GET /api/v1/pipelines/{id}/revisions/{rev}` (single)
+  - `GET /api/v1/pipelines/{id}/revisions/{rev}/diff?against={other}` (structured diff with positional child matching)
+  - `POST /api/v1/pipelines/{id}/revisions/{rev}/rollback` (creates new revision from target, transactional write-through, Manager.Reload)
+  - `POST /api/v1/pipelines/{id}/deploy` (promotes existing revision; latent `requires_approval` gate returns 409)
+- **`StageRun` extension** — preview engine now captures per-stage `body`, `format`, `err`; surfaced as `stage_runs[]` on `POST /v1/preview`. Body is `bytes.Clone`d so the dry-run dock can render without read corruption.
+- **Tx-aware repo variants** — `ReplaceForPipelineTx` on stages/transforms/routing rules and `UpdateTx` on pipelines, sharing one `storage.Tx` for atomic deploy/rollback writes.
+- **`Pipeline.RequiresApproval` field** — surfaced on the Go model; column already existed from migration 0022.
+- **`CreateForce`** — bypasses hash dedup for operator-intent inserts (rollback).
+- **Snapshot helper** — async via background goroutine with 5s timeout (replaces the synchronous request-context path), tracked by a `pendingBackgroundOps` WaitGroup so tests can wait deterministically and the shutdown drain blocks for in-flight writes (bounded 5s).
+
+### Added — Hygiene
+
+- **`scripts/check-no-hex.sh`** — brand-token discipline CI lint. Comment-aware, perl-stripping, with an `# check-no-hex: ignore` escape hatch for intentional exceptions (e.g. `<meta name="theme-color">`).
+
+### Deferred to Wave 2
+
+- Proper draft-vs-deploy separation. Today the Studio's Deploy button re-deploys the latest existing revision; legacy PUTs still auto-deploy via the snapshot helper.
+- Tenant-saved samples library in DryRunDock (Wave 1 ships fixtures + paste only).
+- Recent-traffic sample picker tab (Wave 1 omits; requires a Manager ring buffer).
+- PathPicker integration in the wrapped TransformEditor / RouteEditor row UIs (wrappers preserved; row UIs untouched).
+- Approval-required-to-deploy UI (column exists; toggle to flip `requires_approval` is not yet exposed).
+- Deploy button auto-disable when any per-stage editor reports `valid=false` (today: visual `!` indicator in the Inspector, not button-gated; server still rejects).
+
+### Migrations
+
+- Migration 0022 — new `pipeline_revisions` table + `pipelines.requires_approval` column.
+
+### No breaking changes
+
+Existing PUT handlers continue to work; their semantics (save = deploy) are preserved. Legacy `/pipelines/{id}` URL still serves the form view when `?legacy=1` is appended.
+
+---
+
 ## [1.3.0] — 2026-05-24
 
 Operability + compliance release. Ten additive features layered on the 1.2.0 enterprise-hardening base: payload-level PII protection on the DLQ, a destination-side dedup window for non-idempotent downstreams, pluggable key custody (Vault), schema-drift detection earlier than DLQ-depth alarms, per-stage latency observation without a trace backend, CEF for SIEM integrations, tenant-aggregate fairness, broker-side mTLS hot reload, bulk DLQ triage, and shadow-destination canarying for broker migrations. No breaking changes — every new field is default-off and preserves prior behaviour.
