@@ -26,6 +26,49 @@ This section accumulates changes between tagged releases. Move entries into a ne
 
 ---
 
+## 1.5.0 — Live Topology + UX consistency sweep — 2026-05-25
+
+### Added — Operator experience
+
+- **`/topology` — Live Topology & Flow Command Center.** A new top-level operator surface: hand-rolled force-directed SVG graph of every broker + every pipeline running in the tenant. Edges are coloured + stroke-weighted by circuit state and `msg/min`, with marching-ants animation on open circuits (motion-safe). Side detail panel resolves selection to a connection or pipeline card with quick-action links into Studio, the metrics drilldown, and the DLQ filter. Polls every 5s with visibility-aware pause and a stale-data indicator. Sidebar entry `Topology` + CommandPalette nav entry.
+- **Studio elevated** with per-stage type-coloured accents on the palette, hairline brand-gradient strip on the header, broker glyphs on Source/Destination canvas nodes, marching-ants edge flow when dry-running, informative Pipeline Overview empty state in the Inspector (composition counts + last deployed + throughput + quick-add buttons), compact DryRunDock sample chips with a Last-run status line, and a friendlier VersionRail empty state.
+- **Overview dashboard fixed**: pipeline cards now resolve `pipeline_id` UUIDs to names, render broker glyphs on source/destination, and carry a soft shadow + hover lift. Throughput chart got a friendlier empty state.
+- **Metrics page rebuilt**: status dots, name-as-link, broker glyphs in the Flow column, larger status-tinted sparkline, and per-pipeline drilldown panel (inline expand) with throughput chart, latency pills, and three quick-action buttons (Open in Studio, View DLQ, Edit).
+- **Connections list polished**: name is a clickable button that opens the Edit dialog, broker glyphs bumped to 16px, "Test" became a labelled pill, endpoint cells truncate with full-value tooltip.
+- **DLQ page polished**: pipeline names resolved (no more UUIDs in the column or the detail drawer), filter dropdown labels match, relative-time + retry-count badge per row, friendlier empty-state copy, and `?pipeline={id}` query string pre-applies the filter (the Metrics drilldown's "View DLQ" button lands pre-filtered).
+- **Pipelines list**: name is now a clickable link directly to Studio; a labelled `Studio` pill replaces the prior icon-only gear button.
+- **Top-of-app nav** moved from a left sidebar to a horizontal top bar to reclaim full content width (clipped at viewport so the page can never horizontal-scroll).
+
+### Added — Backend primitives
+
+- **`GET /api/v1/topology`** — single aggregator returning connections (with type, topic, depth, connected flag) + pipelines (with status, msg/min, processed, failed, avg latency, DLQ depth, circuit state, shadow + routing destinations) in one snapshot. Best-effort: a failing sub-source (DLQ count, routing rules) logs `slog.Warn` and zero-fills rather than 500'ing.
+- **`Pool.Has(key)` + `Pool.Keys()`** — read-only accessors on the MQ pool so the topology aggregator can determine `connected` without opening a new connection.
+- **`DLQRepo.CountByPipeline(ctx, tenantID)`** — single grouped query (`SELECT pipeline_id, COUNT(*) GROUP BY pipeline_id`) for the topology DLQ depth column.
+- **`Manager.CircuitStateForPipeline(pipelineID)`** — exposes the outbound circuit-breaker state (`closed | open | half-open | unknown`) per pipeline. Wired via a `CircuitStatePublisher` hook the manager sets on each executor; state is cleared in the executor's unwind defer so stopped pipelines report `unknown` instead of stale.
+
+### Added — Frontend primitives
+
+- **`web/src/lib/charts/force.ts`** — ~200-line hand-rolled force-directed layout (repulsion + spring + centering, Euler integration, settles in 30 iterations + ~2s of per-frame refinement, honors `prefers-reduced-motion`).
+- **`web/src/lib/components/charts/TopologyGraph.svelte`** — SVG graph with node drag, edge selection, marker-arrow definitions, dotted/dashed/solid/marching-ants edge styling per circuit state, and a `ResizeObserver` for parent-column resize.
+- **`web/src/lib/stores/catalogue.ts`** — lifted name + connection resolution helpers from the Dashboard + Metrics duplication into a shared module; DLQ + Topology side panel now reuse the same `pipelineLabel` / `endpointFor` / `endpointType` / `endpointName` lookups.
+- **`ConnectionTypeIcon.svelte`** — shared broker glyph component (rabbitmq / kafka / ibm / mqtt / nats / amqp1) used by Studio, Dashboard, Metrics, Connections, DLQ filter, Topology, and the side detail panel.
+
+### Migrations
+
+None. All new functionality is read-only over existing schemas.
+
+### Deferred to Wave 3
+
+- SSE delta channel for circuit-state changes — the `/topology` page polls every 5s instead. Add when topology page performance dictates.
+- Standalone `EdgePulse` / `LiveSankey` chart primitives — the equivalent edge-pulse rendering is inlined into `TopologyGraph` for now; extract into reusable primitives when the dashboard flow strip lands.
+- Overview dashboard flow strip + alert ribbon — defer until SSE delta channel exists so the strip doesn't double-poll.
+
+### No breaking changes
+
+All Wave 1.x routes and contracts continue to work. Two surfaces evolved (Pipelines list link target, Pipeline detail redirect to Studio) but both remain reachable; legacy form view is still gated behind `?legacy=1`.
+
+---
+
 ## 1.4.0 — Pipeline Studio (Wave 1) — 2026-05-25
 
 ### Added — Operator experience
