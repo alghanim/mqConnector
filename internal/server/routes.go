@@ -225,7 +225,13 @@ func (s *Server) routes() http.Handler {
 		r.Route("/api/v1/dlq", func(r chi.Router) {
 			r.Get("/", s.handleListDLQ)
 			r.Get("/groups", s.handleGroupDLQ)
+			// DLQ Intelligence Console (Wave 3 Task 3). Clusters +
+			// payload-diff are viewer-readable; replay-sim is
+			// operator-gated per-pipeline inside the handler.
+			r.Get("/clusters", s.handleListDLQClusters)
 			r.Post("/{id}/retry", s.handleRetryDLQ)
+			r.Post("/{id}/replay-sim", s.handleReplaySimDLQ)
+			r.Get("/{id}/diff", s.handleDiffDLQ)
 			r.Delete("/{id}", s.handleDeleteDLQ)
 			// Raw payload view is admin-only; every successful read
 			// is audited as action=dlq_raw_view (see handler).

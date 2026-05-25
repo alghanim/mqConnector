@@ -393,6 +393,22 @@ components:
         last_retry_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 
+    DLQDiffSide:
+      type: object
+      required: [id, pipeline_id, created_at, error_reason, fingerprint, template, body, format]
+      properties:
+        id:           { type: string, format: uuid }
+        pipeline_id:  { type: string, format: uuid }
+        created_at:   { type: string, format: date-time }
+        error_reason: { type: string }
+        fingerprint:  { type: string }
+        template:     { type: string }
+        body:         { type: string }
+        format:
+          type: string
+          description: Best-effort format guess. One of json | xml | text.
+          enum: [json, xml, text]
+
     DLQRedactionRule:
       type: object
       required: [rule_kind, pattern]
@@ -1300,6 +1316,174 @@ paths:
                 type: object
                 properties:
                   succeeded: { type: integer }
+
+  /api/v1/dlq/clusters:
+    get:
+      summary: Roll up DLQ entries into error-fingerprint clusters.
+      description: |
+        DLQ Intelligence Console rollup. Aggregates the tenant's DLQ
+        entries by `error_fingerprint` (a SimHash over the tokenised
+        error template) and returns the top-N clusters sorted by row
+        count descending. Each cluster carries the canonical template,
+        first/last-seen timestamps, distinct affected pipelines and
+        failing stage names, a representative entry id (oldest in the
+        cluster), and the 5 most-recent entry ids.
+
+        Empty-fingerprint rows (legacy entries written before
+        migration 0023, plus send-side failures with no stage
+        attribution) are excluded — they remain reachable via the
+        regular list endpoint.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: query
+          name: pipeline_id
+          description: Exact pipeline ID match.
+          schema: { type: string, format: uuid }
+        - in: query
+          name: since
+          description: RFC3339 lower bound on created_at.
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          description: Max clusters to return (default 50, hard cap 200).
+          schema: { type: integer, default: 50, maximum: 200 }
+        - in: query
+          name: min_count
+          description: Exclude clusters with fewer than N entries (default 1).
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Ranked clusters.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [generated_at, total, returned, clusters]
+                properties:
+                  generated_at: { type: string, format: date-time }
+                  total:        { type: integer }
+                  returned:     { type: integer }
+                  clusters:
+                    type: array
+                    items:
+                      type: object
+                      required: [fingerprint, template, count, first_seen, last_seen, pipelines_affected, failing_stages, representative_id, recent_ids]
+                      properties:
+                        fingerprint:        { type: string }
+                        template:           { type: string }
+                        count:              { type: integer }
+                        first_seen:         { type: string, format: date-time }
+                        last_seen:          { type: string, format: date-time }
+                        pipelines_affected:
+                          type: array
+                          items: { type: string }
+                        failing_stages:
+                          type: array
+                          items: { type: string }
+                        representative_id:  { type: string }
+                        recent_ids:
+                          type: array
+                          items: { type: string }
+
+  /api/v1/dlq/{id}/replay-sim:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    post:
+      summary: Preview a DLQ retry against the live deployed revision.
+      description: |
+        Operator-only. Re-runs the entry's original payload through the
+        pipeline's currently-deployed revision in preview mode — no
+        broker sends, no DB mutation. Returns the per-stage observation
+        log so the operator can see exactly where the message would
+        fail today (or whether a fix has landed and a retry would now
+        succeed).
+
+        Uses `OriginalMsg` even for redacted rows; admin-only access to
+        the sealed raw payload is a separate endpoint and not part of
+        the simulation path.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Simulation result (would_succeed=false also returns 200).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entry_id, pipeline_id, revision_number, would_succeed, stage_runs]
+                properties:
+                  entry_id:        { type: string }
+                  pipeline_id:     { type: string }
+                  revision_number: { type: integer }
+                  would_succeed:   { type: boolean }
+                  stage_runs:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, duration_ns, failed]
+                      properties:
+                        name:        { type: string }
+                        duration_ns: { type: integer, format: int64 }
+                        failed:      { type: boolean }
+                        body:        { type: string }
+                        format:      { type: string }
+                        err:         { type: string }
+                  final_output:  { type: string }
+                  format:        { type: string }
+                  error:         { type: string }
+                  failing_stage: { type: string }
+        '403':
+          description: Caller lacks operator role on the entry's pipeline.
+        '404':
+          description: DLQ entry not found, or entry carries no pipeline_id.
+        '409':
+          description: Pipeline has no deployed revision; cannot simulate.
+
+  /api/v1/dlq/{id}/diff:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      summary: Side-by-side payload diff between two DLQ entries.
+      description: |
+        Returns the line-level edit script transforming the `{id}`
+        entry's payload into the `against=` entry's payload, along
+        with metadata (pipeline, error_reason, fingerprint, template,
+        format guess) for both sides. The line diff is an ordered
+        flat list of `{op, text}` operations where `op` is one of
+        `eq` | `add` | `del`.
+
+        Passing the same id as `against` is allowed and yields an
+        all-`eq` diff.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: query
+          name: against
+          required: true
+          description: The other DLQ entry id to diff against.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Payload diff.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, diff]
+                properties:
+                  from: { $ref: '#/components/schemas/DLQDiffSide' }
+                  to:   { $ref: '#/components/schemas/DLQDiffSide' }
+                  diff:
+                    type: array
+                    items:
+                      type: object
+                      required: [op, text]
+                      properties:
+                        op:   { type: string, enum: [eq, add, del] }
+                        text: { type: string }
+        '400':
+          description: Missing required `against` query parameter.
+        '404':
+          description: Either DLQ entry not found.
 
   /api/v1/dlq/{id}/raw:
     parameters: [{ $ref: '#/components/parameters/pathID' }]
