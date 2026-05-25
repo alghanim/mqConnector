@@ -28,13 +28,21 @@
     type AuditDiff,
     type AuditEntry,
     type Connection,
-    type ConnectionType,
     type DLQEntry,
     type Health,
     type Pipeline,
     type PipelineMetric
   } from '$lib/api';
+  // Connection is consumed by the catalogue Map<id, Connection> type
+  // below + by ConnectionTypeIcon's prop; keep the import.
   import { locale, t } from '$lib/stores/locale';
+  import {
+    loadCatalogues,
+    pipelineLabel,
+    pipelineLabelOrDeleted,
+    endpointType,
+    endpointName
+  } from '$lib/stores/catalogue';
   import Card from '$lib/components/Card.svelte';
   import Badge from '$lib/components/Badge.svelte';
   import Alert from '$lib/components/Alert.svelte';
@@ -80,96 +88,29 @@
   // Name/broker resolution: the live metrics stream is keyed by
   // pipeline_id only — neither the human name nor source/destination
   // connection metadata is included. We fetch the static catalogues
-  // (pipelines + connections) once at mount and rebuild them when the
-  // operator hits the audit feed entries (a heuristic for "config
-  // changed"). Both fetches are best-effort — if the API call fails
-  // we fall back to the UUID so the dashboard stays usable.
+  // (pipelines + connections) once at mount and rebuild them at the
+  // same cadence as the slow-surface refresh. Helpers live in
+  // $lib/stores/catalogue — same surface used by /metrics and /dlq.
   let pipelineMap = new Map<string, Pipeline>();
   let connectionMap = new Map<string, Connection>();
 
-  // Resolve a pipeline_id → friendly card label. Returns the
-  // pipeline name if known, otherwise a short, recognisable slice
-  // of the UUID prefixed with "id:" so the operator can tell that
-  // resolution failed (rather than wondering whether the pipeline
-  // is literally named after a hash).
-  //
-  // The map arg is passed explicitly so reactive blocks that read
-  // `pipelineMap` thread it through, ensuring Svelte re-renders the
-  // {#each} block when the catalogue settles after the initial paint.
-  // (Plain function calls in a template do NOT subscribe to outer
-  // module-level state; passing the map in is what makes the
-  // dependency tracked.)
-  function pipelineLabel(id: string, map: Map<string, Pipeline>): string {
-    const p = map.get(id);
-    if (p?.name) return p.name;
-    return `id:${id.slice(0, 8)}`;
-  }
-
-  // Resolve pipeline_id → "(deleted)" if absent, else the name.
-  // Used by the DLQ list where a row may outlive its pipeline.
-  function pipelineLabelOrDeleted(id: string | undefined, map: Map<string, Pipeline>): string {
-    if (!id) return '—';
-    const p = map.get(id);
-    if (p?.name) return p.name;
-    return t($locale, 'dash.pipelines.deleted');
+  // Local wrapper so the existing call site keeps a stable name.
+  // pipelineLabelOrDeleted needs the i18n "(deleted)" string and
+  // we don't want the shared helper to know about i18n — bind it here.
+  $: deletedLabel = t($locale, 'dash.pipelines.deleted');
+  function pipelineLabelOrDeletedLocal(
+    id: string | undefined,
+    map: Map<string, Pipeline>
+  ): string {
+    return pipelineLabelOrDeleted(id, map, deletedLabel);
   }
 
   // Best-effort fetch — never throws. Failure leaves the maps empty
   // and the UI degrades to UUIDs.
   async function refreshCatalogues(): Promise<void> {
-    const [pipes, conns] = await Promise.allSettled([
-      api.get<Pipeline[]>('/v1/pipelines').then((v) => v ?? []),
-      api.get<Connection[]>('/v1/connections').then((v) => v ?? [])
-    ]);
-    if (pipes.status === 'fulfilled') {
-      const next = new Map<string, Pipeline>();
-      for (const p of pipes.value) if (p.id) next.set(p.id, p);
-      pipelineMap = next;
-    } else {
-      console.warn('dashboard: failed to load pipelines catalogue', pipes.reason);
-    }
-    if (conns.status === 'fulfilled') {
-      const next = new Map<string, Connection>();
-      for (const c of conns.value) if (c.id) next.set(c.id, c);
-      connectionMap = next;
-    } else {
-      console.warn('dashboard: failed to load connections catalogue', conns.reason);
-    }
-  }
-
-  // Source/destination connection for a pipeline_id. Returns null
-  // when the lookup chain can't be completed — the broker pill then
-  // degrades to the topic/queue fallback already shown today. Both
-  // maps are passed explicitly so Svelte's reactive {#each} re-runs
-  // these on catalogue refresh (see pipelineLabel for context).
-  function endpointFor(
-    pipelineId: string,
-    end: 'source' | 'destination',
-    pMap: Map<string, Pipeline>,
-    cMap: Map<string, Connection>
-  ): Connection | null {
-    const p = pMap.get(pipelineId);
-    if (!p) return null;
-    const connId = end === 'source' ? p.source_id : p.destination_id;
-    if (!connId) return null;
-    return cMap.get(connId) ?? null;
-  }
-
-  function endpointType(
-    pipelineId: string,
-    end: 'source' | 'destination',
-    pMap: Map<string, Pipeline>,
-    cMap: Map<string, Connection>
-  ): ConnectionType | undefined {
-    return endpointFor(pipelineId, end, pMap, cMap)?.type;
-  }
-  function endpointName(
-    pipelineId: string,
-    end: 'source' | 'destination',
-    pMap: Map<string, Pipeline>,
-    cMap: Map<string, Connection>
-  ): string | null {
-    return endpointFor(pipelineId, end, pMap, cMap)?.name ?? null;
+    const c = await loadCatalogues('dashboard');
+    pipelineMap = c.pipelines;
+    connectionMap = c.connections;
   }
 
   // Audit diff drill-down — opens inline below the row. PUT rows are
@@ -821,7 +762,7 @@
           {#each dlqLatest as d (d.id)}
             <li class="dash-dlq-item">
               <div class="dash-dlq-body">
-                <p class="dash-dlq-pipeline">{pipelineLabelOrDeleted(d.pipeline_id, pipelineMap)}</p>
+                <p class="dash-dlq-pipeline">{pipelineLabelOrDeletedLocal(d.pipeline_id, pipelineMap)}</p>
                 <p class="dash-dlq-reason">{d.error_reason}</p>
               </div>
               <time class="dash-event-time" datetime={d.created_at}>{d.created_at}</time>

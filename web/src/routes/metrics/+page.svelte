@@ -24,12 +24,17 @@
   import {
     api,
     type Connection,
-    type ConnectionType,
     type Pipeline,
     type PipelineMetric
   } from '$lib/api';
   import { metrics as liveMetrics } from '$lib/stores/live';
   import { locale, t } from '$lib/stores/locale';
+  import {
+    loadCatalogues,
+    pipelineLabel,
+    endpointType,
+    endpointName
+  } from '$lib/stores/catalogue';
   import Card from '$lib/components/Card.svelte';
   import Alert from '$lib/components/Alert.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
@@ -74,72 +79,14 @@
   let connectionMap = new Map<string, Connection>();
 
   // ── Catalogue refresh ────────────────────────────────────────────
-  // Pulls /api/v1/pipelines + /api/v1/connections in parallel; both
-  // are best-effort. We log to the console on failure rather than
-  // throwing — the dashboard polished commit (8bb6d29) made the
-  // explicit decision that an unreachable catalogue should degrade
-  // to UUIDs, not block the live table.
+  // Pulls /v1/pipelines + /v1/connections in parallel via the shared
+  // catalogue helper; both endpoints are best-effort and failures
+  // degrade the UI to UUIDs / topic strings rather than blocking the
+  // live table. See $lib/stores/catalogue for the helper itself.
   async function refreshCatalogues(): Promise<void> {
-    const [pipes, conns] = await Promise.allSettled([
-      api.get<Pipeline[]>('/v1/pipelines').then((v) => v ?? []),
-      api.get<Connection[]>('/v1/connections').then((v) => v ?? [])
-    ]);
-    if (pipes.status === 'fulfilled') {
-      const next = new Map<string, Pipeline>();
-      for (const p of pipes.value) if (p.id) next.set(p.id, p);
-      pipelineMap = next;
-    } else {
-      console.warn('metrics: failed to load pipelines catalogue', pipes.reason);
-    }
-    if (conns.status === 'fulfilled') {
-      const next = new Map<string, Connection>();
-      for (const c of conns.value) if (c.id) next.set(c.id, c);
-      connectionMap = next;
-    } else {
-      console.warn('metrics: failed to load connections catalogue', conns.reason);
-    }
-  }
-
-  // Resolve pipeline_id → human label. Falls back to a short id slice
-  // so resolution failure is visible without overwhelming the cell.
-  // Maps are passed in explicitly so Svelte's reactive {#each} tracks
-  // them as dependencies (a plain module-level read inside a template
-  // does not subscribe).
-  function pipelineLabel(id: string, map: Map<string, Pipeline>): string {
-    const p = map.get(id);
-    if (p?.name) return p.name;
-    return `id:${id.slice(0, 8)}`;
-  }
-
-  function endpointFor(
-    pipelineId: string,
-    end: 'source' | 'destination',
-    pMap: Map<string, Pipeline>,
-    cMap: Map<string, Connection>
-  ): Connection | null {
-    const p = pMap.get(pipelineId);
-    if (!p) return null;
-    const connId = end === 'source' ? p.source_id : p.destination_id;
-    if (!connId) return null;
-    return cMap.get(connId) ?? null;
-  }
-
-  function endpointType(
-    pipelineId: string,
-    end: 'source' | 'destination',
-    pMap: Map<string, Pipeline>,
-    cMap: Map<string, Connection>
-  ): ConnectionType | undefined {
-    return endpointFor(pipelineId, end, pMap, cMap)?.type;
-  }
-
-  function endpointName(
-    pipelineId: string,
-    end: 'source' | 'destination',
-    pMap: Map<string, Pipeline>,
-    cMap: Map<string, Connection>
-  ): string | null {
-    return endpointFor(pipelineId, end, pMap, cMap)?.name ?? null;
+    const c = await loadCatalogues('metrics');
+    pipelineMap = c.pipelines;
+    connectionMap = c.connections;
   }
 
   type SortKey =
