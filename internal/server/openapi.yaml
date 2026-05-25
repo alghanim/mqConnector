@@ -1352,6 +1352,19 @@ paths:
           name: min_count
           description: Exclude clusters with fewer than N entries (default 1).
           schema: { type: integer, default: 1 }
+        - in: query
+          name: ai
+          description: |
+            Opt-in AI enrichment. When set to `names` AND the AI
+            subsystem is enabled with the `dlq_cluster_naming`
+            capability allowed, each of the first 10 clusters is
+            named/summarised/suggested by the configured LLM
+            provider; the bundle lands in `ai_name` with
+            `ai_source="ai"`. On any provider failure the cluster
+            gets `ai_source="deterministic"` and the UI renders the
+            template as the title. Absent / AI disabled: the
+            `ai_name` and `ai_source` fields are omitted.
+          schema: { type: string, enum: [names] }
       responses:
         '200':
           description: Ranked clusters.
@@ -1385,6 +1398,28 @@ paths:
                         recent_ids:
                           type: array
                           items: { type: string }
+                        ai_name:
+                          description: |
+                            LLM-generated cluster name + summary +
+                            next-action suggestion. Present only
+                            when `?ai=names` was requested and the
+                            provider returned successfully.
+                          type: object
+                          required: [title, summary, suggestion]
+                          properties:
+                            title:      { type: string, maxLength: 80 }
+                            summary:    { type: string, maxLength: 240 }
+                            suggestion: { type: string, maxLength: 200 }
+                        ai_source:
+                          description: |
+                            Source of the cluster's name surface.
+                            `"ai"` when the LLM answered;
+                            `"deterministic"` when the provider
+                            failed and the UI should render the
+                            template as the title. Absent when
+                            `?ai=names` was not requested.
+                          type: string
+                          enum: [ai, deterministic]
 
   /api/v1/dlq/{id}/replay-sim:
     parameters: [{ $ref: '#/components/parameters/pathID' }]

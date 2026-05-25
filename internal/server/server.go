@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/tetratelabs/wazero"
 
+	"mqConnector/internal/ai"
 	"mqConnector/internal/auth"
 	"mqConnector/internal/config"
 	"mqConnector/internal/dlq"
@@ -34,26 +35,40 @@ import (
 
 // Server is the wired HTTP layer.
 type Server struct {
-	cfg              config.Config
-	logger           *slog.Logger
-	httpSrv          *http.Server
-	auth             *auth.Service
-	store            *storage.Store
-	pool             *mq.Pool
-	metrics          *metrics.Store
-	dlq              *dlq.Service
-	pipeline         *pipeline.Manager
-	health           *health.Checker
-	leadership       *leadership.Lease // nil when not enabled
-	sealer           *secrets.Service  // nil when MQC_MASTER_KEY is unset
-	loginLimiter     *loginLimiter
-	tenantLimiter    *tenantLimiter
-	sensitiveLimiter *sensitiveLimiter
-	accountLockout   *accountLockout
-	tlsReloader      *certReloader
-	wasmRuntime      wazero.Runtime
-	stopGC           chan struct{}
-	stopGCOnce       sync.Once
+	cfg        config.Config
+	logger     *slog.Logger
+	httpSrv    *http.Server
+	auth       *auth.Service
+	store      *storage.Store
+	pool       *mq.Pool
+	metrics    *metrics.Store
+	dlq        *dlq.Service
+	pipeline   *pipeline.Manager
+	health     *health.Checker
+	leadership *leadership.Lease // nil when not enabled
+	sealer     *secrets.Service  // nil when MQC_MASTER_KEY is unset
+	// AI provider (Wave 3 Task 4). When AI is disabled / endpoint
+	// empty, aiProvider is the no-op sentinel that returns
+	// ErrAINotAvailable; aiAudit is the noop logger; aiCfg.Enabled
+	// is false. Handlers branch on aiCfg.Allows(...) before any
+	// provider call.
+	aiProvider ai.LLMProvider
+	aiAudit    ai.AuditLogger
+	aiCounter  *ai.CallCounter
+	aiCfg      ai.Config
+	// aiClusterNameCache memoises DLQ-cluster naming results by
+	// fingerprint to bound LLM cost on UI re-renders. Entry TTL is
+	// 60s; eviction is per-read (no background goroutine).
+	aiClusterNameMu    sync.Mutex
+	aiClusterNameCache map[string]aiClusterNameCacheEntry
+	loginLimiter       *loginLimiter
+	tenantLimiter      *tenantLimiter
+	sensitiveLimiter   *sensitiveLimiter
+	accountLockout     *accountLockout
+	tlsReloader        *certReloader
+	wasmRuntime        wazero.Runtime
+	stopGC             chan struct{}
+	stopGCOnce         sync.Once
 	// pendingBackgroundOps tracks fire-and-forget goroutines spawned
 	// off the request path (currently the snapshot helper) so tests
 	// can deterministically wait for them to drain and so graceful
@@ -108,12 +123,35 @@ type Deps struct {
 	Leadership *leadership.Lease // optional — nil when leadership is disabled
 	Sealer     *secrets.Service  // optional — nil disables /secrets/rotate
 	Logger     *slog.Logger
+	// AI integration (Wave 3 Task 4). All three are optional: a nil
+	// AIProvider falls back to ai.NewNoopProvider() and a nil
+	// AIAudit falls back to ai.NoopAuditLogger{}, so handlers can
+	// assume non-nil fields without a guard. AIConfig.Enabled=false
+	// keeps everything off regardless of provider type.
+	AIProvider ai.LLMProvider
+	AIAudit    ai.AuditLogger
+	AICounter  *ai.CallCounter
+	AIConfig   ai.Config
 }
 
 // New constructs a Server. Run blocks until Shutdown is called.
 func New(cfg config.Config, deps Deps) (*Server, error) {
 	if deps.Logger == nil {
 		deps.Logger = slog.Default()
+	}
+	// AI defaults: nil provider / audit fall back to noop sentinels
+	// so handlers never have to nil-check. The Allows() gate on
+	// AIConfig is the source of truth — handlers MUST consult it
+	// before invoking the provider; the noop sentinel is a defence
+	// in depth.
+	if deps.AIProvider == nil {
+		deps.AIProvider = ai.NewNoopProvider()
+	}
+	if deps.AIAudit == nil {
+		deps.AIAudit = ai.NoopAuditLogger{}
+	}
+	if deps.AICounter == nil {
+		deps.AICounter = ai.NewCallCounter()
 	}
 	s := &Server{
 		cfg:              cfg,
@@ -127,6 +165,10 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		health:           deps.Health,
 		leadership:       deps.Leadership,
 		sealer:           deps.Sealer,
+		aiProvider:       deps.AIProvider,
+		aiAudit:          deps.AIAudit,
+		aiCounter:        deps.AICounter,
+		aiCfg:            deps.AIConfig,
 		loginLimiter:     newLoginLimiter(10, time.Minute),
 		tenantLimiter:    newTenantLimiter(120, time.Minute, tenantOverrideFromStore(deps.Store)),
 		sensitiveLimiter: newSensitiveLimiter(6, time.Minute),

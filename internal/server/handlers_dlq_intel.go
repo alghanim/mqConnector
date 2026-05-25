@@ -11,7 +11,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"mqConnector/internal/ai"
 	"mqConnector/internal/auth"
+	"mqConnector/internal/dlq/cluster"
 	"mqConnector/internal/pipeline"
 	"mqConnector/internal/storage"
 )
@@ -37,6 +39,21 @@ const (
 	dlqClustersDefaultLimit = 50
 	dlqClustersMaxLimit     = 200
 	dlqClusterRecentIDLimit = 5
+	// dlqClusterAINameMax bounds the number of clusters per request
+	// for which we'll call the LLM. Caps the cost of a single
+	// /clusters?ai=names render against a huge tenant. Operators can
+	// page through additional clusters; the first AI-named page is
+	// the one that catches the eye anyway.
+	dlqClusterAINameMax = 10
+	// dlqClusterAINameSampleErrors is the per-cluster sample-error
+	// budget passed to the LLM. 3 is enough for the model to
+	// triangulate without bloating the prompt.
+	dlqClusterAINameSampleErrors = 3
+	// dlqClusterAINameTTL is the in-memory cache lifetime for an
+	// AI-generated cluster name. 60s avoids re-billing the LLM on
+	// fast UI re-renders while letting a fingerprint that's been
+	// invalidated (cluster collapsed / split) refresh within a minute.
+	dlqClusterAINameTTL = 60 * time.Second
 )
 
 // dlqCluster is one fingerprint-bucket row of the rollup response. See
@@ -52,6 +69,27 @@ type dlqCluster struct {
 	FailingStages     []string  `json:"failing_stages"`
 	RepresentativeID  string    `json:"representative_id"`
 	RecentIDs         []string  `json:"recent_ids"`
+	// AIName is the LLM-generated title/summary/suggestion bundle.
+	// Populated only when ?ai=names is requested AND the AI
+	// subsystem is enabled with CapDLQClusterNaming in the
+	// allowlist. omitempty keeps the wire shape backward-compatible
+	// for legacy clients that don't request the AI surface.
+	AIName *cluster.NameResult `json:"ai_name,omitempty"`
+	// AISource records what surface produced the name: "ai" when
+	// the LLM answered, "deterministic" when the call failed and we
+	// fell back to the template-derived title, "" when ?ai=names
+	// was absent or AI is disabled.
+	AISource string `json:"ai_source,omitempty"`
+}
+
+// aiClusterNameCacheEntry is one bucket of the in-memory ai-name
+// cache. Stored on the Server struct (see server.go aiClusterNameCache).
+// The cache key is the cluster fingerprint; the entry's expiry is the
+// wall clock at which it should be evicted on the next read.
+type aiClusterNameCacheEntry struct {
+	result cluster.NameResult
+	source string // "ai" | "deterministic"
+	expiry time.Time
 }
 
 // clustersResponse is the wire envelope for GET /api/v1/dlq/clusters.
@@ -134,12 +172,152 @@ func (s *Server) handleListDLQClusters(w http.ResponseWriter, r *http.Request) {
 		clusters = append(clusters, c)
 	}
 
+	// Optional AI naming. Opt-in via ?ai=names; gated on the
+	// AI subsystem being enabled with CapDLQClusterNaming in the
+	// allowlist. Bounded to dlqClusterAINameMax clusters per
+	// request so the worst-case LLM cost of a single render is
+	// predictable. Per-cluster failures degrade to AISource=
+	// "deterministic" + AIName nil so the UI can still render the
+	// template as the title.
+	if strings.EqualFold(q.Get("ai"), "names") && s.aiCfg.Allows(ai.CapDLQClusterNaming) {
+		s.attachAINames(r.Context(), tenant, clusters)
+	}
+
 	writeJSON(w, http.StatusOK, clustersResponse{
 		GeneratedAt: time.Now().UTC(),
 		Total:       len(clusters),
 		Returned:    len(clusters),
 		Clusters:    clusters,
 	})
+}
+
+// attachAINames mutates clusters in place, attempting AI naming for
+// the first dlqClusterAINameMax entries. Failures are logged WARN +
+// the cluster gets AISource="deterministic" so the UI can render the
+// template as the title (no naked nil propagation).
+//
+// The function is intentionally best-effort: a slow LLM endpoint or a
+// hard error on a few clusters must never tank the whole response.
+// Cluster-naming is enriched metadata, not load-bearing.
+func (s *Server) attachAINames(ctx context.Context, tenant string, clusters []dlqCluster) {
+	max := dlqClusterAINameMax
+	if len(clusters) < max {
+		max = len(clusters)
+	}
+	for i := 0; i < max; i++ {
+		c := &clusters[i]
+		// Cache hit short-circuit. The cache key is the fingerprint
+		// alone — for a given fingerprint the cluster shape is
+		// stable across renders, and the cluster's count / pipelines
+		// don't materially change the model's named output (the
+		// model leans on the template).
+		if cached, ok := s.aiClusterNameCacheGet(c.Fingerprint); ok {
+			res := cached.result
+			c.AIName = &res
+			c.AISource = cached.source
+			continue
+		}
+		sampleErrors, err := s.collectClusterSampleErrors(ctx, tenant, c.Fingerprint)
+		if err != nil {
+			s.logger.Warn("ai cluster naming: sample-error fetch failed",
+				"fingerprint", c.Fingerprint, "err", err)
+			c.AISource = "deterministic"
+			continue
+		}
+		req := cluster.NameRequest{
+			Fingerprint:       c.Fingerprint,
+			Template:          c.Template,
+			Count:             c.Count,
+			PipelinesAffected: c.PipelinesAffected,
+			FailingStages:     c.FailingStages,
+			SampleErrors:      sampleErrors,
+		}
+		// Stamp caller + tenant onto the ctx so the audit row
+		// records them. The auth middleware already populated user
+		// sub on r.Context(); we re-stamp it onto the AI sub-ctx
+		// via the package's keys.
+		var callerSub string
+		if u, ok := auth.UserFromContext(ctx); ok && u != nil {
+			callerSub = u.Sub
+		}
+		aiCtx := ai.WithTenant(ai.WithCaller(ctx, callerSub), tenant)
+		res, err := cluster.Name(aiCtx, s.aiProvider, s.aiAudit, s.aiCfg, req)
+		if err != nil {
+			// Provider already emitted the audit row + metrics
+			// counter. Slog the operator-visible warning and fall
+			// back. Don't propagate — the UI gets the template.
+			s.logger.Warn("ai cluster naming: provider failed; falling back to deterministic",
+				"fingerprint", c.Fingerprint, "err", err)
+			c.AISource = "deterministic"
+			// Cache the deterministic outcome briefly so a thundering
+			// herd of UI re-renders doesn't repeatedly hammer a flaky
+			// endpoint. Short-circuit the same way on the next hit.
+			s.aiClusterNameCachePut(c.Fingerprint, cluster.NameResult{}, "deterministic")
+			continue
+		}
+		c.AIName = &res
+		c.AISource = "ai"
+		s.aiClusterNameCachePut(c.Fingerprint, res, "ai")
+	}
+}
+
+// collectClusterSampleErrors pulls 1-N representative full error
+// strings for the cluster so the LLM has concrete text to lean on.
+// Uses the existing ClusterRecentIDs helper + per-row Get so we
+// don't grow the DLQRepo surface for one feature. Bounded to keep
+// the prompt size predictable.
+func (s *Server) collectClusterSampleErrors(ctx context.Context, tenant, fingerprint string) ([]string, error) {
+	ids, err := s.store.DLQ.ClusterRecentIDs(ctx, tenant, fingerprint, dlqClusterAINameSampleErrors)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		entry, err := s.store.DLQ.Get(ctx, tenant, id)
+		if err != nil {
+			// Skip individual fetch failures; the LLM can still
+			// reason from a subset.
+			continue
+		}
+		out = append(out, entry.ErrorReason)
+	}
+	return out, nil
+}
+
+// aiClusterNameCacheGet returns the cached entry for fingerprint, or
+// (zero, false) when none / expired. Evicts on read for the expired
+// case so the cache doesn't grow unbounded after stale fingerprints
+// stop being touched.
+func (s *Server) aiClusterNameCacheGet(fingerprint string) (aiClusterNameCacheEntry, bool) {
+	s.aiClusterNameMu.Lock()
+	defer s.aiClusterNameMu.Unlock()
+	if s.aiClusterNameCache == nil {
+		return aiClusterNameCacheEntry{}, false
+	}
+	e, ok := s.aiClusterNameCache[fingerprint]
+	if !ok {
+		return aiClusterNameCacheEntry{}, false
+	}
+	if time.Now().After(e.expiry) {
+		delete(s.aiClusterNameCache, fingerprint)
+		return aiClusterNameCacheEntry{}, false
+	}
+	return e, true
+}
+
+// aiClusterNameCachePut writes one entry with a dlqClusterAINameTTL
+// expiry.
+func (s *Server) aiClusterNameCachePut(fingerprint string, result cluster.NameResult, source string) {
+	s.aiClusterNameMu.Lock()
+	defer s.aiClusterNameMu.Unlock()
+	if s.aiClusterNameCache == nil {
+		s.aiClusterNameCache = make(map[string]aiClusterNameCacheEntry, 16)
+	}
+	s.aiClusterNameCache[fingerprint] = aiClusterNameCacheEntry{
+		result: result,
+		source: source,
+		expiry: time.Now().Add(dlqClusterAINameTTL),
+	}
 }
 
 // fillClusterDetails runs the three per-cluster follow-up queries via

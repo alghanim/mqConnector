@@ -29,6 +29,12 @@ func (s *Server) handleMetricsPrometheus(w http.ResponseWriter, r *http.Request)
 	var b strings.Builder
 	b.WriteString(s.metrics.Prometheus())
 	s.writeOperationalMetrics(&b, r)
+	// AI counter — emitted unconditionally so the series is
+	// discoverable even when no calls have been made (the
+	// renderer outputs HELP + TYPE lines either way).
+	if s.aiCounter != nil {
+		b.WriteString(s.aiCounter.Prometheus())
+	}
 	_, _ = w.Write([]byte(b.String()))
 }
 
