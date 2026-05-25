@@ -45,9 +45,8 @@
   import { api, type ApiError } from '$lib/api';
   import { locale, t } from '$lib/stores/locale';
   import Badge from '$lib/components/Badge.svelte';
-  import EmptyState from '$lib/components/EmptyState.svelte';
   import VirtualTable from '$lib/components/VirtualTable.svelte';
-  import { MoreVertical, ChevronDown, ChevronRight, GitCompare } from 'lucide-svelte';
+  import { MoreVertical, ChevronDown, ChevronRight, GitCompare, History } from 'lucide-svelte';
 
   const STORAGE_KEY = 'mqc.studio.versionrail.collapsed';
   // Cutover for virtual rendering. Matches the editor's other heuristics
@@ -282,11 +281,17 @@
       {/if}
 
       {#if revisions.length === 0}
-        <EmptyState
-          illustration="pipelines"
-          title={t($locale, 'studio.versions.empty.title')}
-          body={t($locale, 'studio.versions.empty.body')}
-        />
+        <!-- Empty state — replaces the previous generic illustration +
+             floating placeholder dots with a focused History icon, a
+             one-line headline, and concrete next-step copy that names
+             the Deploy button. -->
+        <div class="rail-empty">
+          <span class="rail-empty-icon" aria-hidden="true">
+            <History size={22} />
+          </span>
+          <p class="rail-empty-title">{t($locale, 'studio.versions.empty.title')}</p>
+          <p class="rail-empty-body">{t($locale, 'studio.versions.empty.body')}</p>
+        </div>
       {:else if useVirtual}
         <div class="rail-virtual">
           <VirtualTable
@@ -682,5 +687,42 @@
   }
   .row-menu button:hover {
     background: var(--surface-2);
+  }
+
+  /* Empty state for the rail. Replaces the generic illustration with a
+     compact icon + headline + helper so the operator immediately knows
+     what to do (deploy). Sized to fit inside the rail's max-block-size
+     without scrolling. */
+  .rail-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.375rem;
+    padding-block: 1rem;
+    padding-inline: 0.75rem;
+    text-align: center;
+  }
+  .rail-empty-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 36px;
+    block-size: 36px;
+    border-radius: 999px;
+    background: var(--primary-container);
+    color: var(--on-primary-container);
+  }
+  .rail-empty-title {
+    margin: 0;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .rail-empty-body {
+    margin: 0;
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+    max-inline-size: 18rem;
   }
 </style>
