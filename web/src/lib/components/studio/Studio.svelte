@@ -22,7 +22,8 @@
   import { studio, type StudioStateData, type StudioStageType } from '$lib/stores/studio';
   import { locale, t } from '$lib/stores/locale';
   import { toasts } from '$lib/stores/toasts';
-  import type { Stage } from '$lib/api';
+  import { api, type Stage, type Connection, type ConnectionType } from '$lib/api';
+  import { metrics as liveMetrics, dlqTotal as liveDlqTotal } from '$lib/stores/live';
   import Card from '$lib/components/Card.svelte';
   import StudioHeader from './StudioHeader.svelte';
   import StudioPalette from './StudioPalette.svelte';
@@ -126,6 +127,64 @@
   $: deployedRevNum = s?.deployedRev?.revision_number ?? null;
   $: comparisonFrom = s?.comparison?.from ?? null;
   $: comparisonTo = s?.comparison?.to ?? null;
+
+  // Header summary inputs — the connection map is fetched once per
+  // mount; live metrics come from the shared SSE store so we don't pay
+  // for a per-pipeline poll on top of the dashboard's. Both are
+  // optional — the header degrades to fewer pills if either is missing.
+  let connectionMap = new Map<string, Connection>();
+  void (async () => {
+    try {
+      const list = (await api.get<Connection[]>('/v1/connections')) ?? [];
+      connectionMap = new Map(list.filter((c) => !!c.id).map((c) => [c.id as string, c]));
+    } catch {
+      /* non-fatal — header just shows fewer pills */
+    }
+  })();
+  $: sourceConn = (() => {
+    const id = s?.draft?.pipeline?.source_id;
+    if (!id) return null;
+    return connectionMap.get(id) ?? null;
+  })();
+  $: destConn = (() => {
+    const id = s?.draft?.pipeline?.destination_id;
+    if (!id) return null;
+    return connectionMap.get(id) ?? null;
+  })();
+  $: headerSourceName = sourceConn?.name ?? null;
+  $: headerSourceType = (sourceConn?.type ?? null) as ConnectionType | null;
+  $: headerDestName = destConn?.name ?? null;
+  $: headerDestType = (destConn?.type ?? null) as ConnectionType | null;
+
+  // Pull this pipeline's live counters out of the shared SSE snapshot.
+  // The snapshot is null until SSE delivers the first frame, which the
+  // header handles by simply not rendering the pills (degrade
+  // gracefully). msg/min is a synthesised value — the back-end gives
+  // us cumulative `messages_processed`, but for "right now" we only
+  // need a recent rate; SystemPulse does the same trick.
+  let lastMsgCount = 0;
+  let lastMsgAt = 0;
+  let throughputPerMin: number | null = null;
+  let failedTotal: number | null = null;
+  $: if ($liveMetrics) {
+    const pm = $liveMetrics.pipelines.find((p) => p.pipeline_id === pipelineId);
+    if (pm) {
+      failedTotal = pm.messages_failed;
+      const now = $liveMetrics.receivedAt;
+      if (lastMsgAt && now > lastMsgAt) {
+        const dt = (now - lastMsgAt) / 1000;
+        const dn = Math.max(0, pm.messages_processed - lastMsgCount);
+        if (dt > 0) throughputPerMin = Math.round((dn / dt) * 60);
+      }
+      lastMsgCount = pm.messages_processed;
+      lastMsgAt = now;
+    }
+  }
+  // DLQ — global counter for now; the header treats >0 as a real
+  // signal. A per-pipeline DLQ count would need a fresh endpoint that
+  // doesn't exist yet, so we degrade gracefully and show the global
+  // figure with the "DLQ" label.
+  $: headerDlq = $liveDlqTotal > 0 ? $liveDlqTotal : null;
 
   function onEnableToggle(e: CustomEvent<boolean>) {
     if (!s?.draft?.pipeline) return;
@@ -252,6 +311,13 @@
       deployedRev={deployedRevNum}
       {comparisonFrom}
       {comparisonTo}
+      sourceName={headerSourceName}
+      sourceType={headerSourceType}
+      destName={headerDestName}
+      destType={headerDestType}
+      {throughputPerMin}
+      {failedTotal}
+      dlqTotal={headerDlq}
       on:validate={onValidate}
       on:deploy={onDeploy}
       on:toggle-enabled={onEnableToggle}
