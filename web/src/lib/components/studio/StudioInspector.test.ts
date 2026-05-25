@@ -70,13 +70,18 @@ afterEach(() => {
 });
 
 describe('StudioInspector', () => {
-  it('renders the empty state when nothing is selected', () => {
+  it('renders the pipeline-overview block when nothing is selected', () => {
     primeStore([]);
     const { container, getByText } = render(StudioInspector);
-    // EmptyState renders our title verbatim.
-    expect(getByText(/Nothing selected/i)).toBeInTheDocument();
-    // Stage card markers are absent.
+    // The new overview block replaces the bare empty state. The heading
+    // is rendered verbatim from the i18n catalogue.
+    expect(getByText(/Pipeline overview/i)).toBeInTheDocument();
+    // Stage card markers are absent (the inspector's stage-detail block
+    // only appears when a stage node is selected).
     expect(container.querySelector('.studio-inspector-meta')).toBeNull();
+    // Quick-add buttons are part of the overview — pin one as a smoke
+    // test so a future refactor that removes them breaks the contract.
+    expect(getByText(/Add filter/i)).toBeInTheDocument();
   });
 
   it('renders the stage card when a stage is selected', async () => {

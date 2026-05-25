@@ -29,19 +29,23 @@
 -->
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
-  import { studio, type StudioStateData } from '$lib/stores/studio';
+  import { studio, type StudioStateData, type StudioStageType } from '$lib/stores/studio';
   import {
     api,
     type Connection,
     type Schema,
     type Transform,
-    type RoutingRule
+    type RoutingRule,
+    type ConnectionType
   } from '$lib/api';
+  import { metrics as liveMetrics } from '$lib/stores/live';
   import { locale, t } from '$lib/stores/locale';
   import Card from '$lib/components/Card.svelte';
   import Button from '$lib/components/Button.svelte';
   import Switch from '$lib/components/Switch.svelte';
-  import EmptyState from '$lib/components/EmptyState.svelte';
+  import Sparkline from '$lib/components/Sparkline.svelte';
+  import ConnectionTypeIcon from '$lib/components/ConnectionTypeIcon.svelte';
+  import { ArrowRight } from 'lucide-svelte';
   import FilterEditor from './editors/FilterEditor.svelte';
   import TransformEditor from './editors/TransformEditor.svelte';
   import TranslateEditor from './editors/TranslateEditor.svelte';
@@ -222,15 +226,181 @@
   function queueLine(c: Connection): string {
     return c.queue_name || c.topic || c.stream_name || '';
   }
+
+  // ─── Overview derivations (rendered when nothing is selected) ─────
+  //
+  // The inspector's old empty state was a one-liner; the new layout
+  // doubles as a Pipeline Overview so the right pane carries useful
+  // signal even when the operator hasn't clicked anything. The data
+  // comes from the studio draft (counts) and from the shared SSE
+  // store (throughput). Every value degrades gracefully when missing.
+  $: pipeline = s?.draft?.pipeline ?? null;
+  $: pipelineId = pipeline?.id ?? null;
+  $: srcConn = pipeline?.source_id
+    ? connections.find((c) => c.id === pipeline?.source_id) ?? null
+    : null;
+  $: dstConn = pipeline?.destination_id
+    ? connections.find((c) => c.id === pipeline?.destination_id) ?? null
+    : null;
+  $: stageCount = s?.draft?.stages.length ?? 0;
+  $: transformCount = s?.draft?.transforms.length ?? 0;
+  $: routeCount = s?.draft?.routingRules.length ?? 0;
+  $: filterCount = s?.draft?.stages.filter((st) => st.stage_type === 'filter').length ?? 0;
+
+  // Sliding throughput window — 12 samples ~= last minute at the 5s
+  // poll interval used elsewhere in the app. We track the cumulative
+  // processed counter and store deltas so the sparkline reads as a
+  // rate, not a monotonic line.
+  let throughputSamples: number[] = [];
+  let lastProcessed = 0;
+  let lastSampleAt = 0;
+  let throughputPerMin = 0;
+  $: if ($liveMetrics && pipelineId) {
+    const pm = $liveMetrics.pipelines.find((p) => p.pipeline_id === pipelineId);
+    if (pm) {
+      const now = $liveMetrics.receivedAt;
+      if (lastSampleAt > 0 && now > lastSampleAt) {
+        const dt = (now - lastSampleAt) / 1000;
+        const dn = Math.max(0, pm.messages_processed - lastProcessed);
+        const perMin = dt > 0 ? Math.round((dn / dt) * 60) : 0;
+        throughputPerMin = perMin;
+        throughputSamples = [...throughputSamples.slice(-11), perMin];
+      }
+      lastProcessed = pm.messages_processed;
+      lastSampleAt = now;
+    }
+  }
+
+  // Last-deployed metadata. The studio store exposes deployedRev as
+  // the revision currently running upstream; latestRev is the most
+  // recent revision (possibly newer if a deploy is queued). We show
+  // deployedRev's metadata since that's "what's live".
+  $: deployedRev = s?.deployedRev ?? null;
+  function relativeTimeShort(iso: string | undefined | null): string {
+    if (!iso) return '';
+    const then = new Date(iso).getTime();
+    if (Number.isNaN(then)) return iso ?? '';
+    const diff = Math.max(0, Date.now() - then);
+    const sec = Math.floor(diff / 1000);
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 48) return `${hr}h ago`;
+    const day = Math.floor(hr / 24);
+    return `${day}d ago`;
+  }
+
+  function quickAdd(type: StudioStageType) {
+    const id = studio.addStage(type);
+    studio.selectNode(id);
+  }
 </script>
 
 <aside class="studio-inspector" aria-label="Inspector" bind:this={asideEl}>
   {#if selectionKind === 'none'}
-    <EmptyState
-      illustration="metrics"
-      title={t($locale, 'studio.inspector.empty.title')}
-      body={t($locale, 'studio.inspector.empty.body')}
-    />
+    <!-- Pipeline overview — renders when the operator hasn't selected
+         anything. Gives the right pane a job to do at rest instead of
+         the previous "Nothing selected" empty state. -->
+    <Card padding="md">
+      <header class="studio-inspector-head">
+        <h3 class="studio-inspector-h">{t($locale, 'studio.inspector.overview.heading')}</h3>
+      </header>
+
+      <div class="studio-overview-block">
+        <span class="studio-overview-label">{t($locale, 'studio.inspector.overview.flow')}</span>
+        <div class="studio-overview-flow">
+          <span class="studio-flow-chip" data-end="source">
+            <ConnectionTypeIcon type={(srcConn?.type ?? undefined) as ConnectionType | undefined} size={12} />
+            <span class="studio-flow-chip-name" title={srcConn?.name ?? ''}>
+              {srcConn?.name ?? t($locale, 'studio.inspector.overview.noSource')}
+            </span>
+          </span>
+          <span class="studio-flow-arrow" aria-hidden="true"><ArrowRight size={12} /></span>
+          <span class="studio-flow-chip" data-end="destination">
+            <ConnectionTypeIcon type={(dstConn?.type ?? undefined) as ConnectionType | undefined} size={12} />
+            <span class="studio-flow-chip-name" title={dstConn?.name ?? ''}>
+              {dstConn?.name ?? t($locale, 'studio.inspector.overview.noDestination')}
+            </span>
+          </span>
+        </div>
+      </div>
+
+      <div class="studio-overview-block">
+        <span class="studio-overview-label">{t($locale, 'studio.inspector.overview.composition')}</span>
+        <dl class="studio-overview-stats">
+          <div class="studio-overview-stat">
+            <dt>{t($locale, 'studio.inspector.overview.count.stages')}</dt>
+            <dd>{stageCount}</dd>
+          </div>
+          <div class="studio-overview-stat">
+            <dt>{t($locale, 'studio.inspector.overview.count.transforms')}</dt>
+            <dd>{transformCount}</dd>
+          </div>
+          <div class="studio-overview-stat">
+            <dt>{t($locale, 'studio.inspector.overview.count.routes')}</dt>
+            <dd>{routeCount}</dd>
+          </div>
+          <div class="studio-overview-stat">
+            <dt>{t($locale, 'studio.inspector.overview.count.filters')}</dt>
+            <dd>{filterCount}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="studio-overview-block">
+        <span class="studio-overview-label">{t($locale, 'studio.inspector.overview.deployed')}</span>
+        {#if deployedRev}
+          <div class="studio-overview-deployed">
+            <span class="studio-overview-rev">#{deployedRev.revision_number}</span>
+            <span class="studio-overview-dot" aria-hidden="true">·</span>
+            <span class="studio-overview-when">{relativeTimeShort(deployedRev.created_at)}</span>
+            {#if deployedRev.author_username || deployedRev.author_sub}
+              <span class="studio-overview-dot" aria-hidden="true">·</span>
+              <span class="studio-overview-who">{deployedRev.author_username ?? deployedRev.author_sub}</span>
+            {/if}
+          </div>
+        {:else}
+          <p class="studio-overview-muted">{t($locale, 'studio.inspector.overview.deployed.none')}</p>
+        {/if}
+      </div>
+
+      <div class="studio-overview-block">
+        <span class="studio-overview-label">{t($locale, 'studio.inspector.overview.throughput')}</span>
+        <div class="studio-overview-throughput">
+          <Sparkline
+            data={throughputSamples}
+            width={180}
+            height={28}
+            variant="primary"
+            label={`Throughput sparkline, ${throughputPerMin} msg/min`}
+          />
+          <div class="studio-overview-throughput-meta">
+            <span class="studio-overview-throughput-value">{throughputPerMin}</span>
+            <span class="studio-overview-throughput-caption">
+              {t($locale, 'studio.inspector.overview.throughput.caption')}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="studio-overview-divider" aria-hidden="true"></div>
+
+      <div class="studio-overview-block">
+        <span class="studio-overview-label">{t($locale, 'studio.inspector.overview.quickAdd')}</span>
+        <div class="studio-overview-quickadd">
+          <button type="button" class="studio-overview-add" data-tone="filter" on:click={() => quickAdd('filter')}>
+            + {t($locale, 'studio.inspector.overview.addFilter')}
+          </button>
+          <button type="button" class="studio-overview-add" data-tone="transform" on:click={() => quickAdd('transform')}>
+            + {t($locale, 'studio.inspector.overview.addTransform')}
+          </button>
+          <button type="button" class="studio-overview-add" data-tone="script" on:click={() => quickAdd('script')}>
+            + {t($locale, 'studio.inspector.overview.addScript')}
+          </button>
+        </div>
+      </div>
+    </Card>
   {:else if selectedConnection}
     <Card padding="md">
       <header class="studio-inspector-head">
@@ -408,5 +578,190 @@
   }
   .studio-inspector-valid-bad {
     color: var(--danger);
+  }
+
+  /* ─── Overview (empty-selection) block ───────────────────────────
+     Renders only when nothing is selected; sits inside the same
+     <Card> so spacing stays consistent with the stage / connection
+     branches. Sections use a tracked uppercase label + a compact
+     content area. */
+  .studio-overview-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding-block: 0.5rem;
+  }
+  .studio-overview-block:first-of-type {
+    padding-block-start: 0;
+  }
+  .studio-overview-label {
+    font-size: 0.625rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+  }
+  .studio-overview-flow {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    min-inline-size: 0;
+  }
+  .studio-flow-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding-block: 0.125rem;
+    padding-inline: 0.375rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    max-inline-size: 9rem;
+    min-inline-size: 0;
+    font-size: 0.75rem;
+  }
+  .studio-flow-chip[data-end='source'],
+  .studio-flow-chip[data-end='destination'] {
+    color: var(--primary);
+  }
+  .studio-flow-chip-name {
+    color: var(--text);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-inline-size: 0;
+  }
+  .studio-flow-arrow {
+    color: var(--text-tertiary);
+    display: inline-flex;
+  }
+  :global([dir='rtl']) .studio-inspector .studio-flow-arrow {
+    transform: scaleX(-1);
+  }
+
+  .studio-overview-stats {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.375rem 0.5rem;
+  }
+  .studio-overview-stat {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding-block: 0.125rem;
+    padding-inline: 0.375rem;
+    background: var(--surface-2);
+    border-radius: 6px;
+    min-inline-size: 0;
+  }
+  .studio-overview-stat dt {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    margin: 0;
+  }
+  .studio-overview-stat dd {
+    margin: 0;
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .studio-overview-deployed {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+  .studio-overview-rev {
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-weight: 700;
+    color: var(--primary);
+  }
+  .studio-overview-dot {
+    color: var(--text-tertiary);
+  }
+  .studio-overview-who {
+    color: var(--text);
+  }
+  .studio-overview-muted {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-style: italic;
+  }
+
+  .studio-overview-throughput {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-inline-size: 0;
+  }
+  .studio-overview-throughput-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-inline-size: 0;
+  }
+  .studio-overview-throughput-value {
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .studio-overview-throughput-caption {
+    font-size: 0.625rem;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .studio-overview-divider {
+    block-size: 1px;
+    background: var(--divider);
+    margin-block: 0.25rem;
+  }
+
+  .studio-overview-quickadd {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .studio-overview-add {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.375rem;
+    padding-block: 0.375rem;
+    padding-inline: 0.5rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-align: start;
+    cursor: pointer;
+    transition: border-color 120ms, background 120ms, transform 120ms;
+    --stage-tone: var(--primary);
+  }
+  .studio-overview-add[data-tone='filter']    { --stage-tone: var(--info); }
+  .studio-overview-add[data-tone='transform'] { --stage-tone: var(--primary); }
+  .studio-overview-add[data-tone='script']    { --stage-tone: var(--warning); }
+  .studio-overview-add:hover,
+  .studio-overview-add:focus-visible {
+    border-color: var(--stage-tone);
+    color: var(--stage-tone);
+    background: var(--surface-high);
+    outline: none;
   }
 </style>
