@@ -25,6 +25,7 @@
     Plug,
     Workflow,
     GitFork,
+    Network,
     AlertOctagon,
     Activity,
     Users2,
@@ -67,6 +68,7 @@
 
   $: navItems = [
     { id: 'nav.overview', label: t($locale, 'nav.overview'), icon: LayoutDashboard, action: () => goto('/') },
+    { id: 'nav.topology', label: t($locale, 'nav.topology'), icon: Network, action: () => goto('/topology') },
     { id: 'nav.metrics', label: t($locale, 'nav.metrics'), icon: Activity, action: () => goto('/metrics') },
     {
       id: 'nav.dlq',
