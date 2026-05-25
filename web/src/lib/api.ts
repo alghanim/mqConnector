@@ -263,6 +263,122 @@ export interface DLQEntry {
   created_at: string;
 }
 
+// ─── DLQ Intelligence (Wave 3) ───────────────────────────────────
+//
+// Wave 3 backend (T1-T4) added a cluster surface on top of the flat
+// DLQ list: failures get fingerprinted into recurring patterns so
+// operators can triage by pattern, not by row.
+
+/**
+ * AINameResult mirrors `internal/dlq/cluster.NameResult` — the LLM
+ * (or deterministic fallback) output for a cluster's human-friendly
+ * title + 2-sentence summary + 1-sentence next-action suggestion.
+ *
+ * Field lengths are server-enforced (≤80/240/200 chars) but the UI
+ * doesn't depend on them — caps are defensive on render, not on parse.
+ */
+export interface AINameResult {
+  title: string;
+  summary: string;
+  suggestion: string;
+}
+
+/**
+ * DLQCluster is one entry in the `clusters[]` array of
+ * GET /api/v1/dlq/clusters. Each cluster groups DLQ entries that
+ * share the same error-text fingerprint.
+ *
+ * `ai_name` is present only when the request was made with
+ * `?ai=names`; `ai_source` then tells the UI whether the title came
+ * from the LLM ("ai") or the deterministic backstop ("deterministic").
+ * We badge AI-sourced names so an operator knows the difference.
+ */
+export interface DLQCluster {
+  fingerprint: string;
+  template: string;
+  count: number;
+  first_seen: string;
+  last_seen: string;
+  pipelines_affected: string[];
+  failing_stages: string[];
+  representative_id: string;
+  recent_ids: string[];
+  ai_name?: AINameResult;
+  ai_source?: 'ai' | 'deterministic';
+}
+
+export interface DLQClustersResponse {
+  generated_at: string;
+  total: number;
+  returned: number;
+  clusters: DLQCluster[];
+}
+
+/**
+ * DLQReplaySimStageRun mirrors `replaySimStageRunJSON` on the server —
+ * shape identical to the Studio DryRun StageRun so we can reuse the
+ * same visual treatment for stage outcomes.
+ */
+export interface DLQReplaySimStageRun {
+  name: string;
+  duration_ns: number;
+  failed: boolean;
+  body?: string;
+  format?: string;
+  err?: string;
+}
+
+/**
+ * DLQReplaySimResponse is the wire envelope for
+ * POST /api/v1/dlq/{id}/replay-sim. `would_succeed` is the headline
+ * the UI surfaces in a confidence pill; `stage_runs` populates the
+ * outcome strip; `failing_stage` (when set) tells the operator
+ * exactly where the replay would die again.
+ */
+export interface DLQReplaySimResponse {
+  entry_id: string;
+  pipeline_id: string;
+  revision_number: number;
+  would_succeed: boolean;
+  stage_runs: DLQReplaySimStageRun[];
+  final_output?: string;
+  format?: string;
+  error?: string;
+  failing_stage?: string;
+}
+
+/**
+ * DLQDiffSide is the per-side metadata on the diff response — enough
+ * for the action drawer to render the row header without a separate
+ * /dlq/{id} fetch for the compare-to partner.
+ */
+export interface DLQDiffSide {
+  id: string;
+  pipeline_id: string;
+  created_at: string;
+  error_reason: string;
+  fingerprint: string;
+  template: string;
+  body: string;
+  format: string;
+}
+
+/**
+ * DLQDiffLineOp — one operation in the server-computed line diff.
+ * `op` is one of `eq` | `add` | `del`; the PayloadDiff chart primitive
+ * renders these directly without a client-side LCS pass.
+ */
+export interface DLQDiffLineOp {
+  op: 'eq' | 'add' | 'del';
+  text: string;
+}
+
+export interface DLQDiffResponse {
+  from: DLQDiffSide;
+  to: DLQDiffSide;
+  diff: DLQDiffLineOp[];
+}
+
 export interface PipelineMetric {
   pipeline_id: string;
   source_queue: string;
