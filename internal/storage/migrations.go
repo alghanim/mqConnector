@@ -723,6 +723,46 @@ var migrations = []string{
 
 	ALTER TABLE pipelines ADD COLUMN requires_approval BOOLEAN NOT NULL DEFAULT 0;
 	`,
+	// 0023 — DLQ Intelligence: clustering columns.
+	//
+	// Wave 3 surfaces DLQ rows as a sorted-by-impact list of error
+	// clusters rather than a flat stream. The fingerprint + template
+	// pair is computed once at insert time by internal/dlq/cluster
+	// and persisted alongside the row so cluster-rollup queries are
+	// cheap indexed GROUP BYs instead of a per-row regex pass.
+	//
+	// error_fingerprint  — 16-char hex SimHash over the tokenised
+	//                      template. Stable across minor variation
+	//                      (different UUIDs / timestamps / ids
+	//                      collapse to the same bucket).
+	// error_template     — human-readable error with variable parts
+	//                      replaced by <PATH>/<INT>/<UUID>/etc.
+	//                      placeholders. Shown in the cluster
+	//                      panel header.
+	// failing_stage_name — stage type ("validate", "transform", …)
+	//                      that emitted the failure. Empty for the
+	//                      send-side failure path that has no stage
+	//                      attribution.
+	// failing_stage_index— position in the stage list where the
+	//                      failure happened. 0 when not attributed.
+	//
+	// Both indexes are tenant-scoped: every list query the cluster
+	// console issues filters by tenant_id first, and the secondary
+	// key (fingerprint / stage name) narrows from there. Defaults
+	// keep existing rows valid — the cluster console treats empty
+	// fingerprint rows as "unclustered" and surfaces them in a
+	// dedicated bucket.
+	`
+	ALTER TABLE dlq ADD COLUMN error_fingerprint   TEXT NOT NULL DEFAULT '';
+	ALTER TABLE dlq ADD COLUMN error_template      TEXT NOT NULL DEFAULT '';
+	ALTER TABLE dlq ADD COLUMN failing_stage_name  TEXT NOT NULL DEFAULT '';
+	ALTER TABLE dlq ADD COLUMN failing_stage_index INTEGER NOT NULL DEFAULT 0;
+
+	CREATE INDEX IF NOT EXISTS idx_dlq_fingerprint
+	  ON dlq(tenant_id, error_fingerprint);
+	CREATE INDEX IF NOT EXISTS idx_dlq_failing_stage
+	  ON dlq(tenant_id, failing_stage_name);
+	`,
 }
 
 // postgresMigrationOverrides supersedes specific entries in `migrations`
@@ -877,7 +917,7 @@ func migrate(db *sql.DB, dialect Dialect) error {
 // don't translate without help:
 //
 //   - INSERT OR IGNORE INTO X ... VALUES (...);
-//       → INSERT INTO X ... VALUES (...) ON CONFLICT DO NOTHING;
+//     → INSERT INTO X ... VALUES (...) ON CONFLICT DO NOTHING;
 //   - BLOB → bytea (postgres binary column type)
 //   - DATETIME → TIMESTAMP (canonical postgres name; pgx round-trip
 //     of time.Time works cleanly through TIMESTAMP)

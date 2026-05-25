@@ -37,10 +37,12 @@ func (r *DLQRepo) Insert(ctx context.Context, tenantID string, e *DLQEntry) erro
 	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO dlq (id, tenant_id, pipeline_id, source_queue, original_msg, raw_msg, redacted,
-		                 error_reason, retry_count, created_at, next_retry_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                 error_reason, retry_count, created_at, next_retry_at,
+		                 error_fingerprint, error_template, failing_stage_name, failing_stage_index)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, tenantID, nullable(e.PipelineID), e.SourceQueue, e.OriginalMsg, rawMsg, e.Redacted,
-		e.ErrorReason, e.RetryCount, e.CreatedAt, nextRetry)
+		e.ErrorReason, e.RetryCount, e.CreatedAt, nextRetry,
+		e.ErrorFingerprint, e.ErrorTemplate, e.FailingStageName, e.FailingStageIndex)
 	if err != nil {
 		return fmt.Errorf("insert dlq: %w", err)
 	}
@@ -507,7 +509,8 @@ func (r *DLQRepo) ScheduleRetry(ctx context.Context, tenantID, id string, next *
 
 const dlqSelect = `
 SELECT id, tenant_id, COALESCE(pipeline_id, ''), source_queue, original_msg, raw_msg, redacted,
-       error_reason, retry_count, last_retry_at, next_retry_at, created_at
+       error_reason, retry_count, last_retry_at, next_retry_at, created_at,
+       error_fingerprint, error_template, failing_stage_name, failing_stage_index
 FROM dlq`
 
 func scanDLQ(s scanner) (*DLQEntry, error) {
@@ -515,7 +518,8 @@ func scanDLQ(s scanner) (*DLQEntry, error) {
 	var lastRetry, nextRetry sql.NullTime
 	err := s.Scan(&e.ID, &e.TenantID, &e.PipelineID, &e.SourceQueue, &e.OriginalMsg,
 		&e.RawMsg, &e.Redacted,
-		&e.ErrorReason, &e.RetryCount, &lastRetry, &nextRetry, &e.CreatedAt)
+		&e.ErrorReason, &e.RetryCount, &lastRetry, &nextRetry, &e.CreatedAt,
+		&e.ErrorFingerprint, &e.ErrorTemplate, &e.FailingStageName, &e.FailingStageIndex)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
