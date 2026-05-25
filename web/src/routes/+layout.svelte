@@ -564,15 +564,20 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    min-inline-size: 12rem;
-    padding: 0.375rem;
-    background: var(--surface);
-    border: 1px solid var(--border);
+    min-inline-size: 13rem;
+    padding: 0.5rem;
+    background: var(--surface-high);
+    border: 1px solid var(--border-strong);
     border-radius: 0.75rem;
-    box-shadow: 0 8px 28px -8px rgba(0, 0, 0, 0.28);
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.18),
+      0 12px 32px -10px rgba(0, 0, 0, 0.42);
   }
   :global([data-theme='light']) .nav-menu {
-    box-shadow: 0 8px 28px -8px rgba(51, 63, 72, 0.18);
+    background: var(--surface);
+    box-shadow:
+      0 1px 2px rgba(51, 63, 72, 0.10),
+      0 12px 32px -10px rgba(51, 63, 72, 0.22);
   }
   .nav-menu-item {
     display: inline-flex;
