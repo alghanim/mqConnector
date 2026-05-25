@@ -15,8 +15,14 @@
 -->
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
-  import { api, type DLQEntry } from '$lib/api';
+  import { page } from '$app/stores';
+  import { api, type Connection, type DLQEntry, type Pipeline } from '$lib/api';
   import { locale, t } from '$lib/stores/locale';
+  import {
+    loadCatalogues,
+    pipelineLabel,
+    pipelineLabelOrDeleted
+  } from '$lib/stores/catalogue';
   import Card from '$lib/components/Card.svelte';
   import Button from '$lib/components/Button.svelte';
   import Badge from '$lib/components/Badge.svelte';
@@ -27,7 +33,7 @@
   import PageHeader from '$lib/components/PageHeader.svelte';
   import StatChip from '$lib/components/StatChip.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { RotateCw, Plus } from 'lucide-svelte';
+  import { RotateCw, RefreshCw } from 'lucide-svelte';
 
   // ─── List state ─────────────────────────────────────────────────
   let entries: DLQEntry[] = [];
@@ -40,6 +46,58 @@
   const perPage = 500;
   let error = '';
   let busy = false;
+
+  // ─── Catalogues for friendly-name resolution ─────────────────────
+  // DLQ rows are keyed by pipeline_id (UUID) only. We fetch the
+  // pipelines + connections catalogues best-effort on mount and on
+  // each refresh so the table + filter dropdown + detail drawer all
+  // render the human name. A row whose pipeline has been deleted
+  // resolves to a "(deleted)" placeholder; total fetch failure
+  // degrades silently to id:<short>.
+  let pipelineMap = new Map<string, Pipeline>();
+  let connectionMap = new Map<string, Connection>();
+  $: deletedLabel = t($locale, 'dash.pipelines.deleted');
+  async function refreshCatalogues(): Promise<void> {
+    const c = await loadCatalogues('dlq');
+    pipelineMap = c.pipelines;
+    // connectionMap is reserved for a future broker-glyph column;
+    // we already pay the round trip, no need to discard the result.
+    connectionMap = c.connections;
+  }
+
+  // Relative-time formatter — "2 minutes ago" / "in 3 seconds".
+  // Hand-rolled (not Intl.RelativeTimeFormat) so the strings come
+  // from our i18n table and stay terse. Returns '' for unparseable
+  // input so the caller can fall back to the absolute timestamp.
+  function formatRelative(ts: string | undefined, lc: 'en' | 'ar'): string {
+    if (!ts) return '';
+    const at = Date.parse(ts);
+    if (Number.isNaN(at)) return '';
+    const diff = (Date.now() - at) / 1000; // seconds, +past / -future
+    const abs = Math.abs(diff);
+    const past = diff >= 0;
+    type Unit = 'second' | 'minute' | 'hour' | 'day';
+    let value: number;
+    let unit: Unit;
+    if (abs < 60) {
+      value = Math.max(1, Math.round(abs));
+      unit = 'second';
+    } else if (abs < 3600) {
+      value = Math.round(abs / 60);
+      unit = 'minute';
+    } else if (abs < 86_400) {
+      value = Math.round(abs / 3600);
+      unit = 'hour';
+    } else {
+      value = Math.round(abs / 86_400);
+      unit = 'day';
+    }
+    const key = `time.${unit}${value === 1 ? '' : 's'}`;
+    const unitLabel = t(lc, key);
+    return past
+      ? t(lc, 'time.ago').replace('{n}', String(value)).replace('{unit}', unitLabel)
+      : t(lc, 'time.in').replace('{n}', String(value)).replace('{unit}', unitLabel);
+  }
 
   async function refresh() {
     busy = true;
@@ -81,19 +139,46 @@
     return new Date(Date.now() - ms).toISOString();
   }
 
-  onMount(refresh);
-
   // ─── Filters (client-side) ──────────────────────────────────────
+  // filterPipeline can be pre-applied from the URL query string —
+  // /dlq?pipeline=<id> is the link target the /metrics drilldown
+  // panel emits when an operator clicks "View DLQ" on a row. We
+  // capture it in onMount before the first refresh so the server
+  // call already carries the filter (saves one round trip and avoids
+  // a flash of unfiltered rows).
   let filterPipeline = '';
   let filterError = '';
   let filterWindow: 'all' | '1h' | '24h' | '7d' = 'all';
 
+  onMount(async () => {
+    const fromQuery = $page.url.searchParams.get('pipeline');
+    if (fromQuery) filterPipeline = fromQuery;
+    // Kick off catalogue load alongside the first list fetch so the
+    // pipeline column resolves to names as soon as possible.
+    void refreshCatalogues();
+    await refresh();
+  });
+
   $: pipelineOptions = (() => {
-    const set = new Set<string>();
-    for (const e of entries) if (e.pipeline_id) set.add(e.pipeline_id);
-    const opts = Array.from(set)
-      .sort()
-      .map((id) => ({ value: id, label: id }));
+    // Build options from the set of pipeline_ids actually present in
+    // the current page of results. Labels resolve through the
+    // catalogue map so the dropdown shows friendly names rather than
+    // raw UUIDs; we keep the option `value` as the UUID because the
+    // server filter / URL query string still keys on id.
+    const seen = new Set<string>();
+    for (const e of entries) if (e.pipeline_id) seen.add(e.pipeline_id);
+    // Include the URL-supplied filter even if no row matches yet
+    // (the drilldown filter survives an empty page).
+    if (filterPipeline) seen.add(filterPipeline);
+    const opts = Array.from(seen)
+      .map((id) => ({
+        value: id,
+        // pipelineLabel handles the missing-from-catalogue case by
+        // returning id:<short>; sort by label so the dropdown stays
+        // alphabetical from the operator's point of view.
+        label: pipelineLabel(id, pipelineMap)
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
     return [{ value: '', label: t($locale, 'dlq.filter.allPipelines') }, ...opts];
   })();
   $: windowOptions = [
@@ -561,11 +646,25 @@
 
   <Card>
     {#if entries.length === 0}
+      <!--
+        Empty-state copy was deliberately tightened in this pass:
+        "your pipelines are processing cleanly" reads as a positive
+        confirmation rather than "the queue is empty" (which sounds
+        like something is broken). The helper slot points at /metrics
+        for per-pipeline health so an operator who lands here looking
+        for trouble still has somewhere to drill.
+      -->
       <EmptyState
         illustration="dlq"
         title={t($locale, 'empty.dlq.title')}
         body={t($locale, 'empty.dlq.body')}
-      />
+      >
+        <svelte:fragment slot="helper">
+          <a class="dlq-empty-link" href="/metrics">
+            {t($locale, 'empty.dlq.subtitle')}
+          </a>
+        </svelte:fragment>
+      </EmptyState>
     {:else if filtered.length === 0}
       <p style="color: var(--text-muted)">{t($locale, 'dlq.emptyFiltered')}</p>
     {:else}
@@ -596,6 +695,8 @@
         </thead>
         <tbody>
           {#each filtered as e (e.id)}
+            {@const pipeName = pipelineLabelOrDeleted(e.pipeline_id, pipelineMap, deletedLabel)}
+            {@const relWhen = formatRelative(e.created_at, $locale)}
             <tr class:dlq-selected={selected.has(e.id)} aria-selected={selected.has(e.id)}>
               <td class="dlq-checkbox-cell">
                 <input
@@ -609,28 +710,52 @@
               <!--
                 Single row-trigger button: it owns the row's "open detail"
                 affordance for both mouse and keyboard. Its accessible
-                name folds in pipeline + reason so a screen-reader user
-                hears the row context in one announcement instead of
-                tabbing through three redundant buttons.
+                name folds in pipeline name + reason so a screen-reader
+                user hears the row context in one announcement instead
+                of tabbing through three redundant buttons.
+
+                Display: the absolute timestamp is the title attribute
+                so a hover reveals exact precision while the visible
+                line shows the friendlier "2 minutes ago" form. Both
+                are kept in the <time datetime=...> for screen readers.
               -->
               <td style="color: var(--text-muted)">
                 <button
                   class="dlq-row-button"
                   type="button"
                   on:click={() => openDetail(e)}
-                  aria-label="{t($locale, 'dlq.detail.viewRow')} — {e.pipeline_id ||
-                    '—'}, {e.created_at}, {e.error_reason}"
+                  aria-label="{t($locale, 'dlq.detail.viewRow')} — {pipeName}, {e.created_at}, {e.error_reason}"
                 >
-                  <time datetime={e.created_at}>{e.created_at}</time>
+                  <time datetime={e.created_at} title={e.created_at}>
+                    {#if relWhen}
+                      <span class="dlq-when-rel">{relWhen}</span>
+                      <span class="dlq-when-abs">{e.created_at}</span>
+                    {:else}
+                      <span>{e.created_at}</span>
+                    {/if}
+                  </time>
                 </button>
               </td>
-              <td style="color: var(--text)">{e.pipeline_id || '—'}</td>
+              <td style="color: var(--text)" title={e.pipeline_id ?? ''}>{pipeName}</td>
               <td style="color: var(--text-muted)">{e.source_queue || '—'}</td>
               <td style="color: var(--text)">{e.error_reason}</td>
               <td>
-                <Badge variant={e.retry_count > 0 ? 'warning' : 'neutral'}>
-                  {e.retry_count}
-                </Badge>
+                <!--
+                  Retry pill: when the row has been retried at least
+                  once, render a small badge with the count + a refresh
+                  glyph so the operator can spot retry-heavy rows at
+                  a glance. The backend MaxRetries is configured
+                  globally (server side), so there's no per-entry
+                  denominator to render — "Retry 2" reads honestly.
+                -->
+                {#if e.retry_count > 0}
+                  <span class="dlq-retry-pill" title={e.last_retry_at ?? ''}>
+                    <RefreshCw size={11} aria-hidden="true" />
+                    {t($locale, 'dlq.row.retryBadge').replace('{n}', String(e.retry_count))}
+                  </span>
+                {:else}
+                  <Badge variant="neutral">0</Badge>
+                {/if}
               </td>
               <td>
                 <div class="flex gap-2 justify-end">
@@ -739,10 +864,19 @@
     aria-labelledby="dlq-detail-title"
   >
     <div class="dlq-drawer-head">
+      <!--
+        Drawer title shows the human pipeline name; the source queue
+        becomes the subtitle. Raw pipeline UUID moves into the meta
+        block below where copy-by-id is the explicit affordance.
+      -->
       <div>
         <p id="dlq-detail-title" class="section-heading">{t($locale, 'dlq.detail.title')}</p>
-        <p class="text-xs mt-1" style="color: var(--text-muted)">
-          {viewing.pipeline_id || '—'} · {viewing.source_queue || '—'}
+        <p class="dlq-drawer-subtitle">
+          <span class="dlq-drawer-pipe" title={viewing.pipeline_id ?? ''}>
+            {pipelineLabelOrDeleted(viewing.pipeline_id, pipelineMap, deletedLabel)}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span class="dlq-drawer-queue">{viewing.source_queue || '—'}</span>
         </p>
       </div>
       <Button variant="ghost" on:click={closeDetail}>
@@ -997,6 +1131,67 @@
     text-underline-offset: 3px;
   }
 
+  /* ─── "when" cell — relative time + absolute timestamp ────────
+     Layout: the relative form is the headline ("2 minutes ago"),
+     with the absolute timestamp tucked underneath in monospace
+     muted text. The full title= attribute on the <time> still
+     reveals exact ISO on hover for power users.
+
+     Slight font shift: relative uses the row body face for
+     scannability; absolute switches to monospace so timestamps
+     vertically align across rows even when they straddle a
+     digit-width boundary. */
+  .dlq-when-rel {
+    display: block;
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.2;
+  }
+  .dlq-when-abs {
+    display: block;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    line-height: 1.2;
+    margin-block-start: 2px;
+  }
+
+  /* ─── retry pill ────────────────────────────────────────────
+     Labelled chip ("Retry 2") with a small refresh glyph. Soft
+     warning tint matches the existing failure-rate pills on the
+     /metrics page so retry-heavy rows read the same on both
+     surfaces. */
+  .dlq-retry-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding-block: 2px;
+    padding-inline: 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--warning) 14%, transparent);
+    color: var(--warning);
+    border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+
+  /* ─── empty-state subtitle link ────────────────────────────
+     Sits in the EmptyState helper slot. Underline-on-hover only
+     so the resting state stays soft — the eye should land on the
+     headline first, then drift to the link. */
+  .dlq-empty-link {
+    color: var(--text-muted);
+    text-decoration: none;
+    border-block-end: 1px solid transparent;
+    transition: color 120ms ease, border-color 120ms ease;
+  }
+  .dlq-empty-link:hover,
+  .dlq-empty-link:focus-visible {
+    color: var(--text);
+    border-block-end-color: var(--border-strong, var(--border));
+  }
+
   /* ─── Detail drawer ─────────────────────────────────────────── */
   .dlq-scrim {
     position: fixed;
@@ -1024,6 +1219,29 @@
     gap: 12px;
     padding: 16px 20px;
     border-bottom: 1px solid var(--border);
+  }
+  /* Drawer subtitle: pipeline name first (carries the eye), then
+     a dot separator, then the source queue in monospace. */
+  .dlq-drawer-subtitle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-block-start: 4px;
+    margin-block-end: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+  .dlq-drawer-pipe {
+    color: var(--text);
+    font-weight: 500;
+    max-inline-size: 16rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dlq-drawer-queue {
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 11px;
   }
   .dlq-drawer-body {
     flex: 1;

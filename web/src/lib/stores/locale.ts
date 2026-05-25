@@ -243,8 +243,8 @@ const strings: Record<Locale, Record<string, string>> = {
     'empty.connections.body': 'A connection points at one broker — IBM MQ, RabbitMQ, or Kafka. You need at least two: a source and a destination.',
     'empty.pipelines.title': 'Build a pipeline',
     'empty.pipelines.body': 'A pipeline reads from one connection, runs your stages, and writes to another. Connect two endpoints to begin.',
-    'empty.dlq.title': 'Dead-letter queue is empty',
-    'empty.dlq.body': 'Failed messages land here. When you see entries, click one to inspect the original payload and decide whether to retry or drop it.',
+    'empty.dlq.title': 'No failed messages — your pipelines are processing cleanly',
+    'empty.dlq.body': 'Messages that fail to process land here. When one arrives, click it to inspect the original payload and decide whether to retry or drop it.',
     'empty.metrics.title': 'No pipelines running yet',
     'empty.metrics.body': "Throughput, latency, and DLQ rates will appear here once a pipeline starts processing messages.",
     'empty.tenants.title': 'No tenants yet',
@@ -869,7 +869,31 @@ const strings: Record<Locale, Record<string, string>> = {
     'dash.pulse.delta.up': 'up from previous window',
     'dash.pulse.delta.down': 'down from previous window',
     'dash.pulse.delta.steady': 'unchanged from previous window',
-    'dash.pipelines.open': 'Open in metrics'
+    'dash.pipelines.open': 'Open in metrics',
+
+    // Relative-time formatter — used by /dlq and any other surface
+    // that wants "2 minutes ago" alongside an absolute timestamp.
+    // {n} / {unit} are simple string substitutions; the unit comes
+    // from one of the time.* singular/plural keys below.
+    'time.ago': '{n} {unit} ago',
+    'time.in': 'in {n} {unit}',
+    'time.second': 'second',
+    'time.seconds': 'seconds',
+    'time.minute': 'minute',
+    'time.minutes': 'minutes',
+    'time.hour': 'hour',
+    'time.hours': 'hours',
+    'time.day': 'day',
+    'time.days': 'days',
+
+    // DLQ — empty-state tightening + per-row retry pill
+    'empty.dlq.subtitle': 'Drill into /metrics for per-pipeline health.',
+    'dlq.row.retryBadge': 'Retry {n}',
+
+    // Connections — first-run empty-state CTA. The page-header
+    // "Add connection" button is for routine use; this is the
+    // friendlier "you have zero, start here" prompt.
+    'empty.connections.cta': 'Add your first connection'
   },
   ar: {
     'app.title': 'موصل قوائم الرسائل',
@@ -1096,7 +1120,7 @@ const strings: Record<Locale, Record<string, string>> = {
     'empty.connections.body': 'الاتصال يشير إلى وسيط واحد — IBM MQ أو RabbitMQ أو Kafka. تحتاج إلى اثنين على الأقل: مصدر ووجهة.',
     'empty.pipelines.title': 'أنشئ تدفّقاً',
     'empty.pipelines.body': 'يقرأ التدفّق من اتصال، ويمرّر الرسالة عبر مراحل، ثم يكتب إلى اتصال آخر. ابدأ بربط نقطتين.',
-    'empty.dlq.title': 'قائمة الرسائل الفاشلة فارغة',
+    'empty.dlq.title': 'لا توجد رسائل فاشلة — تدفّقاتك تعمل بسلاسة',
     'empty.dlq.body': 'الرسائل التي تفشل معالجتها تظهر هنا. عند ظهور رسالة، اضغطها لمعاينة الحمولة الأصلية وقرّر بين إعادة المحاولة أو الحذف.',
     'empty.metrics.title': 'لا توجد تدفّقات نشطة',
     'empty.metrics.body': 'ستظهر المعدّلات والمتوسطات هنا فور بدء معالجة الرسائل في أحد التدفّقات.',
@@ -1711,7 +1735,26 @@ const strings: Record<Locale, Record<string, string>> = {
     'dash.pulse.delta.up': 'أعلى من النافذة السابقة',
     'dash.pulse.delta.down': 'أقل من النافذة السابقة',
     'dash.pulse.delta.steady': 'دون تغيّر عن النافذة السابقة',
-    'dash.pipelines.open': 'فتح في المقاييس'
+    'dash.pipelines.open': 'فتح في المقاييس',
+
+    // Relative-time formatter — Arabic
+    'time.ago': 'قبل {n} {unit}',
+    'time.in': 'بعد {n} {unit}',
+    'time.second': 'ثانية',
+    'time.seconds': 'ثوانٍ',
+    'time.minute': 'دقيقة',
+    'time.minutes': 'دقائق',
+    'time.hour': 'ساعة',
+    'time.hours': 'ساعات',
+    'time.day': 'يوم',
+    'time.days': 'أيام',
+
+    // DLQ — empty-state tightening + per-row retry pill
+    'empty.dlq.subtitle': 'اطّلع على القياسات لمعرفة صحة كل تدفّق.',
+    'dlq.row.retryBadge': 'محاولة {n}',
+
+    // Connections — first-run empty-state CTA
+    'empty.connections.cta': 'أضف أول اتصال'
   }
 };
 
