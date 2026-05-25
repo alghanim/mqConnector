@@ -414,3 +414,48 @@ export interface ConfigImportResult {
   pipelines: number;
   dry_run?: boolean;
 }
+
+// ─── topology ────────────────────────────────────────────────────
+// Aggregator shape returned by GET /api/v1/topology. The Live
+// Topology page renders one node per `connections[]` entry and one
+// edge per `pipelines[]` entry — see TopologyGraph.svelte for the
+// rendering pipeline + circuit-state colour mapping.
+
+export type CircuitState = 'closed' | 'open' | 'half-open' | 'unknown';
+
+export interface TopologyConnection {
+  id: string;
+  name: string;
+  type: ConnectionType;
+  topic?: string;
+  // Backend omits depth when the connector can't sample it. Treat
+  // null/undefined as "unknown", not zero.
+  depth?: number | null;
+  connected: boolean;
+}
+
+export interface TopologyPipeline {
+  id: string;
+  name: string;
+  source_id: string;
+  destination_id: string;
+  enabled: boolean;
+  msg_per_min: number;
+  processed: number;
+  failed: number;
+  avg_latency_ms: number;
+  dlq_depth: number;
+  circuit_state: CircuitState;
+  shadow_destination_id?: string;
+  shadow_percent?: number;
+  route_destination_ids?: string[];
+  status: 'connected' | 'error' | 'disabled' | 'idle' | string;
+  last_error?: string;
+}
+
+export interface TopologyResponse {
+  generated_at: string;
+  tenant_id: string;
+  connections: TopologyConnection[];
+  pipelines: TopologyPipeline[];
+}

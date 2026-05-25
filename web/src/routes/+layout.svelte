@@ -55,6 +55,7 @@
     Plug,
     Workflow,
     GitFork,
+    Network,
     AlertOctagon,
     Activity,
     Users2,
@@ -64,8 +65,7 @@
     HelpCircle,
     LifeBuoy,
     Search,
-    BellDot,
-    KeyRound
+    BellDot
   } from 'lucide-svelte';
 
   let dlqCount = 0;
@@ -170,6 +170,7 @@
       label: t($locale, 'nav.section.operations'),
       items: [
         { href: '/', label: t($locale, 'nav.overview'), icon: LayoutDashboard },
+        { href: '/topology', label: t($locale, 'nav.topology'), icon: Network },
         { href: '/metrics', label: t($locale, 'nav.metrics'), icon: Activity },
         { href: '/dlq', label: t($locale, 'nav.dlq'), icon: AlertOctagon, badge: dlqCount }
       ] as NavItem[]
@@ -217,88 +218,50 @@
   -->
   <a href="#main-content" class="skip-link">{t($locale, 'a11y.skipToMain')}</a>
   <div class="shell">
-    <!-- ─── Sidebar ─────────────────────────────────────────────── -->
-    <aside class="sidebar">
-      <!-- Brand strip — single decorative line of the gold gradient -->
+    <!-- ─── Top nav (was a left sidebar; flipped horizontal so the main
+         content area gets the full viewport width) ─────────────────── -->
+    <header class="topnav">
       <div class="brand-strip" aria-hidden="true"></div>
-
-      <a class="brand" href="/" aria-label="mqConnector">
-        <span class="brand-mark"><Logo size={28} /></span>
-        <span class="brand-words">
+      <div class="topnav-row">
+        <a class="brand" href="/" aria-label="mqConnector">
+          <span class="brand-mark"><Logo size={24} /></span>
           <span class="brand-name">mq<span class="brand-name-accent">Connector</span></span>
-          <span class="brand-tagline">{t($locale, 'app.subtitle')}</span>
-        </span>
-      </a>
+        </a>
 
-      <nav class="nav" aria-label="primary">
-        {#each navSections as section (section.id)}
-          <p class="nav-section">{section.label}</p>
-          <ul class="nav-list">
+        <nav class="nav-row" aria-label="primary">
+          {#each navSections as section, i (section.id)}
+            {#if i > 0}<span class="nav-divider" aria-hidden="true"></span>{/if}
             {#each section.items as item (item.href)}
               {@const active = isActive(item.href, $page.url.pathname)}
-              <li>
-                <a
-                  href={item.href}
-                  class="nav-item"
-                  class:active
-                  aria-current={active ? 'page' : undefined}
-                >
-                  <span class="nav-icon" aria-hidden="true">
-                    <svelte:component this={item.icon} size={16} strokeWidth={1.75} />
-                  </span>
-                  <span class="nav-label">{item.label}</span>
-                  {#if item.badge && item.badge > 0}
-                    <span class="nav-badge">{item.badge > 99 ? '99+' : item.badge}</span>
-                  {/if}
-                </a>
-              </li>
+              <a
+                href={item.href}
+                class="nav-pill"
+                class:active
+                aria-current={active ? 'page' : undefined}
+                title={section.label + ' · ' + item.label}
+              >
+                <span class="nav-icon" aria-hidden="true">
+                  <svelte:component this={item.icon} size={15} strokeWidth={1.75} />
+                </span>
+                <span class="nav-label">{item.label}</span>
+                {#if item.badge && item.badge > 0}
+                  <span class="nav-badge">{item.badge > 99 ? '99+' : item.badge}</span>
+                {/if}
+              </a>
             {/each}
-          </ul>
-        {/each}
-      </nav>
+          {/each}
+        </nav>
 
-      <!-- Bottom: keyboard hints -->
-      <div class="sidebar-foot">
-        <button
-          type="button"
-          class="cmdk-hint"
-          on:click={() => (paletteOpen = true)}
-          aria-label={t($locale, 'palette.title')}
-        >
-          <KeyRound size={14} aria-hidden="true" />
-          <span>{t($locale, 'shell.cmdKHint')}</span>
-        </button>
-        <button
-          type="button"
-          class="kbd-hint-btn"
-          on:click={() => (shortcutsOpen = true)}
-          aria-label={t($locale, 'shortcuts.title')}
-          title={t($locale, 'shortcuts.title')}
-        >
-          ?
-        </button>
-      </div>
-    </aside>
-
-    <!-- ─── Main column ─────────────────────────────────────────── -->
-    <div class="main">
-      <header class="topbar">
-        <div class="topbar-start">
-          <Breadcrumbs />
-        </div>
-
-        <button
-          type="button"
-          class="search-trigger"
-          on:click={() => (paletteOpen = true)}
-          aria-label={t($locale, 'shell.searchHint')}
-        >
-          <Search size={14} aria-hidden="true" />
-          <span class="search-trigger-label">{t($locale, 'shell.search')}</span>
-          <span class="search-trigger-kbd">⌘K</span>
-        </button>
-
-        <div class="topbar-end">
+        <div class="topnav-end">
+          <button
+            type="button"
+            class="search-trigger"
+            on:click={() => (paletteOpen = true)}
+            aria-label={t($locale, 'shell.searchHint')}
+          >
+            <Search size={14} aria-hidden="true" />
+            <span class="search-trigger-kbd">⌘K</span>
+          </button>
           <SystemHealthPill />
           <button
             type="button"
@@ -314,26 +277,20 @@
               <span class="icon-btn-dot" aria-hidden="true"></span>
             {/if}
           </button>
-          <button
-            type="button"
-            class="icon-btn"
-            aria-label={t($locale, 'nav.help')}
-            title={t($locale, 'nav.help')}
-            on:click={() => goto('/help')}
-          >
-            <HelpCircle size={16} aria-hidden="true" />
-          </button>
           <TenantSwitcher />
           <LocaleToggle />
           <ThemeToggle />
           <ProfileMenu />
         </div>
-      </header>
+      </div>
+      <div class="topnav-crumbs">
+        <Breadcrumbs />
+      </div>
+    </header>
 
-      <main id="main-content" class="page" tabindex="-1">
-        <slot />
-      </main>
-    </div>
+    <main id="main-content" class="page" tabindex="-1">
+      <slot />
+    </main>
   </div>
 
   <CommandPalette bind:open={paletteOpen} {dlqCount} />
@@ -373,142 +330,129 @@
   .shell {
     min-height: 100vh;
     display: grid;
-    grid-template-columns: 260px 1fr;
-    grid-template-rows: 100vh;
+    grid-template-rows: auto 1fr;
     background: var(--bg);
     color: var(--text);
+    inline-size: 100%;
+    max-inline-size: 100vw;
+    overflow-x: hidden;
   }
-  .sidebar {
-    position: relative;
-    display: flex;
-    flex-direction: column;
+  .topnav {
+    position: sticky;
+    top: 0;
+    z-index: 30;
     background: var(--surface);
-    border-inline-end: 1px solid var(--border);
-    overflow-y: auto;
+    border-block-end: 1px solid var(--border);
+    inline-size: 100%;
+    min-inline-size: 0;
+    overflow-x: hidden;
   }
   .brand-strip {
     height: 3px;
     background: var(--brand-gradient);
   }
-  .main {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  /* ─── Brand block ──────────────────────────────────────────────── */
-  .brand {
+  .topnav-row {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 1.125rem 1.125rem 1rem;
+    padding-inline: 1rem;
+    padding-block: 0.5rem;
+    min-block-size: 56px;
+    inline-size: 100%;
+    min-inline-size: 0;
+    box-sizing: border-box;
+  }
+  .topnav-crumbs {
+    padding-inline: 1rem;
+    padding-block: 0.5rem 0.625rem;
+    border-block-start: 1px solid var(--border);
+  }
+
+  /* ─── Brand block (compact horizontal form) ────────────────────── */
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
     color: var(--text);
     text-decoration: none;
+    flex-shrink: 0;
   }
   .brand-mark {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
-    border-radius: 12px;
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
     background: var(--surface-2);
     border: 1px solid var(--border);
     color: var(--text);
   }
-  .brand-words {
-    display: flex;
-    flex-direction: column;
-    line-height: 1.1;
-  }
   .brand-name {
-    font-size: 1rem;
+    font-size: 0.9375rem;
     font-weight: 700;
     letter-spacing: -0.01em;
   }
-  /*
-   * Wordmark "Connector" used to render in --accent (maroon). Reserved
-   * the maroon for the Logo glyph (and live CTAs / count badges) so the
-   * eye finds maroon = action, not maroon = branding text.
-   */
   .brand-name-accent {
     color: var(--text);
   }
-  .brand-tagline {
-    margin-top: 2px;
-    font-size: 0.6875rem;
-    color: var(--text-muted);
-    letter-spacing: 0.01em;
-  }
 
-  /* ─── Nav ──────────────────────────────────────────────────────── */
-  .nav {
-    flex: 1;
-    padding: 0.25rem 0.625rem 0.5rem;
-  }
-  .nav-section {
-    margin: 0.875rem 0.625rem 0.375rem;
-    font-size: 0.625rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-tertiary);
-  }
-  .nav-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .nav-item {
+  /* ─── Horizontal nav (top bar) ─────────────────────────────────── */
+  .nav-row {
+    flex: 1 1 0;
     display: flex;
     align-items: center;
-    gap: 0.625rem;
-    padding: 0.5rem 0.625rem;
-    border-radius: 0.75rem;
+    gap: 0.25rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-inline-size: 0;
+    inline-size: 0;
+    scrollbar-width: thin;
+  }
+  .nav-divider {
+    inline-size: 1px;
+    block-size: 20px;
+    background: var(--border);
+    margin-inline: 0.375rem;
+    flex-shrink: 0;
+  }
+  .nav-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding-inline: 0.625rem;
+    padding-block: 0.375rem;
+    border-radius: 0.625rem;
     color: var(--text-muted);
     text-decoration: none;
     font-size: 0.8125rem;
     font-weight: 500;
-    transition:
-      background-color 150ms,
-      color 150ms;
-    min-height: 36px;
+    transition: background-color 150ms, color 150ms;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
-  .nav-item:hover {
+  .nav-pill:hover {
     background: var(--surface-2);
     color: var(--text);
   }
-  /*
-   * Active-nav indicator: gold (--primary), not maroon. Maroon (--accent)
-   * is reserved for actions (CTAs, count badges, destructive). A nav
-   * indicator is selection, not action — per brand-guide §5.3 it sits in
-   * the gold family.
-   */
-  .nav-item.active {
+  .nav-pill.active {
     background: var(--surface-2);
     color: var(--text);
     font-weight: 600;
-    box-shadow: inset 3px 0 0 var(--primary);
-  }
-  :global([dir='rtl']) .nav-item.active {
-    box-shadow: inset -3px 0 0 var(--primary);
+    box-shadow: inset 0 -2px 0 var(--primary);
   }
   .nav-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
+    width: 16px;
     color: inherit;
     flex-shrink: 0;
   }
-  .nav-item.active .nav-icon {
+  .nav-pill.active .nav-icon {
     color: var(--primary);
   }
   .nav-label {
-    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -533,97 +477,24 @@
     letter-spacing: 0.02em;
   }
 
-  /* ─── Sidebar foot ─────────────────────────────────────────────── */
-  .sidebar-foot {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.625rem;
-    border-top: 1px solid var(--border);
-  }
-  .cmdk-hint {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex: 1;
-    padding: 0.5rem 0.625rem;
-    border-radius: 0.75rem;
-    border: 1px dashed var(--border-strong);
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 0.75rem;
-    cursor: pointer;
-    transition:
-      color 150ms,
-      border-color 150ms,
-      background-color 150ms;
-  }
-  .cmdk-hint:hover {
-    color: var(--text);
-    border-color: var(--text-tertiary);
-    background: var(--surface-2);
-  }
-  .kbd-hint-btn {
-    flex: 0 0 auto;
-    inline-size: 30px;
-    block-size: 30px;
-    border-radius: 0.75rem;
-    border: 1px dashed var(--border-strong);
-    background: transparent;
-    color: var(--text-muted);
-    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
-    font-size: 0.875rem;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transition:
-      color 150ms,
-      border-color 150ms,
-      background-color 150ms;
-  }
-  .kbd-hint-btn:hover {
-    color: var(--text);
-    border-color: var(--text-tertiary);
-    background: var(--surface-2);
-  }
-
-  /* ─── Topbar ───────────────────────────────────────────────────── */
-  .topbar {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.625rem 1.25rem;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    min-height: 56px;
-    position: sticky;
-    top: 0;
-    z-index: 30;
-    backdrop-filter: saturate(140%) blur(6px);
-  }
-  .topbar-start {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-  }
-  .topbar-end {
+  /* ─── Topbar right cluster ─────────────────────────────────────── */
+  .topnav-end {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
+    flex-shrink: 0;
   }
   .search-trigger {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.375rem;
     padding-block: 0.3125rem;
-    padding-inline: 0.625rem 0.5rem;
-    border-radius: 0.75rem;
+    padding-inline: 0.5rem;
+    border-radius: 0.625rem;
     border: 1px solid var(--border);
     background: var(--surface-2);
     color: var(--text-muted);
-    font-size: 0.8125rem;
-    min-width: 14rem;
+    font-size: 0.75rem;
     cursor: pointer;
     transition:
       background-color 150ms,
@@ -634,10 +505,6 @@
     color: var(--text);
     background: var(--surface);
     border-color: var(--border-strong);
-  }
-  .search-trigger-label {
-    flex: 1;
-    text-align: start;
   }
   .search-trigger-kbd {
     display: inline-flex;
@@ -690,21 +557,20 @@
 
   /* ─── Page area ────────────────────────────────────────────────── */
   .page {
-    flex: 1;
     padding: 1.125rem 1.5rem 2rem;
     overflow-y: auto;
     inline-size: 100%;
     max-inline-size: 1680px;
     margin-inline: auto;
+    min-block-size: 0;
   }
 
   @media (max-width: 900px) {
-    .shell {
-      grid-template-columns: 1fr;
-      grid-template-rows: auto 1fr;
+    .nav-label {
+      display: none;
     }
-    .sidebar {
-      display: none; /* mobile shell is a follow-up — keep the desktop bar tidy for now */
+    .nav-pill {
+      padding-inline: 0.5rem;
     }
   }
 </style>
