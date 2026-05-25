@@ -216,6 +216,12 @@ func (s *Server) routes() http.Handler {
 		r.Post("/api/v1/reload", s.handleReload)
 		r.Post("/api/v1/pipelines/{id}/replay", s.handleReplayPipeline)
 
+		// Wave 2 — Live Topology aggregator. One read returns every
+		// broker connection in the tenant, every pipeline that flows
+		// between them, and the live health/throughput/depth signals
+		// for the topology page. Viewer-readable; tenant-scoped.
+		r.Get("/api/v1/topology", s.handleTopology)
+
 		r.Route("/api/v1/dlq", func(r chi.Router) {
 			r.Get("/", s.handleListDLQ)
 			r.Get("/groups", s.handleGroupDLQ)

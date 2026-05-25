@@ -61,6 +61,14 @@ type Server struct {
 	// before the process exits. Increment with Add(1) immediately
 	// before `go` and Done() in the goroutine's defer.
 	pendingBackgroundOps sync.WaitGroup
+
+	// topologyRates is the per-pipeline rate sampler used by the
+	// /api/v1/topology aggregator to derive msg_per_min from
+	// successive snapshots of the cumulative messages_processed
+	// counter. Lazy-initialised on first call so tests that never
+	// hit the topology endpoint don't pay for it.
+	topologyRatesMu sync.Mutex
+	topologyRates   *topologyRateSampler
 }
 
 // WaitForBackgroundOps blocks until every fire-and-forget goroutine

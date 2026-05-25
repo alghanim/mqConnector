@@ -119,6 +119,13 @@ type Executor struct {
 	// circuit (used in tests that don't want the open-state
 	// behaviour to interfere).
 	breaker *breaker
+
+	// CircuitStatePublisher, when set, is called after every send
+	// result with the current breaker state token ("closed" / "open"
+	// / "half-open"). Used by Manager to expose breaker state to the
+	// topology endpoint without coupling the manager to executor
+	// internals. nil disables the publish path.
+	CircuitStatePublisher func(state string)
 }
 
 // Run blocks until ctx is cancelled or the executor encounters an unrecoverable
@@ -384,6 +391,7 @@ func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.L
 
 	if e.breaker != nil {
 		e.breaker.recordResult(sendErr == nil)
+		e.publishBreakerState()
 	}
 
 	if sendErr != nil {
@@ -425,6 +433,29 @@ func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.L
 
 	e.finalize(ctx, source, true, logger)
 	return nil
+}
+
+// publishBreakerState forwards the breaker's current state token to
+// the manager (via the configured publisher) so the topology endpoint
+// can surface it without coupling to executor internals. nil
+// publisher or nil breaker → no-op.
+func (e *Executor) publishBreakerState() {
+	if e.CircuitStatePublisher == nil || e.breaker == nil {
+		return
+	}
+	st, _ := e.breaker.snapshot()
+	var token string
+	switch st {
+	case breakerClosed:
+		token = "closed"
+	case breakerOpen:
+		token = "open"
+	case breakerHalfOpen:
+		token = "half-open"
+	default:
+		token = "unknown"
+	}
+	e.CircuitStatePublisher(token)
 }
 
 // shadowSend publishes a payload to the configured shadow destination

@@ -2112,6 +2112,68 @@ paths:
       responses:
         '200': { description: Stage-by-stage trace + final output. }
 
+  /api/v1/topology:
+    get:
+      tags: [pipelines]
+      summary: Live topology snapshot — every broker connection, every pipeline, every live signal.
+      description: |
+        Single aggregator read for the Live Topology page. Combines the
+        tenant's connections + pipelines with live metrics
+        (msg_per_min, processed/failed counters, avg latency), DLQ
+        depth per pipeline, circuit-breaker state, source-broker depth,
+        and pool "connected" state. Best-effort: a failure in any
+        sub-source (e.g. DLQ count query) logs a warn server-side and
+        zero-fills that column rather than failing the response — a
+        partial snapshot beats a 500. Viewer-readable; tenant-scoped.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Topology snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [generated_at, tenant_id, connections, pipelines]
+                properties:
+                  generated_at: { type: string, format: date-time }
+                  tenant_id: { type: string }
+                  connections:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, type, connected]
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        type: { type: string, enum: [rabbitmq, kafka, ibm, mqtt, nats, amqp10] }
+                        topic: { type: string }
+                        depth: { type: integer, format: int64, nullable: true, description: "Broker-side backlog; null when unknown/unsupported" }
+                        connected: { type: boolean, description: "Pool currently holds an open client for this broker" }
+                  pipelines:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, source_id, destination_id, enabled, msg_per_min, processed, failed, avg_latency_ms, dlq_depth, circuit_state, status]
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        source_id: { type: string }
+                        destination_id: { type: string }
+                        enabled: { type: boolean }
+                        msg_per_min: { type: integer, format: int64 }
+                        processed: { type: integer, format: int64 }
+                        failed: { type: integer, format: int64 }
+                        avg_latency_ms: { type: number, format: double }
+                        dlq_depth: { type: integer, format: int64 }
+                        circuit_state: { type: string, enum: [closed, open, half-open, unknown] }
+                        shadow_destination_id: { type: string }
+                        shadow_percent: { type: integer, minimum: 0, maximum: 100 }
+                        route_destination_ids:
+                          type: array
+                          items: { type: string }
+                        status: { type: string, enum: [connected, error, disabled, idle] }
+                        last_error: { type: string }
+
   /api/v1/samples/extract:
     post:
       tags: [pipelines]

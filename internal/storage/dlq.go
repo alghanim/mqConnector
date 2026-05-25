@@ -367,6 +367,41 @@ func (r *DLQRepo) Stats(ctx context.Context) ([]DLQStat, error) {
 	return out, rows.Err()
 }
 
+// CountByPipeline returns one (pipelineID → row count) entry per
+// pipeline in the named tenant that currently has any DLQ rows.
+// Pipelines with zero rows are omitted; callers expecting full
+// coverage default missing keys to 0. Tenant-scoped — used by the
+// /api/v1/topology aggregator to attach a depth column to every
+// pipeline in the live snapshot. One grouped scan, no application-
+// side aggregation.
+func (r *DLQRepo) CountByPipeline(ctx context.Context, tenantID string) (map[string]int64, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT COALESCE(pipeline_id, ''), COUNT(1)
+		FROM dlq
+		WHERE tenant_id = ?
+		GROUP BY pipeline_id`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("dlq count by pipeline: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var pid string
+		var n int64
+		if err := rows.Scan(&pid, &n); err != nil {
+			return nil, fmt.Errorf("dlq count scan: %w", err)
+		}
+		if pid == "" {
+			continue
+		}
+		out[pid] = n
+	}
+	return out, rows.Err()
+}
+
 // PruneOlderThan deletes DLQ rows older than cutoff. Returns the count
 // removed. Runs across every tenant — retention is a system-level job
 // configured globally, not per-tenant.
