@@ -29,7 +29,7 @@
   import '../app.css';
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
-  import { goto } from '$app/navigation';
+  import { goto, afterNavigate } from '$app/navigation';
   import { auth } from '$lib/stores/auth';
   import { tenants } from '$lib/stores/tenants';
   import { locale, t } from '$lib/stores/locale';
@@ -226,7 +226,10 @@
     openSection = null;
   }
   // Close any open dropdown when the user navigates (route changed).
-  $: if ($page.url.pathname) closeSection();
+  // afterNavigate fires once per successful navigation — much safer
+  // than a reactive on $page.url.pathname which can fire from
+  // any store update (search params, hash, etc.).
+  afterNavigate(() => closeSection());
   // Close on outside click / Escape.
   function onDocClick(e: MouseEvent) {
     if (!openSection) return;
@@ -420,13 +423,17 @@
     border-block-end: 1px solid var(--border);
     inline-size: 100%;
     min-inline-size: 0;
-    overflow-x: hidden;
+    /* No overflow clip here — the section dropdowns hang below the
+       row and need to escape. Horizontal clipping is handled at
+       .shell + .nav-row instead. */
   }
   .brand-strip {
     height: 3px;
     background: var(--brand-gradient);
   }
   .topnav-row {
+    position: relative;
+    z-index: 2;
     display: flex;
     align-items: center;
     gap: 0.75rem;
@@ -438,6 +445,8 @@
     box-sizing: border-box;
   }
   .topnav-crumbs {
+    position: relative;
+    z-index: 1;
     padding-inline: 1rem;
     padding-block: 0.5rem 0.625rem;
     border-block-start: 1px solid var(--border);
@@ -497,6 +506,10 @@
     position: relative;
     display: inline-flex;
     flex-shrink: 0;
+    z-index: 1;
+  }
+  .nav-section:has(.nav-menu) {
+    z-index: 50;
   }
   .nav-section-btn {
     display: inline-flex;
