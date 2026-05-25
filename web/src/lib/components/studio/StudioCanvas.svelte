@@ -38,7 +38,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { studio, type StudioStateData, type StudioStageType } from '$lib/stores/studio';
-  import { api, type Connection } from '$lib/api';
+  import { api, type Connection, type ConnectionType } from '$lib/api';
   import { locale, t } from '$lib/stores/locale';
   import EmptyState from '$lib/components/EmptyState.svelte';
 
@@ -108,6 +108,9 @@
     label: string;
     sub: string;
     stageType?: StudioStageType;
+    // Broker family — only set on source/destination nodes. Drives the
+    // type-icon glyph painted into the node's leading edge.
+    brokerType?: ConnectionType;
     x: number;
     y: number;
     deletable: boolean;
@@ -142,6 +145,7 @@
       kind: 'source',
       label: t($locale, 'studio.canvas.source'),
       sub: sourceLabel + (sourceSub ? ` · ${sourceSub}` : ''),
+      brokerType: (sourceConn?.type ?? undefined) as ConnectionType | undefined,
       x: COL_BASE,
       y: ROW_BASE,
       deletable: false
@@ -178,6 +182,7 @@
       kind: 'destination',
       label: t($locale, 'studio.canvas.destination'),
       sub: destLabel + (destSub ? ` · ${destSub}` : ''),
+      brokerType: (destConn?.type ?? undefined) as ConnectionType | undefined,
       x: COL_BASE + col * (NODE_W + COL_GAP),
       y: ROW_BASE,
       deletable: false
@@ -201,6 +206,7 @@
         kind: 'destination',
         label: t($locale, 'studio.canvas.destination'),
         sub: label + (conn?.type ? ` · ${conn.type}` : ''),
+        brokerType: (conn?.type ?? undefined) as ConnectionType | undefined,
         x: COL_BASE + col * (NODE_W + COL_GAP),
         y: ROW_BASE + altRow * (NODE_H + ROW_GAP),
         deletable: false
@@ -307,6 +313,10 @@
   // nodes still render so the operator sees the shape they're filling.
   $: showEmpty = (s?.draft?.stages.length ?? 0) === 0;
 
+  // True when the dry-run is in flight — drives the edge dash-flow
+  // animation so the operator sees a visible "data is moving" cue.
+  $: simulating = s?.state === 'simulating';
+
   // The chip shown when an operator tries to interact while comparing.
   let comparingHint = false;
   function onCanvasClick() {
@@ -329,6 +339,7 @@
   class="studio-canvas"
   data-state={s?.state ?? 'empty'}
   data-readonly={readOnly ? 'true' : 'false'}
+  class:is-simulating={simulating}
   on:dragover={onCanvasDragOver}
   on:drop={onCanvasDrop}
   on:click={onCanvasClick}
@@ -389,6 +400,8 @@
         class:is-stage={node.kind === 'stage'}
         data-node-id={node.id}
         data-node-kind={node.kind}
+        data-stage-type={node.stageType ?? ''}
+        data-broker-type={node.brokerType ?? ''}
         transform="translate({node.x},{node.y})"
         tabindex="0"
         role="button"
@@ -398,10 +411,74 @@
         on:keydown={(e) => onNodeKeyDown(e, node)}
         on:contextmenu={(e) => onNodeContextMenu(e, node)}
       >
+        <!-- Drop-shadow shim — separate rect so the depth survives
+             outline-only theme switches. The fill is transparent; the
+             SVG filter does the work. Kept inside the node so dragging
+             the whole group also moves the shadow. -->
+        <rect
+          class="studio-canvas-node-shadow"
+          x="0" y="2" width={NODE_W} height={NODE_H} rx="10"
+        />
         <rect class="studio-canvas-node-bg" width={NODE_W} height={NODE_H} rx="10" />
-        <text x="14" y="22" class="studio-canvas-node-label">{node.label}</text>
+        <!-- Leading-edge accent strip on stage nodes — picks up the
+             per-stage tone so the chain reads as a typed sequence. -->
+        {#if node.kind === 'stage'}
+          <rect class="studio-canvas-node-accent" x="0" y="6" width="3" height={NODE_H - 12} rx="2" />
+        {/if}
+        {#if node.kind === 'source' || node.kind === 'destination'}
+          <!-- Broker type glyph painted into the leading edge. Inline
+               SVG via individual paths per type — keeps the canvas
+               self-contained without the SVG-in-foreignObject hack
+               and avoids a runtime import. Coordinates target a
+               20×20 box anchored at (10,20). -->
+          <g class="studio-canvas-broker-icon" transform="translate(10, 18)">
+            {#if node.brokerType === 'kafka'}
+              <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+                <circle cx="10" cy="10" r="2" />
+                <circle cx="3.5" cy="5" r="1.5" />
+                <circle cx="3.5" cy="15" r="1.5" />
+                <circle cx="16.5" cy="10" r="1.5" />
+                <path d="M5 5.9L8 8.5M5 14.1L8 11.5M12 10H14.8" />
+              </g>
+            {:else if node.brokerType === 'rabbitmq'}
+              <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+                <path d="M3 2v7h2.5V2M8 2v7h2.5V2" />
+                <path d="M3 9h13v7a1 1 0 01-1 1H4a1 1 0 01-1-1V9z" />
+                <circle cx="13.5" cy="13.5" r="1.1" fill="currentColor" />
+              </g>
+            {:else if node.brokerType === 'ibm'}
+              <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+                <path d="M2 4h16M2 8h16M2 12h16M2 16h16" />
+                <path d="M6 4v12M14 4v12" opacity="0.55" />
+              </g>
+            {:else if node.brokerType === 'mqtt'}
+              <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+                <circle cx="3" cy="17" r="1.5" fill="currentColor" />
+                <path d="M3 12a5 5 0 015 5" />
+                <path d="M3 7a10 10 0 0110 10" />
+                <path d="M3 2a15 15 0 0115 15" opacity="0.55" />
+              </g>
+            {:else if node.brokerType === 'nats'}
+              <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 6h12M2 14h12" />
+                <path d="M11 3l4 3-4 3M11 11l4 3-4 3" />
+              </g>
+            {:else if node.brokerType === 'amqp10'}
+              <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+                <rect x="2" y="4" width="16" height="12" rx="2" />
+                <path d="M2.5 5l7.5 5.5L17.5 5" />
+              </g>
+            {:else}
+              <g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+                <rect x="2" y="6" width="16" height="8" rx="1.5" />
+                <path d="M6 6v8M10 6v8M14 6v8" opacity="0.5" />
+              </g>
+            {/if}
+          </g>
+        {/if}
+        <text x={node.kind === 'stage' ? 14 : 38} y="22" class="studio-canvas-node-label">{node.label}</text>
         {#if node.sub}
-          <text x="14" y="42" class="studio-canvas-node-sub">{node.sub}</text>
+          <text x={node.kind === 'stage' ? 14 : 38} y="42" class="studio-canvas-node-sub">{node.sub}</text>
         {/if}
 
         {#if node.deletable && isSelected && !readOnly}
@@ -491,11 +568,25 @@
 
   /* Edges — thin slate stroke; selected node's incoming/outgoing
      edges keep the same colour. Arrowheads inherit fill via the marker
-     definition above (--text-tertiary). */
+     definition above (--text-tertiary).
+
+     When the dry-run is simulating we animate a marching-ants dash
+     so the operator sees a clear "data is moving" cue. The animation
+     respects prefers-reduced-motion. */
   .studio-canvas-edge {
     fill: none;
-    stroke: var(--text-tertiary);
+    stroke: var(--border-strong);
     stroke-width: 1.5;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .studio-canvas.is-simulating .studio-canvas-edge {
+      stroke: var(--primary);
+      stroke-dasharray: 4 4;
+      animation: studio-flowdash 1.4s linear infinite;
+    }
+  }
+  @keyframes studio-flowdash {
+    to { stroke-dashoffset: -8; }
   }
 
   /* Route badge — a small pill on the edge midpoint. */
@@ -512,34 +603,70 @@
     letter-spacing: 0.06em;
   }
 
-  /* Nodes — common card affordance. Source + destination get a slight
-     tint via the brand secondary/primary tokens; stages stay neutral
-     so the chain reads as "two endpoints + stages between them". */
+  /* Nodes — every node sits on a soft shadow + 1px outline so the
+     chain reads as a deck of cards on the dotted grid rather than
+     flat outlines. Selected nodes pick up the gold primary ring; the
+     stage-type tone (set via data-stage-type) drives the leading
+     accent strip. */
   .studio-canvas-node {
     cursor: pointer;
     outline: none;
+    --stage-tone: var(--primary);
+  }
+  .studio-canvas-node[data-stage-type='filter']    { --stage-tone: var(--info); }
+  .studio-canvas-node[data-stage-type='transform'] { --stage-tone: var(--primary); }
+  .studio-canvas-node[data-stage-type='translate'] { --stage-tone: var(--info); }
+  .studio-canvas-node[data-stage-type='route']     { --stage-tone: var(--secondary); }
+  .studio-canvas-node[data-stage-type='script']    { --stage-tone: var(--warning); }
+  .studio-canvas-node[data-stage-type='validate']  { --stage-tone: var(--success); }
+  .studio-canvas-node[data-stage-type='wasm']      { --stage-tone: var(--accent); }
+
+  .studio-canvas-node-shadow {
+    fill: rgba(0, 0, 0, 0.18);
+    /* SVG-feGaussianBlur would need a <defs filter> — keep it simple
+       with a translated translucent rect under the main bg. The visual
+       weight matches the spec's 1dp light / 4dp dark cards. */
+    opacity: 0.6;
+  }
+  :global([data-theme='light']) .studio-canvas-node-shadow {
+    fill: rgba(51, 63, 72, 0.10);
+    opacity: 1;
   }
   .studio-canvas-node-bg {
     fill: var(--surface-2);
     stroke: var(--border);
     stroke-width: 1;
+    transition: stroke 120ms;
   }
-  .studio-canvas-node.is-source .studio-canvas-node-bg {
-    stroke: var(--primary);
+  .studio-canvas-node-accent {
+    fill: var(--stage-tone);
+    opacity: 0.9;
   }
+  /* Source/destination border is the broker-icon tone — currentColor
+     trick: we set color on the node, the icon picks it up, and the
+     ring tracks it. Stages stay neutral until selected. */
+  .studio-canvas-node.is-source,
+  .studio-canvas-node.is-destination {
+    color: var(--primary);
+  }
+  .studio-canvas-node.is-source .studio-canvas-node-bg,
   .studio-canvas-node.is-destination .studio-canvas-node-bg {
     stroke: var(--primary);
   }
   .studio-canvas-node.is-selected .studio-canvas-node-bg {
-    stroke: var(--accent);
+    stroke: var(--primary);
     stroke-width: 2;
+    filter: drop-shadow(0 0 4px var(--primary));
   }
   .studio-canvas-node.is-error .studio-canvas-node-bg {
     stroke: var(--danger);
     stroke-width: 2;
   }
+  .studio-canvas-node:hover .studio-canvas-node-bg {
+    stroke: var(--primary);
+  }
   .studio-canvas-node:focus-visible .studio-canvas-node-bg {
-    stroke: var(--accent);
+    stroke: var(--primary);
     stroke-width: 2;
   }
   .studio-canvas-node-label {
@@ -551,6 +678,11 @@
   .studio-canvas-node-sub {
     fill: var(--text-muted);
     font-size: 10px;
+  }
+  /* Broker icon picks up currentColor from the enclosing node, which
+     is set above via the .is-source / .is-destination rule. */
+  .studio-canvas-broker-icon {
+    pointer-events: none;
   }
 
   /* Remove (X) button on selected stage nodes. */
@@ -590,18 +722,22 @@
     font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
   }
 
-  /* Empty state — overlay centred above the SVG so the operator sees a
-     prompt the moment there are no stages, but the source + dest still
-     show in the background as scaffolding. */
+  /* Empty state — large dashed drop-zone outline so the operator sees
+     a clear target the moment they land on the canvas. The source +
+     dest nodes still show behind it as scaffolding; the overlay is
+     semi-transparent so the chain shape stays visible. */
   .studio-canvas-empty {
     position: absolute;
     inset-inline-start: 50%;
     inset-block-start: 50%;
     transform: translate(-50%, -50%);
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-    border-radius: 12px;
-    padding: 0.5rem 1rem;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    border: 2px dashed var(--border-strong);
+    border-radius: 16px;
+    padding: 1rem 1.5rem;
     pointer-events: none;
+    max-inline-size: 22rem;
+    text-align: center;
   }
 
   .studio-canvas-readonly-hint {
