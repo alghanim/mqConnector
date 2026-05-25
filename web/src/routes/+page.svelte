@@ -27,8 +27,11 @@
     api,
     type AuditDiff,
     type AuditEntry,
+    type Connection,
+    type ConnectionType,
     type DLQEntry,
     type Health,
+    type Pipeline,
     type PipelineMetric
   } from '$lib/api';
   import { locale, t } from '$lib/stores/locale';
@@ -41,6 +44,8 @@
   import SystemPulse from '$lib/components/SystemPulse.svelte';
   import MetricStrip from '$lib/components/MetricStrip.svelte';
   import RouteHealthMatrix from '$lib/components/RouteHealthMatrix.svelte';
+  import ConnectionTypeIcon from '$lib/components/ConnectionTypeIcon.svelte';
+  import { ArrowRight } from 'lucide-svelte';
 
   type Metric = {
     label: string;
@@ -71,6 +76,101 @@
   let lastRefreshed = '';
   let interval: ReturnType<typeof setInterval> | undefined;
   let metricsFallbackTimer: ReturnType<typeof setInterval> | undefined;
+
+  // Name/broker resolution: the live metrics stream is keyed by
+  // pipeline_id only — neither the human name nor source/destination
+  // connection metadata is included. We fetch the static catalogues
+  // (pipelines + connections) once at mount and rebuild them when the
+  // operator hits the audit feed entries (a heuristic for "config
+  // changed"). Both fetches are best-effort — if the API call fails
+  // we fall back to the UUID so the dashboard stays usable.
+  let pipelineMap = new Map<string, Pipeline>();
+  let connectionMap = new Map<string, Connection>();
+
+  // Resolve a pipeline_id → friendly card label. Returns the
+  // pipeline name if known, otherwise a short, recognisable slice
+  // of the UUID prefixed with "id:" so the operator can tell that
+  // resolution failed (rather than wondering whether the pipeline
+  // is literally named after a hash).
+  //
+  // The map arg is passed explicitly so reactive blocks that read
+  // `pipelineMap` thread it through, ensuring Svelte re-renders the
+  // {#each} block when the catalogue settles after the initial paint.
+  // (Plain function calls in a template do NOT subscribe to outer
+  // module-level state; passing the map in is what makes the
+  // dependency tracked.)
+  function pipelineLabel(id: string, map: Map<string, Pipeline>): string {
+    const p = map.get(id);
+    if (p?.name) return p.name;
+    return `id:${id.slice(0, 8)}`;
+  }
+
+  // Resolve pipeline_id → "(deleted)" if absent, else the name.
+  // Used by the DLQ list where a row may outlive its pipeline.
+  function pipelineLabelOrDeleted(id: string | undefined, map: Map<string, Pipeline>): string {
+    if (!id) return '—';
+    const p = map.get(id);
+    if (p?.name) return p.name;
+    return t($locale, 'dash.pipelines.deleted');
+  }
+
+  // Best-effort fetch — never throws. Failure leaves the maps empty
+  // and the UI degrades to UUIDs.
+  async function refreshCatalogues(): Promise<void> {
+    const [pipes, conns] = await Promise.allSettled([
+      api.get<Pipeline[]>('/v1/pipelines').then((v) => v ?? []),
+      api.get<Connection[]>('/v1/connections').then((v) => v ?? [])
+    ]);
+    if (pipes.status === 'fulfilled') {
+      const next = new Map<string, Pipeline>();
+      for (const p of pipes.value) if (p.id) next.set(p.id, p);
+      pipelineMap = next;
+    } else {
+      console.warn('dashboard: failed to load pipelines catalogue', pipes.reason);
+    }
+    if (conns.status === 'fulfilled') {
+      const next = new Map<string, Connection>();
+      for (const c of conns.value) if (c.id) next.set(c.id, c);
+      connectionMap = next;
+    } else {
+      console.warn('dashboard: failed to load connections catalogue', conns.reason);
+    }
+  }
+
+  // Source/destination connection for a pipeline_id. Returns null
+  // when the lookup chain can't be completed — the broker pill then
+  // degrades to the topic/queue fallback already shown today. Both
+  // maps are passed explicitly so Svelte's reactive {#each} re-runs
+  // these on catalogue refresh (see pipelineLabel for context).
+  function endpointFor(
+    pipelineId: string,
+    end: 'source' | 'destination',
+    pMap: Map<string, Pipeline>,
+    cMap: Map<string, Connection>
+  ): Connection | null {
+    const p = pMap.get(pipelineId);
+    if (!p) return null;
+    const connId = end === 'source' ? p.source_id : p.destination_id;
+    if (!connId) return null;
+    return cMap.get(connId) ?? null;
+  }
+
+  function endpointType(
+    pipelineId: string,
+    end: 'source' | 'destination',
+    pMap: Map<string, Pipeline>,
+    cMap: Map<string, Connection>
+  ): ConnectionType | undefined {
+    return endpointFor(pipelineId, end, pMap, cMap)?.type;
+  }
+  function endpointName(
+    pipelineId: string,
+    end: 'source' | 'destination',
+    pMap: Map<string, Pipeline>,
+    cMap: Map<string, Connection>
+  ): string | null {
+    return endpointFor(pipelineId, end, pMap, cMap)?.name ?? null;
+  }
 
   // Audit diff drill-down — opens inline below the row. PUT rows are
   // the only ones with a recorded diff; for other verbs we just show
@@ -219,8 +319,19 @@
   }
 
   onMount(() => {
+    // Kick off the static catalogues fetch alongside the slow
+    // surfaces. We don't gate the first paint on it — the UI shows
+    // resolved names as soon as the promises settle.
+    void refreshCatalogues();
     refreshSlowSurfaces();
-    interval = setInterval(refreshSlowSurfaces, 15_000);
+    interval = setInterval(() => {
+      refreshSlowSurfaces();
+      // Re-pull pipelines + connections at the slow cadence too so
+      // the dashboard picks up renames + new pipelines without a
+      // full page reload. 15 s is a sensible upper bound for "I
+      // just renamed a pipeline; when does the overview catch up?"
+      void refreshCatalogues();
+    }, 15_000);
   });
   onDestroy(() => {
     if (interval) clearInterval(interval);
@@ -480,7 +591,34 @@
         </div>
       </div>
       {#if aggregateDeltas.length < 2}
-        <p class="dash-empty">{t($locale, 'dash.throughput.empty')}</p>
+        <!-- Inline-variant empty state. The full EmptyState component is
+             ~10rem tall; here we need something that lives inside an
+             already-titled chart card without taking it over. The small
+             waveform mark uses brand-gold tokens so it reads as "this
+             is where data will appear" rather than "something is broken". -->
+        <div class="dash-chart-empty" role="status">
+          <svg
+            class="dash-chart-empty-mark"
+            viewBox="0 0 56 24"
+            width="56"
+            height="24"
+            aria-hidden="true"
+          >
+            <line x1="2" y1="20" x2="54" y2="20" stroke="var(--divider)" stroke-width="1" />
+            <polyline
+              points="4,18 12,17 20,18 28,16 36,17 44,15 52,17"
+              fill="none"
+              stroke="var(--palette-dark-gold)"
+              stroke-width="1.5"
+              stroke-linejoin="round"
+              stroke-linecap="round"
+              stroke-dasharray="3 3"
+              opacity="0.85"
+            />
+            <circle cx="52" cy="17" r="2" fill="var(--palette-light-gold)" stroke="var(--palette-dark-gold)" stroke-width="0.75" />
+          </svg>
+          <p class="dash-chart-empty-text">{t($locale, 'dash.throughput.empty')}</p>
+        </div>
       {:else}
         <svg
           class="dash-chart"
@@ -540,15 +678,36 @@
     {:else}
       <div class="dash-pipelines">
         {#each pipelines as p (p.pipeline_id)}
+          {@const srcType = endpointType(p.pipeline_id, 'source', pipelineMap, connectionMap)}
+          {@const dstType = endpointType(p.pipeline_id, 'destination', pipelineMap, connectionMap)}
+          {@const srcName = endpointName(p.pipeline_id, 'source', pipelineMap, connectionMap)}
+          {@const dstName = endpointName(p.pipeline_id, 'destination', pipelineMap, connectionMap)}
+          {@const label = pipelineLabel(p.pipeline_id, pipelineMap)}
           <a
             class="dash-pipeline-card"
             href="/metrics"
-            aria-label="{p.pipeline_id} — {t($locale, 'dash.pipelines.open')}"
+            aria-label="{label} — {t($locale, 'dash.pipelines.open')}"
           >
             <div class="dash-pipeline-head">
               <div class="dash-pipeline-id">
-                <p class="dash-pipeline-name">{p.pipeline_id}</p>
-                <p class="dash-pipeline-flow">{p.source_queue} → {p.dest_queue}</p>
+                <p class="dash-pipeline-name" title={label}>{label}</p>
+                <p class="dash-pipeline-flow" aria-label="{srcName ?? p.source_queue} → {dstName ?? p.dest_queue}">
+                  <span class="dash-pipeline-end" data-end="source">
+                    <ConnectionTypeIcon type={srcType} size={12} />
+                    <span class="dash-pipeline-end-name" title={srcName ?? p.source_queue}>
+                      {srcName ?? p.source_queue}
+                    </span>
+                  </span>
+                  <span class="dash-pipeline-arrow" aria-hidden="true">
+                    <ArrowRight size={11} strokeWidth={1.75} />
+                  </span>
+                  <span class="dash-pipeline-end" data-end="destination">
+                    <ConnectionTypeIcon type={dstType} size={12} />
+                    <span class="dash-pipeline-end-name" title={dstName ?? p.dest_queue}>
+                      {dstName ?? p.dest_queue}
+                    </span>
+                  </span>
+                </p>
               </div>
               <Badge variant={variantFor(p.status)}>{p.status}</Badge>
             </div>
@@ -576,7 +735,7 @@
               <Sparkline
                 data={pipelineDeltas(p.pipeline_id, historyVersion)}
                 variant={p.messages_failed > 0 ? 'warning' : 'secondary'}
-                label="{t($locale, 'dash.pipelines.trendLabel')} {p.pipeline_id}"
+                label="{t($locale, 'dash.pipelines.trendLabel')} {label}"
               />
             </div>
             <span class="dash-pipeline-go" aria-hidden="true">
@@ -595,7 +754,7 @@
       <div class="space-y-3">
         {#each errorPipelines as p (p.pipeline_id)}
           <div class="dash-error-row">
-            <Badge variant="danger">{p.pipeline_id}</Badge>
+            <Badge variant="danger">{pipelineLabel(p.pipeline_id, pipelineMap)}</Badge>
             <pre class="dash-error-msg">{p.last_error}</pre>
           </div>
         {/each}
@@ -662,7 +821,7 @@
           {#each dlqLatest as d (d.id)}
             <li class="dash-dlq-item">
               <div class="dash-dlq-body">
-                <p class="dash-dlq-pipeline">{d.pipeline_id || '—'}</p>
+                <p class="dash-dlq-pipeline">{pipelineLabelOrDeleted(d.pipeline_id, pipelineMap)}</p>
                 <p class="dash-dlq-reason">{d.error_reason}</p>
               </div>
               <time class="dash-event-time" datetime={d.created_at}>{d.created_at}</time>
@@ -838,20 +997,35 @@
     background: var(--surface);
     color: inherit;
     text-decoration: none;
+    /* Soft resting shadow + hover lift. Matches the Studio Wave-1
+       polish so cards across the app share the same depth language. */
+    box-shadow: var(--card-shadow);
     transition:
-      border-color 150ms,
-      transform 150ms,
-      box-shadow 150ms;
+      border-color 150ms ease,
+      transform 150ms ease,
+      box-shadow 150ms ease;
     cursor: pointer;
   }
   .dash-pipeline-card:hover,
   .dash-pipeline-card:focus-visible {
     border-color: var(--border-strong);
     box-shadow: var(--card-shadow-hover);
+    transform: translateY(-1px);
   }
   .dash-pipeline-card:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 2px;
+  }
+  /* Honor reduced-motion users — the hover lift is a delight pass,
+     not a meaning-carrier, so we drop it cleanly. */
+  @media (prefers-reduced-motion: reduce) {
+    .dash-pipeline-card {
+      transition: none;
+    }
+    .dash-pipeline-card:hover,
+    .dash-pipeline-card:focus-visible {
+      transform: none;
+    }
   }
   .dash-pipeline-go {
     position: absolute;
@@ -885,11 +1059,60 @@
     white-space: nowrap;
   }
   .dash-pipeline-flow {
+    /* Was: single ellipsised text line. Now: an inline source → dest
+       row with broker icons on each end, mirroring the Studio header
+       summary so an operator who flips between the two surfaces sees
+       the same shape. min-inline-size:0 + flex-wrap keeps it from
+       blowing out narrow cards. */
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
     color: var(--text-muted);
     font-size: 12px;
+    min-inline-size: 0;
+    flex-wrap: wrap;
+  }
+  .dash-pipeline-end {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding-block: 1px;
+    padding-inline: 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    max-inline-size: 12rem;
+    min-inline-size: 0;
+  }
+  /* Tint the icon — the pill itself stays neutral so the broker
+     glyph carries the type signal without competing with the chip. */
+  .dash-pipeline-end[data-end='source'] :global(svg),
+  .dash-pipeline-end[data-end='destination'] :global(svg) {
+    color: var(--primary);
+    flex-shrink: 0;
+  }
+  .dash-pipeline-end-name {
+    color: var(--text);
+    font-weight: 500;
+    font-size: 11px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-inline-size: 0;
+  }
+  .dash-pipeline-arrow {
+    color: var(--text-tertiary);
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  /* RTL: flip the arrow icon so it points inline-end. The pills
+     themselves are auto-reversed by the flex container honoring the
+     document direction. */
+  :global([dir='rtl']) .dash-pipeline-arrow {
+    transform: scaleX(-1);
   }
   .dash-pipeline-stats {
     display: grid;
@@ -1081,5 +1304,27 @@
     color: var(--text-muted);
     font-size: 13px;
     padding: 8px 0;
+  }
+  /* Inline-variant empty state for the throughput chart card.
+     Capped at 4rem total height (mark + text + paddings) so it
+     doesn't dominate the card the way the full EmptyState would. */
+  .dash-chart-empty {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-block: 0.5rem;
+    padding-inline: 0.25rem;
+    max-block-size: 4rem;
+    color: var(--text-muted);
+  }
+  .dash-chart-empty-mark {
+    flex-shrink: 0;
+    color: var(--text);
+  }
+  .dash-chart-empty-text {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--text-muted);
   }
 </style>
