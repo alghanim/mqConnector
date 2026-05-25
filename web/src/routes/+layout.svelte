@@ -207,6 +207,51 @@
     if (href === '/') return pathname === '/';
     return pathname === href || pathname.startsWith(href + '/');
   }
+
+  // ─── Section dropdown state ─────────────────────────────────────
+  //
+  // The horizontal nav previously rendered every item as a top-level
+  // pill — 12 of them after Wave 2 added /topology, which crowded the
+  // bar and forced a scroll on smaller viewports. Collapse each
+  // section (Operations / Configure / Admin / Resources) into a
+  // single dropdown button; the items live in a popover below.
+  //
+  // A section button is highlighted when any of its items is the
+  // active route — preserves the at-a-glance "where am I" cue.
+  let openSection: string | null = null;
+  function toggleSection(id: string) {
+    openSection = openSection === id ? null : id;
+  }
+  function closeSection() {
+    openSection = null;
+  }
+  // Close any open dropdown when the user navigates (route changed).
+  $: if ($page.url.pathname) closeSection();
+  // Close on outside click / Escape.
+  function onDocClick(e: MouseEvent) {
+    if (!openSection) return;
+    const target = e.target as HTMLElement | null;
+    if (target && target.closest('[data-nav-section]')) return;
+    openSection = null;
+  }
+  function onDocKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && openSection) openSection = null;
+  }
+  onMount(() => {
+    document.addEventListener('click', onDocClick);
+    document.addEventListener('keydown', onDocKey);
+    return () => {
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('keydown', onDocKey);
+    };
+  });
+
+  function sectionActive(section: Section, pathname: string): boolean {
+    return section.items.some((it) => isActive(it.href, pathname));
+  }
+  function sectionBadge(section: Section): number {
+    return section.items.reduce((sum, it) => sum + (it.badge ?? 0), 0);
+  }
 </script>
 
 {#if showChrome}
@@ -229,26 +274,56 @@
         </a>
 
         <nav class="nav-row" aria-label="primary">
-          {#each navSections as section, i (section.id)}
-            {#if i > 0}<span class="nav-divider" aria-hidden="true"></span>{/if}
-            {#each section.items as item (item.href)}
-              {@const active = isActive(item.href, $page.url.pathname)}
-              <a
-                href={item.href}
-                class="nav-pill"
+          {#each navSections as section (section.id)}
+            {@const active = sectionActive(section, $page.url.pathname)}
+            {@const badge = sectionBadge(section)}
+            {@const isOpen = openSection === section.id}
+            <div class="nav-section" data-nav-section={section.id}>
+              <button
+                type="button"
+                class="nav-section-btn"
                 class:active
+                class:open={isOpen}
+                aria-haspopup="menu"
+                aria-expanded={isOpen}
                 aria-current={active ? 'page' : undefined}
-                title={section.label + ' · ' + item.label}
+                title={section.label}
+                on:click|stopPropagation={() => toggleSection(section.id)}
               >
-                <span class="nav-icon" aria-hidden="true">
-                  <svelte:component this={item.icon} size={15} strokeWidth={1.75} />
-                </span>
-                <span class="nav-label">{item.label}</span>
-                {#if item.badge && item.badge > 0}
-                  <span class="nav-badge">{item.badge > 99 ? '99+' : item.badge}</span>
+                <span class="nav-label">{section.label}</span>
+                {#if badge > 0}
+                  <span class="nav-badge">{badge > 99 ? '99+' : badge}</span>
                 {/if}
-              </a>
-            {/each}
+                <span class="nav-chevron" aria-hidden="true">
+                  <svg viewBox="0 0 10 6" width="10" height="6" fill="none">
+                    <path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </span>
+              </button>
+
+              {#if isOpen}
+                <div class="nav-menu" role="menu" aria-label={section.label}>
+                  {#each section.items as item (item.href)}
+                    {@const itemActive = isActive(item.href, $page.url.pathname)}
+                    <a
+                      href={item.href}
+                      class="nav-menu-item"
+                      class:active={itemActive}
+                      role="menuitem"
+                      aria-current={itemActive ? 'page' : undefined}
+                    >
+                      <span class="nav-menu-icon" aria-hidden="true">
+                        <svelte:component this={item.icon} size={15} strokeWidth={1.75} />
+                      </span>
+                      <span class="nav-menu-label">{item.label}</span>
+                      {#if item.badge && item.badge > 0}
+                        <span class="nav-badge nav-badge-inline">{item.badge > 99 ? '99+' : item.badge}</span>
+                      {/if}
+                    </a>
+                  {/each}
+                </div>
+              {/if}
+            </div>
           {/each}
         </nav>
 
@@ -416,32 +491,106 @@
     margin-inline: 0.375rem;
     flex-shrink: 0;
   }
-  .nav-pill {
+
+  /* ─── Section dropdown buttons ─────────────────────────────────── */
+  .nav-section {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  .nav-section-btn {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    padding-inline: 0.625rem;
-    padding-block: 0.375rem;
+    padding-inline: 0.75rem;
+    padding-block: 0.4rem;
     border-radius: 0.625rem;
+    border: 1px solid transparent;
+    background: transparent;
     color: var(--text-muted);
-    text-decoration: none;
     font-size: 0.8125rem;
     font-weight: 500;
-    transition: background-color 150ms, color 150ms;
-    flex-shrink: 0;
+    font-family: inherit;
+    cursor: pointer;
     white-space: nowrap;
+    transition: background-color 150ms, color 150ms, border-color 150ms;
   }
-  .nav-pill:hover {
+  .nav-section-btn:hover {
     background: var(--surface-2);
     color: var(--text);
   }
-  .nav-pill.active {
+  .nav-section-btn.active {
     background: var(--surface-2);
     color: var(--text);
     font-weight: 600;
     box-shadow: inset 0 -2px 0 var(--primary);
   }
-  .nav-icon {
+  .nav-section-btn.open {
+    background: var(--surface-2);
+    color: var(--text);
+    border-color: var(--border);
+  }
+  .nav-chevron {
+    display: inline-flex;
+    color: var(--text-tertiary);
+    transition: transform 150ms;
+  }
+  .nav-section-btn.open .nav-chevron {
+    transform: rotate(180deg);
+  }
+  .nav-section-btn:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  .nav-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    inset-inline-start: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-inline-size: 12rem;
+    padding: 0.375rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    box-shadow: 0 8px 28px -8px rgba(0, 0, 0, 0.28);
+  }
+  :global([data-theme='light']) .nav-menu {
+    box-shadow: 0 8px 28px -8px rgba(51, 63, 72, 0.18);
+  }
+  .nav-menu-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding-inline: 0.625rem;
+    padding-block: 0.45rem;
+    border-radius: 0.5rem;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background-color 120ms, color 120ms;
+  }
+  .nav-menu-item:hover,
+  .nav-menu-item:focus-visible {
+    background: var(--surface-2);
+    color: var(--text);
+    outline: none;
+  }
+  .nav-menu-item.active {
+    background: var(--surface-2);
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: inset 2px 0 0 var(--primary);
+  }
+  :global([dir='rtl']) .nav-menu-item.active {
+    box-shadow: inset -2px 0 0 var(--primary);
+  }
+  .nav-menu-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -449,9 +598,18 @@
     color: inherit;
     flex-shrink: 0;
   }
-  .nav-pill.active .nav-icon {
+  .nav-menu-item.active .nav-menu-icon {
     color: var(--primary);
   }
+  .nav-menu-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .nav-badge-inline {
+    margin-inline-start: auto;
+  }
+
   .nav-label {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -566,10 +724,7 @@
   }
 
   @media (max-width: 900px) {
-    .nav-label {
-      display: none;
-    }
-    .nav-pill {
+    .nav-section-btn {
       padding-inline: 0.5rem;
     }
   }
