@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"mqConnector/internal/ai"
 	"mqConnector/internal/audit"
 	"mqConnector/internal/auth"
 	"mqConnector/internal/config"
@@ -89,6 +90,62 @@ func main() {
 	if err := run(*configPath); err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// buildAI constructs the LLM provider + audit logger + counter from
+// the AI config. Returns the no-op sentinel when the AI subsystem is
+// disabled / unconfigured so handlers can always invoke the provider
+// without nil-checking; the gate that prevents an actual HTTP call is
+// the ai.Config.Allows() check inside each feature.
+//
+// The translation from config.AIConfig → ai.Config lives here so the
+// config package stays free of an internal/ai dependency.
+func buildAI(cfg config.AIConfig, store *storage.Store, logger *slog.Logger) (ai.LLMProvider, ai.AuditLogger, *ai.CallCounter, ai.Config) {
+	features := make([]ai.Capability, 0, len(cfg.Features))
+	for _, f := range cfg.Features {
+		features = append(features, ai.Capability(f))
+	}
+	aiCfg := ai.Config{
+		Enabled:    cfg.Enabled,
+		Provider:   cfg.Provider,
+		Endpoint:   cfg.Endpoint,
+		Model:      cfg.Model,
+		AuthHeader: cfg.AuthHeader,
+		TimeoutMs:  cfg.TimeoutMs,
+		MaxTokens:  cfg.MaxTokens,
+		Features:   features,
+		AuditEvery: cfg.AuditEveryEnabled(),
+	}
+	counter := ai.NewCallCounter()
+	var auditLogger ai.AuditLogger = ai.NoopAuditLogger{}
+	if store != nil && store.AIAudit != nil {
+		store.AIAudit.SetLogger(logger.With("component", "ai_audit"))
+		auditLogger = store.AIAudit
+	}
+	// No endpoint or disabled → noop sentinel. Handlers still see a
+	// non-nil provider and the Allows() gate still runs; the
+	// fallback path activates on ErrAINotAvailable from the noop.
+	if !cfg.Enabled || cfg.Endpoint == "" {
+		if cfg.Enabled && cfg.Endpoint == "" {
+			logger.Warn("ai enabled but endpoint empty; falling back to no-op provider",
+				"provider", cfg.Provider)
+		}
+		return ai.NewNoopProvider(), auditLogger, counter, aiCfg
+	}
+	switch cfg.Provider {
+	case "", "openai_compatible":
+		provider := ai.NewOpenAIProvider(aiCfg, counter, auditLogger,
+			logger.With("component", "ai_provider", "provider", "openai_compatible"))
+		logger.Info("ai provider enabled",
+			"endpoint", cfg.Endpoint,
+			"model", cfg.Model,
+			"features", cfg.Features)
+		return provider, auditLogger, counter, aiCfg
+	default:
+		logger.Warn("ai provider not recognised; falling back to no-op",
+			"provider", cfg.Provider)
+		return ai.NewNoopProvider(), auditLogger, counter, aiCfg
 	}
 }
 
@@ -490,6 +547,12 @@ func run(configPath string) error {
 	// Health
 	checker := health.NewChecker(store, metricsStore, version)
 
+	// AI subsystem. When disabled / unconfigured, buildAI returns a
+	// no-op provider so handlers can rely on the field being non-nil
+	// and the Allows() gate still short-circuits before any HTTP
+	// work.
+	aiProvider, aiAudit, aiCounter, aiCfg := buildAI(cfg.AI, store, logger)
+
 	// Server
 	srv, err := server.New(cfg, server.Deps{
 		Auth:       authSvc,
@@ -502,6 +565,10 @@ func run(configPath string) error {
 		Leadership: leaseRunner, // nil when leadership is disabled
 		Sealer:     sealer,      // nil when MQC_MASTER_KEY is unset
 		Logger:     logger,
+		AIProvider: aiProvider,
+		AIAudit:    aiAudit,
+		AICounter:  aiCounter,
+		AIConfig:   aiCfg,
 	})
 	if err != nil {
 		return fmt.Errorf("init server: %w", err)

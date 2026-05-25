@@ -193,3 +193,39 @@ secrets:
     ca_file: ""               # optional PEM CA bundle for Vault TLS
     insecure_skip_verify: false
     timeout: "10s"
+
+# AI subsystem (Wave 3+). Disabled by default. When enabled, mqConnector
+# can call an OpenAI-compatible LLM endpoint to produce optional
+# enrichments — DLQ cluster names, transformation suggestions, redaction-
+# pattern detection, etc. Every call is audited (ai_audit table) and the
+# Prometheus counter mqconnector_ai_calls_total reports provider health.
+#
+# AIR-GAPPED DEFAULT — features degrade to a deterministic path when the
+# endpoint is unreachable. No call leaves the process unless `enabled:
+# true` AND `endpoint` is non-empty AND the requested capability is in
+# the `features` allowlist.
+#
+# SUGGESTIONS NEVER AUTO-APPLY. Every AI output surfaces in the UI as
+# an "AI suggestion" chip; an operator must click apply for it to take
+# effect. This is a governance non-negotiable.
+#
+# To use, uncomment the block, point `endpoint` at any OpenAI-compatible
+# server (vLLM, Ollama, LiteLLM, TGI, llama.cpp server, OpenAI itself),
+# pick a `model`, and opt features in one at a time.
+#
+# ai:
+#   enabled: true
+#   provider: openai_compatible          # only provider type in v1
+#   endpoint: http://llm.internal/v1     # served at <endpoint>/chat/completions
+#   model: qwen2.5-14b-instruct
+#   auth_header: "Bearer sk-not-a-real-key"
+#   timeout_ms: 8000                     # per-call cap
+#   max_tokens: 1024                     # per-call output ceiling
+#   audit_every_call: true               # ai_audit row per attempt
+#   features:                            # opt features in one at a time
+#     - dlq_cluster_naming               # GET /api/v1/dlq/clusters?ai=names
+#     # - transformation_from_example    # (Wave 4)
+#     # - explain_why_summary            # (Wave 4)
+#     # - redaction_pattern_detect       # (Wave 4)
+ai:
+  enabled: false
