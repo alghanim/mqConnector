@@ -56,6 +56,7 @@ type Store struct {
 	DLQRedaction      *DLQRedactionRepo
 	Dedup             *DedupRepo
 	PipelineRevisions *PipelineRevisionRepo
+	AIAudit           *AIAuditRepo
 }
 
 // Dialect reports which SQL flavour the underlying connection speaks.
@@ -142,6 +143,7 @@ func Open(dsn string, maxOpen, maxIdle int) (*Store, error) {
 		DLQRedaction:      &DLQRedactionRepo{db: wrap},
 		Dedup:             &DedupRepo{db: wrap},
 		PipelineRevisions: &PipelineRevisionRepo{db: wrap},
+		AIAudit:           &AIAuditRepo{db: wrap},
 	}, nil
 }
 

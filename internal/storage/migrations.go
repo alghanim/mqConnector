@@ -763,6 +763,44 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_dlq_failing_stage
 	  ON dlq(tenant_id, failing_stage_name);
 	`,
+	// 0024 — AI audit log.
+	//
+	// Every AI provider call writes one row here. The schema is
+	// deliberately denormalised: we don't FK into pipelines /
+	// connections / tenants because rows must survive deletion of the
+	// referenced entity (governance evidence outlives the resource).
+	//
+	// Indexes:
+	//   - (at DESC)           — primary list-newest-first.
+	//   - (feature, at DESC)  — "show me all DLQ-naming calls last 24h".
+	//   - (tenant_id, at DESC)— per-tenant audit filter.
+	//
+	// at carries the UTC start time. error_msg is empty on success;
+	// outcome is one of {ok, timeout, error, rejected}. result_id_ref
+	// is an optional caller-supplied correlation (cluster fingerprint
+	// for DLQ-naming, pipeline id for transformation-from-example,
+	// etc.) — empty when the caller doesn't have one.
+	`
+	CREATE TABLE IF NOT EXISTS ai_audit (
+		id            TEXT PRIMARY KEY,
+		at            TIMESTAMP NOT NULL,
+		feature       TEXT NOT NULL,
+		caller_sub    TEXT NOT NULL DEFAULT '',
+		tenant_id     TEXT NOT NULL DEFAULT '',
+		prompt_hash   TEXT NOT NULL,
+		model         TEXT NOT NULL,
+		endpoint      TEXT NOT NULL,
+		tokens_in     INTEGER NOT NULL DEFAULT 0,
+		tokens_out    INTEGER NOT NULL DEFAULT 0,
+		latency_ms    INTEGER NOT NULL DEFAULT 0,
+		outcome       TEXT NOT NULL,
+		error_msg     TEXT NOT NULL DEFAULT '',
+		result_id_ref TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX IF NOT EXISTS idx_ai_audit_at        ON ai_audit(at DESC);
+	CREATE INDEX IF NOT EXISTS idx_ai_audit_feature   ON ai_audit(feature, at DESC);
+	CREATE INDEX IF NOT EXISTS idx_ai_audit_tenant_at ON ai_audit(tenant_id, at DESC);
+	`,
 }
 
 // postgresMigrationOverrides supersedes specific entries in `migrations`
