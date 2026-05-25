@@ -187,6 +187,49 @@
   $: outputBody = dryRun?.output ?? '';
   $: routes = dryRun?.routes ?? [];
 
+  // Last-run status line — a tight one-liner that summarises the
+  // most recent dry-run with per-stage timings, so the operator gets
+  // signal without scrolling to inspect the StageOutcomeStrip.
+  // We track when the result landed (Date.now() at the moment dryRun
+  // rotated) and render a coarse relative time alongside the total +
+  // per-stage durations.
+  let lastRunAt = 0;
+  let prevDryRunRef: PreviewResponse | null = null;
+  $: if (dryRun && dryRun !== prevDryRunRef) {
+    lastRunAt = Date.now();
+    prevDryRunRef = dryRun;
+  }
+  $: totalMs = (() => {
+    if (!runs.length) return 0;
+    let sum = 0;
+    for (const r of runs) sum += Math.round((r.duration_ns ?? 0) / 1_000_000);
+    return sum;
+  })();
+  // 1s tick so the relative-time label refreshes without a polling
+  // interval per dock instance. Cleared on destroy.
+  let nowTick = Date.now();
+  if (typeof window !== 'undefined') {
+    const tickId = setInterval(() => (nowTick = Date.now()), 1000);
+    onDestroy(() => clearInterval(tickId));
+  }
+  $: relativeAgo = (() => {
+    if (!lastRunAt) return '';
+    const diff = Math.max(0, nowTick - lastRunAt);
+    const sec = Math.floor(diff / 1000);
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    return `${hr}h ago`;
+  })();
+  // Latency bucket for the per-stage pill tone. Matches the existing
+  // thresholds elsewhere in the dock (fast/normal/slow/danger).
+  function latencyTone(ms: number): 'ok' | 'warn' | 'danger' {
+    if (ms < 10) return 'ok';
+    if (ms < 100) return 'warn';
+    return 'danger';
+  }
+
   // Overlay forwarding to the canvas. The strip emits an `overlays`
   // event with the zipped {stageId,failed,durationMs}[] — Studio.svelte
   // could re-publish to the canvas via prop, but a window-level event is
@@ -226,6 +269,30 @@
 
   {#if !collapsed}
     <div id="dock-body" class="dock-body">
+      {#if hasResult && lastRunAt > 0}
+        <!-- Last-run status line — one compact row above the picker so
+             the operator gets a quick "what just happened" summary
+             without scrolling into the outcomes strip. -->
+        <div class="dock-lastrun" role="status" aria-live="polite">
+          <span class="dock-lastrun-label">{t($locale, 'studio.dryrun.lastRun.label')}</span>
+          <span class="dock-lastrun-time">{relativeAgo}</span>
+          <span class="dock-lastrun-dot" aria-hidden="true">·</span>
+          <span class="dock-lastrun-total" data-tone={latencyTone(totalMs)}>{totalMs}ms</span>
+          <span class="dock-lastrun-totalcap">{t($locale, 'studio.dryrun.lastRun.totalMs')}</span>
+          <span class="dock-lastrun-stages">
+            {#each runs as r (r.name)}
+              {@const ms = Math.round((r.duration_ns ?? 0) / 1_000_000)}
+              <span class="dock-lastrun-stage" data-failed={r.failed ? 'true' : 'false'} data-tone={latencyTone(ms)}>
+                <span class="dock-lastrun-stage-mark" aria-hidden="true">
+                  {r.failed ? '✗' : '✓'}
+                </span>
+                <span class="dock-lastrun-stage-name">{r.name}</span>
+                <span class="dock-lastrun-stage-ms">{ms}ms</span>
+              </span>
+            {/each}
+          </span>
+        </div>
+      {/if}
       <div class="dock-top">
         <SamplePicker bind:value={sample} on:change={onSampleChange} />
       </div>
@@ -456,4 +523,80 @@
       grid-template-columns: 1fr;
     }
   }
+
+  /* Last-run summary — single inline strip with the most recent
+     dry-run's metadata. Sits above the picker so it stays visible
+     while the operator picks a new fixture. Pills follow the same
+     latency-bucket tones the rest of the dock uses. */
+  .dock-lastrun {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    padding: 0.375rem 0.5rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+  }
+  .dock-lastrun-label {
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+  }
+  .dock-lastrun-time {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .dock-lastrun-dot {
+    color: var(--text-tertiary);
+  }
+  .dock-lastrun-total {
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .dock-lastrun-total[data-tone='ok']     { color: var(--success); }
+  .dock-lastrun-total[data-tone='warn']   { color: var(--warning); }
+  .dock-lastrun-total[data-tone='danger'] { color: var(--danger); }
+  .dock-lastrun-totalcap {
+    color: var(--text-tertiary);
+  }
+  .dock-lastrun-stages {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+    margin-inline-start: 0.25rem;
+  }
+  .dock-lastrun-stage {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding-block: 0.0625rem;
+    padding-inline: 0.375rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+    font-size: 0.625rem;
+    color: var(--text);
+  }
+  .dock-lastrun-stage-mark {
+    color: var(--success);
+    font-weight: 700;
+  }
+  .dock-lastrun-stage[data-failed='true'] .dock-lastrun-stage-mark {
+    color: var(--danger);
+  }
+  .dock-lastrun-stage-name {
+    text-transform: capitalize;
+  }
+  .dock-lastrun-stage-ms {
+    color: var(--text-muted);
+  }
+  .dock-lastrun-stage[data-tone='warn']   .dock-lastrun-stage-ms { color: var(--warning); }
+  .dock-lastrun-stage[data-tone='danger'] .dock-lastrun-stage-ms { color: var(--danger); }
 </style>

@@ -104,10 +104,14 @@ describe('DryRunDock', () => {
       return new Response('not found', { status: 404 });
     });
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
-    const { getAllByText, getByText } = render(DryRunDock);
+    const { container, getByText } = render(DryRunDock);
     // Pick the first saved sample so the dock has a value.
-    const useButtons = await waitFor(() => getAllByText(/use this/i));
-    await fireEvent.click(useButtons[0]);
+    const chip = await waitFor(() => {
+      const el = container.querySelector('.sample-picker-chip') as HTMLButtonElement | null;
+      if (!el) throw new Error('sample chip not rendered');
+      return el;
+    });
+    await fireEvent.click(chip);
     // Now Run.
     await fireEvent.click(getByText('Run'));
     await waitFor(() => {
@@ -134,9 +138,13 @@ describe('DryRunDock', () => {
         headers: { 'Content-Type': 'application/json' }
       })
     ) as unknown as typeof fetch;
-    const { getAllByText, getByText } = render(DryRunDock);
-    const useButtons = await waitFor(() => getAllByText(/use this/i));
-    await fireEvent.click(useButtons[0]);
+    const { container, getByText } = render(DryRunDock);
+    const chip = await waitFor(() => {
+      const el = container.querySelector('.sample-picker-chip') as HTMLButtonElement | null;
+      if (!el) throw new Error('sample chip not rendered');
+      return el;
+    });
+    await fireEvent.click(chip);
     await fireEvent.click(getByText('Run'));
     await waitFor(() => {
       const s = get(studio);
@@ -181,10 +189,14 @@ describe('DryRunDock', () => {
       return new Response('nf', { status: 404 });
     });
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
-    const { getAllByText, component } = render(DryRunDock);
+    const { container, component } = render(DryRunDock);
     // Seed the sample by picking a fixture.
-    const useButtons = await waitFor(() => getAllByText(/use this/i));
-    await fireEvent.click(useButtons[0]);
+    const chip = await waitFor(() => {
+      const el = container.querySelector('.sample-picker-chip') as HTMLButtonElement | null;
+      if (!el) throw new Error('sample chip not rendered');
+      return el;
+    });
+    await fireEvent.click(chip);
     // Invoke the public method directly.
     await (
       component as unknown as {

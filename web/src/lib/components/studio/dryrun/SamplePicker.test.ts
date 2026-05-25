@@ -1,8 +1,8 @@
 // SamplePicker tests — the two-tab picker that feeds samples to the
 // dry-run dock. Four cases cover the spec:
-//   1. Saved tab lists the shipped SAMPLE_FIXTURES.
-//   2. Clicking "Use this" copies the fixture body into `value` AND
-//      emits 'change' with the body.
+//   1. Saved tab lists the shipped SAMPLE_FIXTURES as compact chips.
+//   2. Clicking a fixture chip copies the body into `value` AND emits
+//      'change' with the body.
 //   3. Paste-tab textarea binds two-way and emits change on input.
 //   4. File upload below 1 MiB reads + sets the value.
 //
@@ -20,20 +20,21 @@ afterEach(() => {
 describe('SamplePicker', () => {
   it('lists the shipped fixtures on the Saved tab', () => {
     const { getByText } = render(SamplePicker);
-    // Each fixture's label is rendered on its card.
+    // Each fixture's label is rendered on its chip.
     for (const f of SAMPLE_FIXTURES) {
       expect(getByText(f.label)).toBeInTheDocument();
     }
   });
 
-  it('Use-this populates value and emits change with the fixture body', async () => {
+  it('clicking a fixture chip populates value and emits change with the body', async () => {
     let received: string | null = null;
-    const { getAllByText } = render(SamplePicker, {
+    const { container } = render(SamplePicker, {
       events: { change: (e: CustomEvent<string>) => (received = e.detail) }
     });
-    // Two fixtures, two "Use this" buttons — click the first.
-    const buttons = getAllByText(/use this/i);
-    await fireEvent.click(buttons[0]);
+    // First chip in the strip — fixture[0].
+    const chip = container.querySelector('.sample-picker-chip') as HTMLButtonElement | null;
+    expect(chip).not.toBeNull();
+    await fireEvent.click(chip!);
     expect(received).toBe(SAMPLE_FIXTURES[0].body);
   });
 
