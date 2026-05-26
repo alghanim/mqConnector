@@ -605,6 +605,24 @@ func (e *Executor) runDepthSampler(ctx context.Context, logger *slog.Logger) {
 	if e.Metrics == nil || e.Pool == nil {
 		return
 	}
+	// Kafka opt-out: KafkaConnector.Connect() subscribes the consumer
+	// group as a side effect — there's no admin-only Connect path. So
+	// if we create a 2nd connector here (separate pool key) and that
+	// connector joins the same group, Kafka rebalances and may assign
+	// the partition(s) to the depth-sampler instead of the worker,
+	// leaving messages unconsumed. Discovered in the v1.2.0 integration
+	// drill on a 1-partition topic.
+	//
+	// Workaround: skip the sampler for Kafka. Operators still get full
+	// lag visibility from `kafka-consumer-groups.sh --describe` and
+	// the Kafka exporter / Burrow. A future patch should split the
+	// Kafka connector into admin-only and full-consume paths and
+	// re-enable sampling.
+	if e.Source.Type == mq.TypeKafka {
+		logger.Debug("depth sampler skipped for Kafka source",
+			"reason", "would join consumer group, may steal partition")
+		return
+	}
 	// First tick fires immediately so the metric appears within a
 	// scrape interval of pipeline start.
 	probe := func() {
