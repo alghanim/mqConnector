@@ -238,39 +238,29 @@
     return section.items.reduce((sum, it) => sum + (it.badge ?? 0), 0);
   }
 
-  // Position each native <div popover> under its triggering button.
-  // The popover lives in the browser's top layer — we just need to
-  // set its `top` + `left` to land it neatly below the trigger.
-  // The `beforetoggle` event fires when the popover is about to open
-  // OR close; we only reposition on opens.
-  onMount(() => {
-    const popovers = document.querySelectorAll<HTMLDivElement>('.nav-menu[popover]');
-    const handlers: Array<[HTMLDivElement, (e: Event) => void]> = [];
-    popovers.forEach((pop) => {
-      const handle = (e: Event) => {
-        const ev = e as ToggleEvent;
-        if (ev.newState !== 'open') return;
-        const trigger = document.querySelector<HTMLButtonElement>(
-          `[popovertarget="${pop.id}"]`
-        );
-        if (!trigger) return;
-        const r = trigger.getBoundingClientRect();
-        const isRTL = document.documentElement.dir === 'rtl';
-        const popWidth = Math.max(pop.offsetWidth, 224); // min-inline-size 14rem
-        // Anchor the popover's inline-start to the trigger's start in
-        // LTR (left); flip to align trailing edge in RTL.
-        const left = isRTL ? Math.max(r.right - popWidth, 8) : Math.min(r.left, window.innerWidth - popWidth - 8);
-        const top = r.bottom + 6;
-        pop.style.top = `${top}px`;
-        pop.style.left = `${left}px`;
-      };
-      pop.addEventListener('beforetoggle', handle);
-      handlers.push([pop, handle]);
-    });
-    return () => {
-      handlers.forEach(([p, h]) => p.removeEventListener('beforetoggle', h));
-    };
-  });
+  // Position a popover under its triggering button. Called on the
+  // `beforetoggle` event of each <div popover>; the browser fires
+  // this BEFORE the popover actually opens so coordinates land
+  // before paint.
+  function positionPopover(e: Event, triggerId: string) {
+    const ev = e as ToggleEvent;
+    if (ev.newState !== 'open') return;
+    const pop = ev.currentTarget as HTMLDivElement | null;
+    if (!pop) return;
+    const trigger = document.getElementById(triggerId);
+    if (!trigger) return;
+    const r = trigger.getBoundingClientRect();
+    const isRTL = document.documentElement.dir === 'rtl';
+    // offsetWidth may be 0 on the very first open (popover not yet
+    // measured); fall back to the CSS min-inline-size of 14rem.
+    const popWidth = Math.max(pop.offsetWidth, 224);
+    const left = isRTL
+      ? Math.max(r.right - popWidth, 8)
+      : Math.min(r.left, window.innerWidth - popWidth - 8);
+    const top = r.bottom + 6;
+    pop.style.top = `${top}px`;
+    pop.style.left = `${left}px`;
+  }
 </script>
 
 {#if showChrome}
@@ -297,6 +287,7 @@
             {@const active = sectionActive(section, $page.url.pathname)}
             {@const badge = sectionBadge(section)}
             {@const popoverId = `nav-menu-${section.id}`}
+            {@const triggerId = `nav-trigger-${section.id}`}
             <div class="nav-section">
               <!--
                 Native HTML popover API. The browser places <div popover>
@@ -307,6 +298,7 @@
                 Brave / Chrome / Edge 114+, Safari 17+, Firefox 125+.
               -->
               <button
+                id={triggerId}
                 type="button"
                 class="nav-section-btn"
                 class:active
@@ -332,6 +324,7 @@
                 class="nav-menu"
                 role="menu"
                 aria-label={section.label}
+                on:beforetoggle={(e) => positionPopover(e, triggerId)}
               >
                 {#each section.items as item (item.href)}
                   {@const itemActive = isActive(item.href, $page.url.pathname)}
