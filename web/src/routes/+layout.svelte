@@ -208,45 +208,27 @@
     return pathname === href || pathname.startsWith(href + '/');
   }
 
-  // ─── Section dropdown state ─────────────────────────────────────
+  // ─── Section dropdowns use the native HTML popover API ──────────
   //
-  // The horizontal nav previously rendered every item as a top-level
-  // pill — 12 of them after Wave 2 added /topology, which crowded the
-  // bar and forced a scroll on smaller viewports. Collapse each
-  // section (Operations / Configure / Admin / Resources) into a
-  // single dropdown button; the items live in a popover below.
+  // The browser handles open/close + outside-click + Escape natively
+  // by virtue of `popover="auto"` + `popovertarget="..."`. We only
+  // need to position each popover under its triggering button — see
+  // the `beforetoggle` listener in the onMount block below.
   //
-  // A section button is highlighted when any of its items is the
-  // active route — preserves the at-a-glance "where am I" cue.
-  let openSection: string | null = null;
-  function toggleSection(id: string) {
-    openSection = openSection === id ? null : id;
-  }
-  function closeSection() {
-    openSection = null;
-  }
-  // Close any open dropdown when the user navigates (route changed).
-  // afterNavigate fires once per successful navigation — much safer
-  // than a reactive on $page.url.pathname which can fire from
-  // any store update (search params, hash, etc.).
-  afterNavigate(() => closeSection());
-  // Close on outside click / Escape.
-  function onDocClick(e: MouseEvent) {
-    if (!openSection) return;
-    const target = e.target as HTMLElement | null;
-    if (target && target.closest('[data-nav-section]')) return;
-    openSection = null;
-  }
-  function onDocKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && openSection) openSection = null;
-  }
-  onMount(() => {
-    document.addEventListener('click', onDocClick);
-    document.addEventListener('keydown', onDocKey);
-    return () => {
-      document.removeEventListener('click', onDocClick);
-      document.removeEventListener('keydown', onDocKey);
-    };
+  // Native popover renders the element in the top layer, escaping
+  // every overflow:hidden clip and stacking context the old
+  // {#if isOpen}-rendered absolute popup got trapped in.
+  //
+  // Close-on-navigate: SvelteKit's afterNavigate hook calls
+  // hidePopover() on every open popover so navigating via a menu
+  // link tidies up the popover before the next route renders.
+  afterNavigate(() => {
+    if (typeof document === 'undefined') return;
+    document
+      .querySelectorAll<HTMLDivElement>('.nav-menu[popover]')
+      .forEach((p) => {
+        if (p.matches(':popover-open')) p.hidePopover();
+      });
   });
 
   function sectionActive(section: Section, pathname: string): boolean {
@@ -255,6 +237,40 @@
   function sectionBadge(section: Section): number {
     return section.items.reduce((sum, it) => sum + (it.badge ?? 0), 0);
   }
+
+  // Position each native <div popover> under its triggering button.
+  // The popover lives in the browser's top layer — we just need to
+  // set its `top` + `left` to land it neatly below the trigger.
+  // The `beforetoggle` event fires when the popover is about to open
+  // OR close; we only reposition on opens.
+  onMount(() => {
+    const popovers = document.querySelectorAll<HTMLDivElement>('.nav-menu[popover]');
+    const handlers: Array<[HTMLDivElement, (e: Event) => void]> = [];
+    popovers.forEach((pop) => {
+      const handle = (e: Event) => {
+        const ev = e as ToggleEvent;
+        if (ev.newState !== 'open') return;
+        const trigger = document.querySelector<HTMLButtonElement>(
+          `[popovertarget="${pop.id}"]`
+        );
+        if (!trigger) return;
+        const r = trigger.getBoundingClientRect();
+        const isRTL = document.documentElement.dir === 'rtl';
+        const popWidth = Math.max(pop.offsetWidth, 224); // min-inline-size 14rem
+        // Anchor the popover's inline-start to the trigger's start in
+        // LTR (left); flip to align trailing edge in RTL.
+        const left = isRTL ? Math.max(r.right - popWidth, 8) : Math.min(r.left, window.innerWidth - popWidth - 8);
+        const top = r.bottom + 6;
+        pop.style.top = `${top}px`;
+        pop.style.left = `${left}px`;
+      };
+      pop.addEventListener('beforetoggle', handle);
+      handlers.push([pop, handle]);
+    });
+    return () => {
+      handlers.forEach(([p, h]) => p.removeEventListener('beforetoggle', h));
+    };
+  });
 </script>
 
 {#if showChrome}
@@ -280,18 +296,24 @@
           {#each navSections as section (section.id)}
             {@const active = sectionActive(section, $page.url.pathname)}
             {@const badge = sectionBadge(section)}
-            {@const isOpen = openSection === section.id}
-            <div class="nav-section" data-nav-section={section.id}>
+            {@const popoverId = `nav-menu-${section.id}`}
+            <div class="nav-section">
+              <!--
+                Native HTML popover API. The browser places <div popover>
+                in its TOP LAYER — above every page stacking context —
+                and handles outside-click + Escape close natively. This
+                bypasses every Svelte / CSS stacking-context bug that
+                an `{#if isOpen}`-rendered absolute popup can hit.
+                Brave / Chrome / Edge 114+, Safari 17+, Firefox 125+.
+              -->
               <button
                 type="button"
                 class="nav-section-btn"
                 class:active
-                class:open={isOpen}
+                popovertarget={popoverId}
                 aria-haspopup="menu"
-                aria-expanded={isOpen}
                 aria-current={active ? 'page' : undefined}
                 title={section.label}
-                on:click|stopPropagation={() => toggleSection(section.id)}
               >
                 <span class="nav-label">{section.label}</span>
                 {#if badge > 0}
@@ -304,28 +326,32 @@
                 </span>
               </button>
 
-              {#if isOpen}
-                <div class="nav-menu" role="menu" aria-label={section.label}>
-                  {#each section.items as item (item.href)}
-                    {@const itemActive = isActive(item.href, $page.url.pathname)}
-                    <a
-                      href={item.href}
-                      class="nav-menu-item"
-                      class:active={itemActive}
-                      role="menuitem"
-                      aria-current={itemActive ? 'page' : undefined}
-                    >
-                      <span class="nav-menu-icon" aria-hidden="true">
-                        <svelte:component this={item.icon} size={15} strokeWidth={1.75} />
-                      </span>
-                      <span class="nav-menu-label">{item.label}</span>
-                      {#if item.badge && item.badge > 0}
-                        <span class="nav-badge nav-badge-inline">{item.badge > 99 ? '99+' : item.badge}</span>
-                      {/if}
-                    </a>
-                  {/each}
-                </div>
-              {/if}
+              <div
+                id={popoverId}
+                popover="auto"
+                class="nav-menu"
+                role="menu"
+                aria-label={section.label}
+              >
+                {#each section.items as item (item.href)}
+                  {@const itemActive = isActive(item.href, $page.url.pathname)}
+                  <a
+                    href={item.href}
+                    class="nav-menu-item"
+                    class:active={itemActive}
+                    role="menuitem"
+                    aria-current={itemActive ? 'page' : undefined}
+                  >
+                    <span class="nav-menu-icon" aria-hidden="true">
+                      <svelte:component this={item.icon} size={15} strokeWidth={1.75} />
+                    </span>
+                    <span class="nav-menu-label">{item.label}</span>
+                    {#if item.badge && item.badge > 0}
+                      <span class="nav-badge nav-badge-inline">{item.badge > 99 ? '99+' : item.badge}</span>
+                    {/if}
+                  </a>
+                {/each}
+              </div>
             </div>
           {/each}
         </nav>
@@ -496,14 +522,6 @@
     inline-size: 0;
     scrollbar-width: thin;
   }
-  .nav-divider {
-    inline-size: 1px;
-    block-size: 20px;
-    background: var(--border);
-    margin-inline: 0.375rem;
-    flex-shrink: 0;
-  }
-
   /* ─── Section dropdown buttons ─────────────────────────────────── */
   .nav-section {
     position: relative;
@@ -542,44 +560,52 @@
     font-weight: 600;
     box-shadow: inset 0 -2px 0 var(--primary);
   }
-  .nav-section-btn.open {
-    background: var(--surface-2);
-    color: var(--text);
-    border-color: var(--border);
-  }
   .nav-chevron {
     display: inline-flex;
     color: var(--text-tertiary);
     transition: transform 150ms;
   }
-  .nav-section-btn.open .nav-chevron {
-    transform: rotate(180deg);
-  }
+  /*
+   * The native popover doesn't propagate "open" state back to the
+   * trigger as a class. Use the chevron's CSS variable mirror set on
+   * the body when ANY popover is open, OR fall back to no rotation —
+   * the chevron-direction signal isn't load-bearing now that the
+   * popover itself appears on click.
+   */
   .nav-section-btn:focus-visible {
     outline: 2px solid var(--primary);
     outline-offset: 2px;
   }
 
+  /*
+   * Native HTML popover. The browser places this in its top layer —
+   * outside every stacking context, NOT clipped by any ancestor's
+   * overflow — and handles outside-click + Esc close natively.
+   *
+   * Default popover positioning is viewport-centered. We override
+   * with a `position: fixed` + JS-computed top/left set on the
+   * `beforetoggle` event (see positionPopover action below).
+   */
   .nav-menu {
-    /* Anchored to the section wrapper, lifted above every other layer.
-       z-index 70 + the topnav's isolation: isolate ensures no parent
-       stacking context can trap us. Min-inline-size keeps the popover
-       a readable shape even for short labels. */
-    position: absolute;
-    top: calc(100% + 6px);
-    inset-inline-start: 0;
-    z-index: 70;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-inline-size: 14rem;
-    padding: 0.5rem;
-    background: var(--surface-highest, var(--surface-high));
+    margin: 0;
     border: 1px solid var(--border-strong);
     border-radius: 0.75rem;
+    padding: 0.5rem;
+    min-inline-size: 14rem;
+    background: var(--surface-highest, var(--surface-high));
+    color: var(--text);
     box-shadow:
       0 1px 3px rgba(0, 0, 0, 0.25),
       0 16px 40px -10px rgba(0, 0, 0, 0.55);
+    /* Closed state: native popover hides it. Open state: flex column. */
+    flex-direction: column;
+    gap: 2px;
+    inset: unset;
+    /* fixed positioning lives in the top layer regardless of ancestors. */
+    position: fixed;
+  }
+  .nav-menu:popover-open {
+    display: flex;
   }
   :global([data-theme='light']) .nav-menu {
     background: var(--surface);
