@@ -23,6 +23,7 @@ import (
 	"mqConnector/internal/auth"
 	"mqConnector/internal/config"
 	"mqConnector/internal/dlq"
+	"mqConnector/internal/explain"
 	"mqConnector/internal/health"
 	"mqConnector/internal/leadership"
 	"mqConnector/internal/metrics"
@@ -76,6 +77,13 @@ type Server struct {
 	// before the process exits. Increment with Add(1) immediately
 	// before `go` and Done() in the goroutine's defer.
 	pendingBackgroundOps sync.WaitGroup
+
+	// explainEngine composes existing telemetry into structured
+	// "why is this state happening" explanations. Lazy-built in
+	// New from the live deps so handler code can assume a non-nil
+	// engine. The engine's own Source fields fan out to the
+	// underlying repos / metrics / manager.
+	explainEngine *explain.Engine
 
 	// topologyRates is the per-pipeline rate sampler used by the
 	// /api/v1/topology aggregator to derive msg_per_min from
@@ -189,6 +197,10 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 	if deps.Pipeline != nil {
 		deps.Pipeline.SetWasmRuntime(s.wasmRuntime)
 	}
+	// Wire the explain engine — composable telemetry → structured
+	// "why" explanations. Sub-Source nils are fine; the engine
+	// degrades gracefully when a source isn't wired.
+	s.explainEngine = buildExplainEngine(deps.Store, deps.Metrics, deps.Pipeline)
 	go s.loginLimiter.gc(s.stopGC)
 	go s.tenantLimiter.gc(s.stopGC)
 	go s.sensitiveLimiter.gc(s.stopGC)

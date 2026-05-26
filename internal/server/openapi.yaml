@@ -2393,6 +2393,116 @@ paths:
                         status: { type: string, enum: [connected, error, disabled, idle] }
                         last_error: { type: string }
 
+  /api/v1/explain/{subject}/{id}:
+    parameters:
+      - in: path
+        name: subject
+        required: true
+        description: |
+          The kind of state being explained. One of:
+          `circuit` (pipeline outbound breaker), `drift` (pipeline
+          validate-stage failure rate), `latency` (per-stage
+          latency waterfall), `dlq_cluster` (rollup of a single
+          fingerprint), `dlq_entry` (one DLQ row).
+        schema:
+          type: string
+          enum: [circuit, drift, latency, dlq_cluster, dlq_entry]
+      - in: path
+        name: id
+        required: true
+        description: |
+          The keying id for the subject. pipeline_id for
+          circuit/drift/latency, fingerprint for dlq_cluster,
+          entry id for dlq_entry.
+        schema: { type: string }
+    get:
+      tags: [pipelines]
+      summary: Composable structured "why" answer for one operational subject.
+      description: |
+        Composes existing telemetry (metrics counters, DLQ rows,
+        audit trail, breaker state, latency histograms) into a
+        structured Explanation document. The frontend drilldown
+        drawer renders Sections in order, Facts as label/value
+        rows, and Headline above all. Best-effort: a single
+        sub-source failure yields a degraded Explanation rather
+        than a 500.
+
+        Tenant-scoped via the session cookie; viewer minimum.
+
+        Optional `?ai=summary` adds a 2-sentence LLM paraphrase
+        of the Explanation when the AI subsystem is enabled with
+        the `explain_why_summary` capability. On provider
+        failure: `ai_source="deterministic"` and the UI should
+        fall back to the Headline as the summary.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: query
+          name: ai
+          description: |
+            Opt-in AI sidecar. `summary` triggers the LLM
+            paraphrase when the capability is allowed. Any other
+            value is ignored.
+          schema: { type: string, enum: [summary] }
+      responses:
+        '200':
+          description: Structured explanation, optionally with AI summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subject, id, headline, severity, facts, as_of]
+                properties:
+                  subject:
+                    type: string
+                    enum: [circuit, drift, latency, dlq_cluster, dlq_entry]
+                  id:       { type: string }
+                  headline: { type: string }
+                  severity:
+                    type: string
+                    enum: [info, warning, critical]
+                  facts:
+                    type: array
+                    items:
+                      type: object
+                      required: [label, value]
+                      properties:
+                        label:  { type: string }
+                        value:  { type: string }
+                        source: { type: string }
+                        as_of:  { type: string, format: date-time }
+                  sections:
+                    type: array
+                    items:
+                      type: object
+                      required: [kind, title, data]
+                      properties:
+                        kind:  { type: string, description: "Renderer hint: timeline | stages | fields | narrative | table" }
+                        title: { type: string }
+                        data:  { description: "Payload typed per kind." }
+                  as_of:   { type: string, format: date-time }
+                  sources:
+                    type: array
+                    items: { type: string }
+                  ai_summary:
+                    type: string
+                    description: |
+                      LLM-produced 2-sentence paraphrase. Present
+                      only when `?ai=summary` was requested and
+                      the provider returned successfully.
+                  ai_source:
+                    type: string
+                    enum: [ai, deterministic]
+                    description: |
+                      Source of the summary. `ai` when the LLM
+                      answered; `deterministic` when the
+                      provider failed and the UI should fall
+                      back to the Headline. Absent when
+                      `?ai=summary` was not requested.
+        '400':
+          description: Unknown subject.
+        '404':
+          description: Id not found for the subject (cross-tenant indistinguishable).
+
   /api/v1/samples/extract:
     post:
       tags: [pipelines]

@@ -222,6 +222,13 @@ func (s *Server) routes() http.Handler {
 		// for the topology page. Viewer-readable; tenant-scoped.
 		r.Get("/api/v1/topology", s.handleTopology)
 
+		// Wave 4 — Explain endpoint. Composable telemetry → a
+		// structured "why" answer for one of the known subjects
+		// (circuit, drift, latency, dlq_cluster, dlq_entry).
+		// Viewer-readable; tenant-scoped. Optional ?ai=summary
+		// gates on the CapExplainWhySummary capability.
+		r.Get("/api/v1/explain/{subject}/{id}", s.handleExplain)
+
 		r.Route("/api/v1/dlq", func(r chi.Router) {
 			r.Get("/", s.handleListDLQ)
 			r.Get("/groups", s.handleGroupDLQ)
