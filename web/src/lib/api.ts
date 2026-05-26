@@ -165,6 +165,11 @@ export interface Pipeline {
   schema_id?: string;
   filter_paths: string[];
   enabled: boolean;
+  // requires_approval gates the /deploy endpoint: when true, callers
+  // must supply a non-empty `approver` field or the server returns 409.
+  // Surfaced here so the DeployDialog can show/hide the approver input
+  // and the front-end can pre-validate before the round trip.
+  requires_approval?: boolean;
   created_at?: string;
   updated_at?: string;
   // effective_role is the caller's resolved role for this pipeline:
@@ -190,11 +195,25 @@ export type StageType = 'filter' | 'transform' | 'translate' | 'route' | 'script
 
 export interface Schema {
   id?: string;
+  tenant_id?: string;
   name: string;
-  schema_type: 'json_schema' | 'xsd';
+  schema_type: 'json_schema' | 'xsd' | 'protobuf';
   content: string;
   created_at?: string;
   updated_at?: string;
+}
+
+// Plugin metadata returned by GET /api/v1/plugins. The blob bytes are
+// never sent to the browser — the list view + dropdown just need name,
+// size, and upload time. Upload happens via multipart POST elsewhere.
+export interface Plugin {
+  id?: string;
+  tenant_id?: string;
+  name: string;
+  sha256?: string;
+  size_bytes?: number;
+  uploaded_by?: string;
+  uploaded_at?: string;
 }
 
 export interface Stage {
@@ -242,6 +261,122 @@ export interface DLQEntry {
   retry_count: number;
   last_retry_at?: string;
   created_at: string;
+}
+
+// ─── DLQ Intelligence (Wave 3) ───────────────────────────────────
+//
+// Wave 3 backend (T1-T4) added a cluster surface on top of the flat
+// DLQ list: failures get fingerprinted into recurring patterns so
+// operators can triage by pattern, not by row.
+
+/**
+ * AINameResult mirrors `internal/dlq/cluster.NameResult` — the LLM
+ * (or deterministic fallback) output for a cluster's human-friendly
+ * title + 2-sentence summary + 1-sentence next-action suggestion.
+ *
+ * Field lengths are server-enforced (≤80/240/200 chars) but the UI
+ * doesn't depend on them — caps are defensive on render, not on parse.
+ */
+export interface AINameResult {
+  title: string;
+  summary: string;
+  suggestion: string;
+}
+
+/**
+ * DLQCluster is one entry in the `clusters[]` array of
+ * GET /api/v1/dlq/clusters. Each cluster groups DLQ entries that
+ * share the same error-text fingerprint.
+ *
+ * `ai_name` is present only when the request was made with
+ * `?ai=names`; `ai_source` then tells the UI whether the title came
+ * from the LLM ("ai") or the deterministic backstop ("deterministic").
+ * We badge AI-sourced names so an operator knows the difference.
+ */
+export interface DLQCluster {
+  fingerprint: string;
+  template: string;
+  count: number;
+  first_seen: string;
+  last_seen: string;
+  pipelines_affected: string[];
+  failing_stages: string[];
+  representative_id: string;
+  recent_ids: string[];
+  ai_name?: AINameResult;
+  ai_source?: 'ai' | 'deterministic';
+}
+
+export interface DLQClustersResponse {
+  generated_at: string;
+  total: number;
+  returned: number;
+  clusters: DLQCluster[];
+}
+
+/**
+ * DLQReplaySimStageRun mirrors `replaySimStageRunJSON` on the server —
+ * shape identical to the Studio DryRun StageRun so we can reuse the
+ * same visual treatment for stage outcomes.
+ */
+export interface DLQReplaySimStageRun {
+  name: string;
+  duration_ns: number;
+  failed: boolean;
+  body?: string;
+  format?: string;
+  err?: string;
+}
+
+/**
+ * DLQReplaySimResponse is the wire envelope for
+ * POST /api/v1/dlq/{id}/replay-sim. `would_succeed` is the headline
+ * the UI surfaces in a confidence pill; `stage_runs` populates the
+ * outcome strip; `failing_stage` (when set) tells the operator
+ * exactly where the replay would die again.
+ */
+export interface DLQReplaySimResponse {
+  entry_id: string;
+  pipeline_id: string;
+  revision_number: number;
+  would_succeed: boolean;
+  stage_runs: DLQReplaySimStageRun[];
+  final_output?: string;
+  format?: string;
+  error?: string;
+  failing_stage?: string;
+}
+
+/**
+ * DLQDiffSide is the per-side metadata on the diff response — enough
+ * for the action drawer to render the row header without a separate
+ * /dlq/{id} fetch for the compare-to partner.
+ */
+export interface DLQDiffSide {
+  id: string;
+  pipeline_id: string;
+  created_at: string;
+  error_reason: string;
+  fingerprint: string;
+  template: string;
+  body: string;
+  format: string;
+}
+
+/**
+ * DLQDiffLineOp — one operation in the server-computed line diff.
+ * `op` is one of `eq` | `add` | `del`; the PayloadDiff chart primitive
+ * renders these directly without a client-side LCS pass.
+ */
+export interface DLQDiffLineOp {
+  op: 'eq' | 'add' | 'del';
+  text: string;
+}
+
+export interface DLQDiffResponse {
+  from: DLQDiffSide;
+  to: DLQDiffSide;
+  diff: DLQDiffLineOp[];
 }
 
 export interface PipelineMetric {
@@ -394,4 +529,145 @@ export interface ConfigImportResult {
   connections: number;
   pipelines: number;
   dry_run?: boolean;
+}
+
+// ─── topology ────────────────────────────────────────────────────
+// Aggregator shape returned by GET /api/v1/topology. The Live
+// Topology page renders one node per `connections[]` entry and one
+// edge per `pipelines[]` entry — see TopologyGraph.svelte for the
+// rendering pipeline + circuit-state colour mapping.
+
+export type CircuitState = 'closed' | 'open' | 'half-open' | 'unknown';
+
+export interface TopologyConnection {
+  id: string;
+  name: string;
+  type: ConnectionType;
+  topic?: string;
+  // Backend omits depth when the connector can't sample it. Treat
+  // null/undefined as "unknown", not zero.
+  depth?: number | null;
+  connected: boolean;
+}
+
+export interface TopologyPipeline {
+  id: string;
+  name: string;
+  source_id: string;
+  destination_id: string;
+  enabled: boolean;
+  msg_per_min: number;
+  processed: number;
+  failed: number;
+  avg_latency_ms: number;
+  dlq_depth: number;
+  circuit_state: CircuitState;
+  shadow_destination_id?: string;
+  shadow_percent?: number;
+  route_destination_ids?: string[];
+  status: 'connected' | 'error' | 'disabled' | 'idle' | string;
+  last_error?: string;
+}
+
+export interface TopologyResponse {
+  generated_at: string;
+  tenant_id: string;
+  connections: TopologyConnection[];
+  pipelines: TopologyPipeline[];
+}
+
+// ─── SLO alerts (Wave 4 T4) ───────────────────────────────────────
+// Wire shape of GET /api/v1/alerts/active. The in-process SLO
+// evaluator parses the same Prometheus rules YAML the operator's
+// Prometheus consumes so the binary surfaces firing alerts without
+// an external Alertmanager. AlertRibbon polls every 30 s and renders
+// a sticky band when ≥ 1 alert is firing.
+
+export type AlertSeverity = 'info' | 'warning' | 'critical' | string;
+
+export interface FiringAlert {
+  name: string;
+  severity: AlertSeverity;
+  value: number;
+  threshold?: string;
+  started_at: string;
+  annotations?: Record<string, string>;
+  labels?: Record<string, string>;
+  group?: string;
+  expr?: string;
+}
+
+export interface AlertsResponse {
+  generated_at: string;
+  total: number;
+  alerts: FiringAlert[];
+  evaluator_enabled: boolean;
+}
+
+// ─── explainer (Wave 4 T1+T2) ─────────────────────────────────────
+// Wire shape of GET /api/v1/explain/{subject}/{id}.
+//
+// The deterministic Explanation always lands; the AI sidecar
+// (`ai_summary` + `ai_source`) only appears when ?ai=summary is
+// requested. `ai_source` is "ai" when the LLM produced the text,
+// "deterministic" when ?ai=summary was set but the provider failed
+// (and the UI falls back to the structured headline as a paraphrase).
+//
+// Section kinds the renderer knows about today:
+//   - "stages"    — per-stage latency waterfall data
+//                   ({ stages: StageLatency[], total_p99: number })
+//   - "timeline"  — circuit breaker transitions, deploys, etc.
+//                   ({ at: string, from: string, to: string, reason?: string }[])
+//   - "fields"    — template-extracted variable fields
+//                   ({ name: string, value: string }[])
+//   - "narrative" — one-or-two-sentence prose paragraph (string)
+//
+// Unknown kinds get a defensive JSON dump per the spec; this keeps
+// the renderer additive across explainer evolution.
+
+export type ExplainSubject = 'circuit' | 'drift' | 'latency' | 'dlq_cluster' | 'dlq_entry';
+export type ExplainSeverity = 'info' | 'warning' | 'critical';
+
+export interface ExplainFact {
+  label: string;
+  value: string;
+  source?: string;
+  as_of?: string;
+}
+
+export interface ExplainSection {
+  kind: string;
+  title: string;
+  data: unknown;
+}
+
+export interface Explanation {
+  subject: string;
+  id: string;
+  headline: string;
+  severity: ExplainSeverity;
+  facts: ExplainFact[];
+  sections?: ExplainSection[];
+  as_of: string;
+  sources?: string[];
+  ai_summary?: string;
+  ai_source?: 'ai' | 'deterministic';
+}
+
+// LatencyStagesData is what `sections[0].data` carries when
+// `sections[0].kind === 'stages'`. Mirrors the
+// explain.StageLatency Go type — field names + units identical.
+export interface LatencyStage {
+  name: string;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  count?: number;
+  sum_ms?: number;
+  share_of_p99?: number;
+}
+
+export interface LatencyStagesData {
+  stages: LatencyStage[];
+  total_p99: number;
 }

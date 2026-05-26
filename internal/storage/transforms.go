@@ -55,6 +55,9 @@ func (r *TransformRepo) listByPipeline(ctx context.Context, pipelineID string, t
 	return out, rows.Err()
 }
 
+// ReplaceForPipeline opens its own tx and delegates to ReplaceForPipelineTx
+// so callers (the server-layer applyRevisionLive helper) that need to bundle
+// the replace into a wider transaction can share the same statements.
 func (r *TransformRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipelineID string, rules []*Transform) error {
 	if tenantID == "" {
 		return ErrTenantRequired
@@ -64,6 +67,18 @@ func (r *TransformRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipeli
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	if err := r.ReplaceForPipelineTx(ctx, tx, tenantID, pipelineID, rules); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ReplaceForPipelineTx is the tx-aware variant of ReplaceForPipeline.
+// Caller owns tx lifecycle.
+func (r *TransformRepo) ReplaceForPipelineTx(ctx context.Context, tx *Tx, tenantID, pipelineID string, rules []*Transform) error {
+	if tenantID == "" {
+		return ErrTenantRequired
+	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM transforms WHERE pipeline_id=? AND tenant_id=?`, pipelineID, tenantID); err != nil {
 		return fmt.Errorf("clear transforms: %w", err)
@@ -83,5 +98,5 @@ func (r *TransformRepo) ReplaceForPipeline(ctx context.Context, tenantID, pipeli
 			return fmt.Errorf("insert transform: %w", err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }

@@ -37,10 +37,12 @@ func (r *DLQRepo) Insert(ctx context.Context, tenantID string, e *DLQEntry) erro
 	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO dlq (id, tenant_id, pipeline_id, source_queue, original_msg, raw_msg, redacted,
-		                 error_reason, retry_count, created_at, next_retry_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                 error_reason, retry_count, created_at, next_retry_at,
+		                 error_fingerprint, error_template, failing_stage_name, failing_stage_index)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, tenantID, nullable(e.PipelineID), e.SourceQueue, e.OriginalMsg, rawMsg, e.Redacted,
-		e.ErrorReason, e.RetryCount, e.CreatedAt, nextRetry)
+		e.ErrorReason, e.RetryCount, e.CreatedAt, nextRetry,
+		e.ErrorFingerprint, e.ErrorTemplate, e.FailingStageName, e.FailingStageIndex)
 	if err != nil {
 		return fmt.Errorf("insert dlq: %w", err)
 	}
@@ -298,7 +300,7 @@ func (r *DLQRepo) GroupByError(ctx context.Context, tenantID string, limit int) 
 		var oldestT sql.NullTime
 		if err := rows.Scan(&g.Pattern, &g.Count, &oldestRaw); err == nil {
 			if oldestRaw.Valid {
-				if t, perr := parseSQLiteTimestamp(oldestRaw.String); perr == nil {
+				if t, perr := ParseSQLiteTimestamp(oldestRaw.String); perr == nil {
 					g.OldestAt = t
 				}
 			}
@@ -312,11 +314,12 @@ func (r *DLQRepo) GroupByError(ctx context.Context, tenantID string, limit int) 
 	return out, rows.Err()
 }
 
-// parseSQLiteTimestamp accepts the handful of formats SQLite emits
+// ParseSQLiteTimestamp accepts the handful of formats SQLite emits
 // when an aggregate (MIN, MAX) is applied to a DATETIME column.
 // pgx returns time.Time directly so this is only invoked on the
-// SQLite path.
-func parseSQLiteTimestamp(s string) (time.Time, error) {
+// SQLite path. Exported so other packages (e.g. internal/server's
+// DLQ-cluster scan) can reuse the same tolerant parser.
+func ParseSQLiteTimestamp(s string) (time.Time, error) {
 	for _, layout := range []string{
 		time.RFC3339Nano,
 		time.RFC3339,
@@ -324,6 +327,12 @@ func parseSQLiteTimestamp(s string) (time.Time, error) {
 		"2006-01-02 15:04:05.999999999Z07:00",
 		"2006-01-02 15:04:05-07:00",
 		"2006-01-02 15:04:05Z07:00",
+		// SQLite via modernc.org/sqlite emits the Go time.String() form
+		// on aggregates: "2026-05-25 21:11:08.271009 +0000 UTC". The
+		// numeric offset is what we actually want; the trailing zone
+		// name is a Go-stringer artefact.
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05 -0700 MST",
 		"2006-01-02 15:04:05",
 	} {
 		if t, err := time.Parse(layout, s); err == nil {
@@ -331,6 +340,289 @@ func parseSQLiteTimestamp(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("dlq: unparseable timestamp %q", s)
+}
+
+// DLQClusterFilter narrows ListClusters. Empty zero values mean "any
+// (within the tenant)". The PipelineID exact-match and Since lower-
+// bound mirror the DLQFilter shape used by the row-level list.
+type DLQClusterFilter struct {
+	PipelineID string
+	Since      *time.Time
+	MinCount   int
+	Limit      int
+}
+
+// DLQClusterRow is one fingerprint-bucket row from ListClusters. The
+// follow-up details (pipelines affected, failing stages, recent ids)
+// are queried per-cluster via separate small queries — see the HTTP
+// handler that consumes this for the rationale.
+type DLQClusterRow struct {
+	Fingerprint string
+	Template    string
+	Count       int
+	FirstSeen   time.Time
+	LastSeen    time.Time
+}
+
+// ListClusters groups DLQ rows by error_fingerprint + error_template
+// and returns the top-N clusters (sorted by count desc) for the named
+// tenant. Empty-fingerprint rows (legacy data + send-side attribution
+// gaps) are excluded — the HTTP layer surfaces them via the regular
+// list endpoint.
+func (r *DLQRepo) ListClusters(ctx context.Context, tenantID string, f DLQClusterFilter) ([]DLQClusterRow, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	if f.MinCount < 1 {
+		f.MinCount = 1
+	}
+	if f.Limit <= 0 {
+		f.Limit = 50
+	}
+	where := "tenant_id = ? AND error_fingerprint != ''"
+	args := []any{tenantID}
+	if f.PipelineID != "" {
+		where += " AND pipeline_id = ?"
+		args = append(args, f.PipelineID)
+	}
+	if f.Since != nil {
+		where += " AND created_at >= ?"
+		args = append(args, *f.Since)
+	}
+	args = append(args, f.MinCount, f.Limit)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT error_fingerprint, error_template,
+		       COUNT(*) AS cnt,
+		       MIN(created_at) AS first_seen,
+		       MAX(created_at) AS last_seen
+		FROM dlq
+		WHERE `+where+`
+		GROUP BY error_fingerprint, error_template
+		HAVING COUNT(*) >= ?
+		ORDER BY cnt DESC
+		LIMIT ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list dlq clusters: %w", err)
+	}
+	defer rows.Close()
+	out := make([]DLQClusterRow, 0, 8)
+	for rows.Next() {
+		c, err := scanDLQClusterRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// scanDLQClusterRow reads one GROUP BY row. SQLite returns aggregate
+// timestamps as TEXT and rejects scans into sql.NullTime; pgx returns
+// timestamps as time.Time and rejects scans into sql.NullString. We
+// use a tolerant interface{} scan and post-process: if the value is
+// already a time.Time (pgx), use it; if it's a string (SQLite),
+// parse via ParseSQLiteTimestamp.
+func scanDLQClusterRow(rows *sql.Rows) (DLQClusterRow, error) {
+	var c DLQClusterRow
+	var firstRaw, lastRaw any
+	if err := rows.Scan(&c.Fingerprint, &c.Template, &c.Count, &firstRaw, &lastRaw); err != nil {
+		return c, fmt.Errorf("scan dlq cluster: %w", err)
+	}
+	c.FirstSeen = coerceTimestamp(firstRaw)
+	c.LastSeen = coerceTimestamp(lastRaw)
+	return c, nil
+}
+
+// coerceTimestamp accepts whatever the driver hands back for an
+// aggregate timestamp column (string from SQLite, time.Time from pgx,
+// []byte from some mariadb-flavoured drivers) and returns a UTC
+// time.Time. Returns the zero value on nil or unparseable input —
+// the caller treats zero-time as "no rows yet" rather than failing
+// the whole rollup.
+func coerceTimestamp(v any) time.Time {
+	switch x := v.(type) {
+	case nil:
+		return time.Time{}
+	case time.Time:
+		return x.UTC()
+	case string:
+		if t, err := ParseSQLiteTimestamp(x); err == nil {
+			return t
+		}
+	case []byte:
+		if t, err := ParseSQLiteTimestamp(string(x)); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+// RecentForPipeline returns up to `limit` DLQ rows whose
+// pipeline_id matches, newest-first. When `since` is non-zero
+// it acts as a lower bound on created_at. Tenant-scoped — a
+// missing tenantID is rejected with ErrTenantRequired.
+//
+// Used by the internal/explain package's CircuitExplainer +
+// DriftExplainer + DLQRootCauseExplainer to sample representative
+// failure rows alongside the rollup data. Kept as its own helper
+// (rather than re-using ListFiltered) so the narrow read path
+// doesn't pull the page-count aggregate and so the SQL stays
+// fingerprint-friendly via the dlq_pipeline_id_created_at
+// composite index.
+func (r *DLQRepo) RecentForPipeline(ctx context.Context, tenantID, pipelineID string, limit int, since time.Time) ([]*DLQEntry, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	if pipelineID == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+	where := "tenant_id = ? AND pipeline_id = ?"
+	args := []any{tenantID, pipelineID}
+	if !since.IsZero() {
+		where += " AND created_at >= ?"
+		args = append(args, since.UTC())
+	}
+	args = append(args, limit)
+	rows, err := r.db.QueryContext(ctx,
+		dlqSelect+` WHERE `+where+` ORDER BY created_at DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("dlq recent for pipeline: %w", err)
+	}
+	defer rows.Close()
+	var out []*DLQEntry
+	for rows.Next() {
+		e, err := scanDLQ(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ClusterByFingerprint returns the cluster rollup for a single
+// fingerprint within the tenant. ErrNotFound when no rows share
+// the fingerprint. Counterpart to ListClusters that targets one
+// known fingerprint — used by the explain package's
+// DLQRootCauseExplainer for the "look up the cluster for this
+// entry" path.
+func (r *DLQRepo) ClusterByFingerprint(ctx context.Context, tenantID, fingerprint string) (DLQClusterRow, error) {
+	if tenantID == "" {
+		return DLQClusterRow{}, ErrTenantRequired
+	}
+	if fingerprint == "" {
+		return DLQClusterRow{}, ErrNotFound
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT error_fingerprint, error_template,
+		       COUNT(*) AS cnt,
+		       MIN(created_at) AS first_seen,
+		       MAX(created_at) AS last_seen
+		FROM dlq
+		WHERE tenant_id = ? AND error_fingerprint = ?
+		GROUP BY error_fingerprint, error_template`, tenantID, fingerprint)
+	var c DLQClusterRow
+	var firstRaw, lastRaw any
+	if err := row.Scan(&c.Fingerprint, &c.Template, &c.Count, &firstRaw, &lastRaw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return DLQClusterRow{}, ErrNotFound
+		}
+		return DLQClusterRow{}, fmt.Errorf("cluster by fingerprint: %w", err)
+	}
+	c.FirstSeen = coerceTimestamp(firstRaw)
+	c.LastSeen = coerceTimestamp(lastRaw)
+	return c, nil
+}
+
+// ClusterPipelines returns the distinct, alpha-sorted, non-empty
+// pipeline_ids for one fingerprint bucket. Used by the cluster detail
+// fan-out — empty pipeline_id (bridge endpoint failures) is dropped.
+func (r *DLQRepo) ClusterPipelines(ctx context.Context, tenantID, fingerprint string) ([]string, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	return r.queryStrings(ctx,
+		`SELECT DISTINCT COALESCE(pipeline_id, '') FROM dlq
+		 WHERE tenant_id = ? AND error_fingerprint = ?
+		 ORDER BY pipeline_id`,
+		tenantID, fingerprint)
+}
+
+// ClusterFailingStages returns the distinct, alpha-sorted failing
+// stage names for one fingerprint bucket. Empty stage names (send-
+// side failures with no stage attribution) are excluded.
+func (r *DLQRepo) ClusterFailingStages(ctx context.Context, tenantID, fingerprint string) ([]string, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	return r.queryStrings(ctx,
+		`SELECT DISTINCT failing_stage_name FROM dlq
+		 WHERE tenant_id = ? AND error_fingerprint = ? AND failing_stage_name != ''
+		 ORDER BY failing_stage_name`,
+		tenantID, fingerprint)
+}
+
+// ClusterRecentIDs returns the N most-recent entry ids in a cluster,
+// newest-first. Used by the detail panel's "show the latest examples"
+// affordance.
+func (r *DLQRepo) ClusterRecentIDs(ctx context.Context, tenantID, fingerprint string, limit int) ([]string, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	return r.queryStrings(ctx,
+		`SELECT id FROM dlq
+		 WHERE tenant_id = ? AND error_fingerprint = ?
+		 ORDER BY created_at DESC LIMIT ?`,
+		tenantID, fingerprint, limit)
+}
+
+// ClusterRepresentative returns the id of the oldest entry in a
+// cluster — operators usually want the original symptom for triage.
+// Returns ErrNotFound when no row matches (defensive; the caller
+// usually only invokes this after ListClusters returned the cluster).
+func (r *DLQRepo) ClusterRepresentative(ctx context.Context, tenantID, fingerprint string) (string, error) {
+	if tenantID == "" {
+		return "", ErrTenantRequired
+	}
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id FROM dlq
+		 WHERE tenant_id = ? AND error_fingerprint = ?
+		 ORDER BY created_at ASC LIMIT 1`,
+		tenantID, fingerprint)
+	var id string
+	if err := row.Scan(&id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return id, nil
+}
+
+// queryStrings runs a one-column-string query and collects the
+// results. Used by the cluster-detail helpers — keeping it in one
+// place avoids three near-identical 20-line stanzas.
+func (r *DLQRepo) queryStrings(ctx context.Context, sqlStr string, args ...any) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, sqlStr, args...)
+	if err != nil {
+		return nil, fmt.Errorf("dlq cluster detail query: %w", err)
+	}
+	defer rows.Close()
+	out := make([]string, 0, 4)
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // DLQStat is one row of the per-pipeline DLQ aggregate. OldestAt is
@@ -363,6 +655,41 @@ func (r *DLQRepo) Stats(ctx context.Context) ([]DLQStat, error) {
 			return nil, fmt.Errorf("dlq stats scan: %w", err)
 		}
 		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// CountByPipeline returns one (pipelineID → row count) entry per
+// pipeline in the named tenant that currently has any DLQ rows.
+// Pipelines with zero rows are omitted; callers expecting full
+// coverage default missing keys to 0. Tenant-scoped — used by the
+// /api/v1/topology aggregator to attach a depth column to every
+// pipeline in the live snapshot. One grouped scan, no application-
+// side aggregation.
+func (r *DLQRepo) CountByPipeline(ctx context.Context, tenantID string) (map[string]int64, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT COALESCE(pipeline_id, ''), COUNT(1)
+		FROM dlq
+		WHERE tenant_id = ?
+		GROUP BY pipeline_id`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("dlq count by pipeline: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var pid string
+		var n int64
+		if err := rows.Scan(&pid, &n); err != nil {
+			return nil, fmt.Errorf("dlq count scan: %w", err)
+		}
+		if pid == "" {
+			continue
+		}
+		out[pid] = n
 	}
 	return out, rows.Err()
 }
@@ -472,7 +799,8 @@ func (r *DLQRepo) ScheduleRetry(ctx context.Context, tenantID, id string, next *
 
 const dlqSelect = `
 SELECT id, tenant_id, COALESCE(pipeline_id, ''), source_queue, original_msg, raw_msg, redacted,
-       error_reason, retry_count, last_retry_at, next_retry_at, created_at
+       error_reason, retry_count, last_retry_at, next_retry_at, created_at,
+       error_fingerprint, error_template, failing_stage_name, failing_stage_index
 FROM dlq`
 
 func scanDLQ(s scanner) (*DLQEntry, error) {
@@ -480,7 +808,8 @@ func scanDLQ(s scanner) (*DLQEntry, error) {
 	var lastRetry, nextRetry sql.NullTime
 	err := s.Scan(&e.ID, &e.TenantID, &e.PipelineID, &e.SourceQueue, &e.OriginalMsg,
 		&e.RawMsg, &e.Redacted,
-		&e.ErrorReason, &e.RetryCount, &lastRetry, &nextRetry, &e.CreatedAt)
+		&e.ErrorReason, &e.RetryCount, &lastRetry, &nextRetry, &e.CreatedAt,
+		&e.ErrorFingerprint, &e.ErrorTemplate, &e.FailingStageName, &e.FailingStageIndex)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

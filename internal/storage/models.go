@@ -10,19 +10,19 @@ import "time"
 // explicit parameter and re-write the struct field from the argument
 // to make accidental cross-tenant writes a compile error.
 type Connection struct {
-	ID           string    `json:"id"`
-	TenantID     string    `json:"tenant_id"`
-	Name         string    `json:"name"`
-	Type         string    `json:"type"` // "ibm" | "rabbitmq" | "kafka"
-	QueueManager string    `json:"queue_manager,omitempty"`
-	ConnName     string    `json:"conn_name,omitempty"`
-	Channel      string    `json:"channel,omitempty"`
-	Username     string    `json:"username,omitempty"`
-	Password     string    `json:"password,omitempty"`
-	QueueName    string    `json:"queue_name,omitempty"`
-	URL          string    `json:"url,omitempty"`
-	Brokers      string    `json:"brokers,omitempty"`
-	Topic        string    `json:"topic,omitempty"`
+	ID           string `json:"id"`
+	TenantID     string `json:"tenant_id"`
+	Name         string `json:"name"`
+	Type         string `json:"type"` // "ibm" | "rabbitmq" | "kafka"
+	QueueManager string `json:"queue_manager,omitempty"`
+	ConnName     string `json:"conn_name,omitempty"`
+	Channel      string `json:"channel,omitempty"`
+	Username     string `json:"username,omitempty"`
+	Password     string `json:"password,omitempty"`
+	QueueName    string `json:"queue_name,omitempty"`
+	URL          string `json:"url,omitempty"`
+	Brokers      string `json:"brokers,omitempty"`
+	Topic        string `json:"topic,omitempty"`
 	// Broker TLS — see migration 0006. Paths point at PEM files on
 	// the connector host; the dialers read them at connect-time so a
 	// rotated cert takes effect on the next reconnect.
@@ -50,21 +50,21 @@ type Connection struct {
 	// (replay from broker retention head). Ignored once the group
 	// has any committed offset — the broker's stored offset wins.
 	InitialOffset string    `json:"initial_offset,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Pipeline is one source→destination flow with an ordered list of stages.
 type Pipeline struct {
-	ID            string    `json:"id"`
-	TenantID      string    `json:"tenant_id"`
-	Name          string    `json:"name"`
-	SourceID      string    `json:"source_id"`
-	DestinationID string    `json:"destination_id"`
-	OutputFormat  string    `json:"output_format"` // "same" | "json" | "xml" | "protobuf"
-	SchemaID      string    `json:"schema_id,omitempty"`
-	FilterPaths   []string  `json:"filter_paths"`
-	Enabled       bool      `json:"enabled"`
+	ID            string   `json:"id"`
+	TenantID      string   `json:"tenant_id"`
+	Name          string   `json:"name"`
+	SourceID      string   `json:"source_id"`
+	DestinationID string   `json:"destination_id"`
+	OutputFormat  string   `json:"output_format"` // "same" | "json" | "xml" | "protobuf"
+	SchemaID      string   `json:"schema_id,omitempty"`
+	FilterPaths   []string `json:"filter_paths"`
+	Enabled       bool     `json:"enabled"`
 	// Workers is the number of goroutines that drain the source in
 	// parallel for this pipeline. Defaults to 1. Bounded at 16 in the
 	// API layer; a single I/O-bound stage benefits most from 2–4.
@@ -106,9 +106,18 @@ type Pipeline struct {
 	// a shadow_destination_id is set (operator wants the config row to
 	// stick around without active shadowing). 100 mirrors every
 	// message.
-	ShadowPercent int       `json:"shadow_percent,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ShadowPercent int `json:"shadow_percent,omitempty"`
+	// RequiresApproval gates the deploy endpoint: when true, callers of
+	// POST /api/v1/pipelines/{id}/deploy MUST supply an `approver`
+	// field in the request body or the request is rejected 409. Added
+	// in migration 0022 alongside pipeline_revisions; default false so
+	// existing pipelines keep their save-and-ship behaviour. No UI to
+	// flip the flag in Wave 1 — the gate is latent until later waves
+	// add it. Persisted as 0/1 in SQLite; omitempty keeps the JSON
+	// shape tight for the default-false case.
+	RequiresApproval bool      `json:"requires_approval,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // Stage is one step in a pipeline's processing chain.
@@ -196,11 +205,11 @@ type Schema struct {
 //     form would corrupt the destination payload); falls back to
 //     OriginalMsg for legacy rows and for pipelines without rules.
 type DLQEntry struct {
-	ID          string     `json:"id"`
-	TenantID    string     `json:"tenant_id"`
-	PipelineID  string     `json:"pipeline_id,omitempty"`
-	SourceQueue string     `json:"source_queue,omitempty"`
-	OriginalMsg []byte     `json:"original_msg"`
+	ID          string `json:"id"`
+	TenantID    string `json:"tenant_id"`
+	PipelineID  string `json:"pipeline_id,omitempty"`
+	SourceQueue string `json:"source_queue,omitempty"`
+	OriginalMsg []byte `json:"original_msg"`
 	// RawMsg holds the sealed pre-redaction payload as produced by
 	// secrets.Service.Encrypt. Empty when no redaction was applied
 	// to this row. Never returned in list/get responses — the
@@ -215,7 +224,63 @@ type DLQEntry struct {
 	// reaping". Set by Push() to time.Now() + backoff if the pipeline's
 	// retry policy is non-zero.
 	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	// ErrorFingerprint is a 16-char hex SimHash over the tokenised
+	// error template. Two rows whose ErrorReason collapses to the same
+	// template share the same fingerprint, even when the human-visible
+	// strings differ in incidentals (UUIDs, timestamps, big integers).
+	// The DLQ Intelligence Console rolls rows up by this column.
+	// Empty for legacy rows written before migration 0023.
+	ErrorFingerprint string `json:"error_fingerprint,omitempty"`
+	// ErrorTemplate is the operator-readable form of ErrorReason after
+	// variable parts have been replaced with <PATH>/<INT>/<UUID>/etc.
+	// placeholders. Rendered as the cluster header in the triage UI.
+	ErrorTemplate string `json:"error_template,omitempty"`
+	// FailingStageName is the stage type ("validate", "transform", …)
+	// that emitted the failure. Empty when the failure originated
+	// outside the stage chain (e.g. destination send failure has no
+	// stage attribution).
+	FailingStageName string `json:"failing_stage_name,omitempty"`
+	// FailingStageIndex is the position of the failing stage in the
+	// pipeline's stage list, zero-based. Defaults to 0 when there is
+	// no stage attribution; pair with FailingStageName != "" to
+	// distinguish "first stage failed" from "no attribution".
+	FailingStageIndex int       `json:"failing_stage_index,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+// PipelineRevision is an append-only snapshot of a pipeline's full
+// configuration at a point in time. Saving a pipeline writes a new
+// revision row with deployed_at = NULL; deploying writes the snapshot
+// through to the live tables and sets deployed_at. Hash dedup at the
+// repo layer collapses a re-save with identical bytes into the
+// existing row (so a "save" that changed nothing doesn't churn the
+// history) — see PipelineRevisionRepo.Create.
+type PipelineRevision struct {
+	ID              string     `json:"id"`
+	TenantID        string     `json:"tenant_id"`
+	PipelineID      string     `json:"pipeline_id"`
+	RevisionNumber  int        `json:"revision_number"`
+	Snapshot        string     `json:"snapshot"` // canonical JSON; see PipelineSnapshot
+	SnapshotHash    string     `json:"snapshot_hash"`
+	AuthorSub       string     `json:"author_sub"`
+	AuthorUsername  string     `json:"author_username"`
+	ChangeSummary   string     `json:"change_summary"`
+	CreatedAt       time.Time  `json:"created_at"`
+	DeployedAt      *time.Time `json:"deployed_at,omitempty"`
+	DeployRequestID string     `json:"deploy_request_id,omitempty"`
+}
+
+// PipelineSnapshot is the canonical shape encoded inside
+// PipelineRevision.Snapshot. SchemaVersion starts at 1; any additive
+// change must remain backwards-compatible so an older binary can read
+// a newer snapshot. New fields land as `omitempty` and never as
+// breaking renames of existing ones.
+type PipelineSnapshot struct {
+	Pipeline      *Pipeline      `json:"pipeline"`
+	Stages        []*Stage       `json:"stages"`
+	Transforms    []*Transform   `json:"transforms"`
+	RoutingRules  []*RoutingRule `json:"routing_rules"`
+	SchemaVersion int            `json:"snapshot_schema_version"`
 }
 
 // DLQRedactionRule is one redaction rule attached to a pipeline.

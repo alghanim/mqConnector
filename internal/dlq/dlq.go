@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"mqConnector/internal/dlq/cluster"
 	"mqConnector/internal/events"
 	"mqConnector/internal/mq"
 	"mqConnector/internal/mqcfg"
@@ -149,6 +150,20 @@ func (s *Service) Push(ctx context.Context, entry storage.DLQEntry) error {
 		} else if len(rules) > 0 {
 			s.applyRedaction(&entry, rules)
 		}
+	}
+	// Clustering: compute the fingerprint + template once at insert
+	// time so the DLQ Intelligence Console can roll rows up with a
+	// cheap indexed GROUP BY on error_fingerprint instead of re-
+	// tokenising on every read. FingerprintWithStage folds the stage
+	// name into the bucket so two pipelines failing identically at
+	// different stages cluster apart. Empty stage name (send-side
+	// failures) degrades cleanly to the stageless form. Defensive:
+	// only overwrite when the executor didn't pre-populate (it
+	// doesn't today, but a future fast path might).
+	if entry.ErrorFingerprint == "" && entry.ErrorReason != "" {
+		fp := cluster.FingerprintWithStage(entry.ErrorReason, entry.FailingStageName)
+		entry.ErrorFingerprint = fp.Fingerprint
+		entry.ErrorTemplate = fp.Template
 	}
 	if err := s.store.DLQ.Insert(ctx, tenant, &entry); err != nil {
 		s.logger.Error("dlq insert failed", "err", err)
@@ -375,8 +390,8 @@ func (s *Service) ListFiltered(ctx context.Context, tenantID string, f storage.D
 // the row id to the human-readable error for the UI's "5 of 50
 // failed — show me which" affordance.
 type BulkResult struct {
-	Succeeded int            `json:"succeeded"`
-	Failed    int            `json:"failed"`
+	Succeeded int               `json:"succeeded"`
+	Failed    int               `json:"failed"`
 	Failures  map[string]string `json:"failures,omitempty"`
 }
 

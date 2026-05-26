@@ -24,7 +24,12 @@ export default defineConfig({
       $lib: path.resolve(__dirname, 'src/lib'),
       // The SvelteKit modules under $app are not available in unit tests.
       // Stub them to the minimal surface our stores need.
-      '$app/environment': path.resolve(__dirname, 'src/test/app-environment.ts')
+      '$app/environment': path.resolve(__dirname, 'src/test/app-environment.ts'),
+      // `$app/stores` is needed by any +page.svelte that reads `$page`
+      // (params, url) under jsdom. The stub mirrors the shape Kit
+      // exposes; tests can mutate `_pageStore` before rendering when
+      // they care about specific values.
+      '$app/stores': path.resolve(__dirname, 'src/test/app-stores.ts')
     }
   },
   test: {

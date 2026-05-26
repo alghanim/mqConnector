@@ -19,41 +19,101 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/tetratelabs/wazero"
 
+	"mqConnector/internal/ai"
 	"mqConnector/internal/auth"
 	"mqConnector/internal/config"
 	"mqConnector/internal/dlq"
+	"mqConnector/internal/explain"
 	"mqConnector/internal/health"
 	"mqConnector/internal/leadership"
 	"mqConnector/internal/metrics"
 	"mqConnector/internal/mq"
 	"mqConnector/internal/pipeline"
 	"mqConnector/internal/secrets"
+	"mqConnector/internal/slo"
 	"mqConnector/internal/storage"
 	"mqConnector/internal/web"
 )
 
 // Server is the wired HTTP layer.
 type Server struct {
-	cfg          config.Config
-	logger       *slog.Logger
-	httpSrv      *http.Server
-	auth         *auth.Service
-	store        *storage.Store
-	pool         *mq.Pool
-	metrics      *metrics.Store
-	dlq          *dlq.Service
-	pipeline     *pipeline.Manager
-	health       *health.Checker
-	leadership    *leadership.Lease // nil when not enabled
-	sealer        *secrets.Service  // nil when MQC_MASTER_KEY is unset
-	loginLimiter     *loginLimiter
-	tenantLimiter    *tenantLimiter
-	sensitiveLimiter *sensitiveLimiter
-	accountLockout   *accountLockout
-	tlsReloader      *certReloader
-	wasmRuntime      wazero.Runtime
-	stopGC           chan struct{}
-	stopGCOnce       sync.Once
+	cfg        config.Config
+	logger     *slog.Logger
+	httpSrv    *http.Server
+	auth       *auth.Service
+	store      *storage.Store
+	pool       *mq.Pool
+	metrics    *metrics.Store
+	dlq        *dlq.Service
+	pipeline   *pipeline.Manager
+	health     *health.Checker
+	leadership *leadership.Lease // nil when not enabled
+	sealer     *secrets.Service  // nil when MQC_MASTER_KEY is unset
+	// AI provider (Wave 3 Task 4). When AI is disabled / endpoint
+	// empty, aiProvider is the no-op sentinel that returns
+	// ErrAINotAvailable; aiAudit is the noop logger; aiCfg.Enabled
+	// is false. Handlers branch on aiCfg.Allows(...) before any
+	// provider call.
+	aiProvider ai.LLMProvider
+	aiAudit    ai.AuditLogger
+	aiCounter  *ai.CallCounter
+	aiCfg      ai.Config
+	// aiClusterNameCache memoises DLQ-cluster naming results by
+	// fingerprint to bound LLM cost on UI re-renders. Entry TTL is
+	// 60s; eviction is per-read (no background goroutine).
+	aiClusterNameMu    sync.Mutex
+	aiClusterNameCache map[string]aiClusterNameCacheEntry
+	loginLimiter       *loginLimiter
+	tenantLimiter      *tenantLimiter
+	sensitiveLimiter   *sensitiveLimiter
+	accountLockout     *accountLockout
+	tlsReloader        *certReloader
+	wasmRuntime        wazero.Runtime
+	stopGC             chan struct{}
+	stopGCOnce         sync.Once
+	// pendingBackgroundOps tracks fire-and-forget goroutines spawned
+	// off the request path (currently the snapshot helper) so tests
+	// can deterministically wait for them to drain and so graceful
+	// shutdown can give in-flight work a bounded chance to finish
+	// before the process exits. Increment with Add(1) immediately
+	// before `go` and Done() in the goroutine's defer.
+	pendingBackgroundOps sync.WaitGroup
+
+	// explainEngine composes existing telemetry into structured
+	// "why is this state happening" explanations. Lazy-built in
+	// New from the live deps so handler code can assume a non-nil
+	// engine. The engine's own Source fields fan out to the
+	// underlying repos / metrics / manager.
+	explainEngine *explain.Engine
+
+	// sloEvaluator periodically evaluates Prometheus alerting
+	// rules against the in-process metrics store. Nil when SLO
+	// is disabled (RulesFile empty / loader failed); handlers
+	// that depend on it return an empty alert list rather than
+	// 500-ing.
+	sloEvaluator *slo.Evaluator
+
+	// topologyRates is the per-pipeline rate sampler used by the
+	// /api/v1/topology aggregator to derive msg_per_min from
+	// successive snapshots of the cumulative messages_processed
+	// counter. Lazy-initialised on first call so tests that never
+	// hit the topology endpoint don't pay for it.
+	topologyRatesMu sync.Mutex
+	topologyRates   *topologyRateSampler
+}
+
+// WaitForBackgroundOps blocks until every fire-and-forget goroutine
+// tracked by pendingBackgroundOps (today, the async pipeline-revision
+// snapshot dispatcher) has returned. It is intended for tests that
+// need to read state mutated by those goroutines without polling, and
+// for the graceful-shutdown path which calls it under a bounded
+// context. Production request handlers must not depend on it for
+// correctness — the underlying ops are best-effort by design.
+func (s *Server) WaitForBackgroundOps() {
+	if s == nil {
+		return
+	}
+	s.pendingBackgroundOps.Wait()
 }
 
 // shutdownGC signals the rate-limiter's GC loop to exit. Idempotent — both
@@ -79,6 +139,20 @@ type Deps struct {
 	Leadership *leadership.Lease // optional — nil when leadership is disabled
 	Sealer     *secrets.Service  // optional — nil disables /secrets/rotate
 	Logger     *slog.Logger
+	// AI integration (Wave 3 Task 4). All three are optional: a nil
+	// AIProvider falls back to ai.NewNoopProvider() and a nil
+	// AIAudit falls back to ai.NoopAuditLogger{}, so handlers can
+	// assume non-nil fields without a guard. AIConfig.Enabled=false
+	// keeps everything off regardless of provider type.
+	AIProvider ai.LLMProvider
+	AIAudit    ai.AuditLogger
+	AICounter  *ai.CallCounter
+	AIConfig   ai.Config
+	// SLOEvaluator is the in-process SLO rule evaluator. Optional
+	// — when nil the /api/v1/alerts/active endpoint still serves,
+	// returning an empty alert list with total=0 so the frontend
+	// AlertRibbon stays silent rather than erroring.
+	SLOEvaluator *slo.Evaluator
 }
 
 // New constructs a Server. Run blocks until Shutdown is called.
@@ -86,18 +160,37 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 	if deps.Logger == nil {
 		deps.Logger = slog.Default()
 	}
+	// AI defaults: nil provider / audit fall back to noop sentinels
+	// so handlers never have to nil-check. The Allows() gate on
+	// AIConfig is the source of truth — handlers MUST consult it
+	// before invoking the provider; the noop sentinel is a defence
+	// in depth.
+	if deps.AIProvider == nil {
+		deps.AIProvider = ai.NewNoopProvider()
+	}
+	if deps.AIAudit == nil {
+		deps.AIAudit = ai.NoopAuditLogger{}
+	}
+	if deps.AICounter == nil {
+		deps.AICounter = ai.NewCallCounter()
+	}
 	s := &Server{
-		cfg:          cfg,
-		logger:       deps.Logger.With("component", "server"),
-		auth:         deps.Auth,
-		store:        deps.Store,
-		pool:         deps.Pool,
-		metrics:      deps.Metrics,
-		dlq:          deps.DLQ,
-		pipeline:     deps.Pipeline,
-		health:       deps.Health,
-		leadership:   deps.Leadership,
-		sealer:        deps.Sealer,
+		cfg:              cfg,
+		logger:           deps.Logger.With("component", "server"),
+		auth:             deps.Auth,
+		store:            deps.Store,
+		pool:             deps.Pool,
+		metrics:          deps.Metrics,
+		dlq:              deps.DLQ,
+		pipeline:         deps.Pipeline,
+		health:           deps.Health,
+		leadership:       deps.Leadership,
+		sealer:           deps.Sealer,
+		aiProvider:       deps.AIProvider,
+		aiAudit:          deps.AIAudit,
+		aiCounter:        deps.AICounter,
+		aiCfg:            deps.AIConfig,
+		sloEvaluator:     deps.SLOEvaluator,
 		loginLimiter:     newLoginLimiter(10, time.Minute),
 		tenantLimiter:    newTenantLimiter(120, time.Minute, tenantOverrideFromStore(deps.Store)),
 		sensitiveLimiter: newSensitiveLimiter(6, time.Minute),
@@ -118,6 +211,10 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 	if deps.Pipeline != nil {
 		deps.Pipeline.SetWasmRuntime(s.wasmRuntime)
 	}
+	// Wire the explain engine — composable telemetry → structured
+	// "why" explanations. Sub-Source nils are fine; the engine
+	// degrades gracefully when a source isn't wired.
+	s.explainEngine = buildExplainEngine(deps.Store, deps.Metrics, deps.Pipeline)
 	go s.loginLimiter.gc(s.stopGC)
 	go s.tenantLimiter.gc(s.stopGC)
 	go s.sensitiveLimiter.gc(s.stopGC)
@@ -197,13 +294,41 @@ func (s *Server) Run(ctx context.Context) error {
 			s.logger.Warn("server shutdown error", "err", err)
 		}
 		s.shutdownGC()
+		// Give in-flight best-effort background ops (snapshot writes)
+		// a bounded chance to land before the process exits, so a
+		// SIGTERM mid-PUT doesn't routinely drop the revision row
+		// the live tables just committed to. Bounded so a stuck DB
+		// can't hang shutdown indefinitely.
+		s.waitBackgroundOpsBounded(5 * time.Second)
 		return nil
 	case err := <-errCh:
 		s.shutdownGC()
+		s.waitBackgroundOpsBounded(5 * time.Second)
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return fmt.Errorf("server: %w", err)
+	}
+}
+
+// waitBackgroundOpsBounded waits for pendingBackgroundOps to drain or
+// for the timeout to elapse, whichever comes first. Used from Run's
+// shutdown path so a stuck DB can't pin the process open past the
+// configured grace period.
+func (s *Server) waitBackgroundOpsBounded(timeout time.Duration) {
+	if s == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		s.pendingBackgroundOps.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		s.logger.Warn("background ops did not drain within shutdown budget",
+			"timeout", timeout)
 	}
 }
 

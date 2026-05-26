@@ -31,6 +31,10 @@
     border-radius: 8px;
     background: var(--surface-2);
     border: 1px solid var(--border);
+    /* Match the Card depth language — soft 1dp shadow so the chip
+       reads as an elevated mini-surface, not a flat pill. Tokenised
+       so dark + light pick up the same tuned offsets. */
+    box-shadow: var(--card-shadow);
     font-size: 0.8125rem;
     color: var(--text);
   }

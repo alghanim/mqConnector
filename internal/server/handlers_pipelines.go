@@ -126,6 +126,8 @@ func (s *Server) handleUpdatePipeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.snapshotPipelineRevision(r.Context(), tenant, id,
+		"Update pipeline metadata", RequestIDFromContext(r.Context()), true)
 	go s.reloadPipelines()
 	writeJSON(w, http.StatusOK, p)
 }
@@ -200,6 +202,8 @@ func (s *Server) handleReplaceStages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.snapshotPipelineRevision(r.Context(), tenant, id,
+		"Replace stages", RequestIDFromContext(r.Context()), true)
 	go s.reloadPipelines()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "count": len(stages)})
 }
@@ -236,6 +240,8 @@ func (s *Server) handleReplaceTransforms(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.snapshotPipelineRevision(r.Context(), tenant, id,
+		"Replace transforms", RequestIDFromContext(r.Context()), true)
 	go s.reloadPipelines()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "count": len(rules)})
 }
@@ -272,6 +278,8 @@ func (s *Server) handleReplaceRoutingRules(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.snapshotPipelineRevision(r.Context(), tenant, id,
+		"Replace routing rules", RequestIDFromContext(r.Context()), true)
 	go s.reloadPipelines()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "count": len(rules)})
 }

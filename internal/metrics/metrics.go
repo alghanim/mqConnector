@@ -14,12 +14,12 @@ import (
 
 // Pipeline is the snapshot value type — pure data, safe to copy.
 type Pipeline struct {
-	PipelineID        string    `json:"pipeline_id"`
-	SourceQueue       string    `json:"source_queue"`
-	DestQueue         string    `json:"dest_queue"`
-	MessagesProcessed int64     `json:"messages_processed"`
-	MessagesFailed    int64     `json:"messages_failed"`
-	BytesProcessed    int64     `json:"bytes_processed"`
+	PipelineID        string `json:"pipeline_id"`
+	SourceQueue       string `json:"source_queue"`
+	DestQueue         string `json:"dest_queue"`
+	MessagesProcessed int64  `json:"messages_processed"`
+	MessagesFailed    int64  `json:"messages_failed"`
+	BytesProcessed    int64  `json:"bytes_processed"`
 	// DedupSkipped counts outbound sends that were short-circuited by
 	// the dedup window because an identical payload was already
 	// observed for this pipeline. Only ever > 0 when the pipeline
@@ -342,10 +342,13 @@ func (s *Store) latencyHistogramFor(pipelineID string) (counts []uint64, sumMs f
 	return counts, e.latencySumMs, e.data.MessagesProcessed, true
 }
 
-// stageHistogramSnapshot is one stage's observation aggregate, copied
+// StageHistogramSnapshot is one stage's observation aggregate, copied
 // out of an entry's locked state so the Prometheus renderer can emit
-// it without re-taking the entry mutex.
-type stageHistogramSnapshot struct {
+// it without re-taking the entry mutex. Also consumed by
+// internal/explain's latency explainer to answer "which stage
+// dominates p99?" — exported so callers outside the metrics package
+// can read it without going through the Prometheus text format.
+type StageHistogramSnapshot struct {
 	StageName    string
 	BucketCounts []uint64
 	SumMs        float64
@@ -355,7 +358,7 @@ type stageHistogramSnapshot struct {
 // stageHistogramsFor copies out every per-stage histogram for one
 // pipeline. Returned slice is sorted by stage name so the Prometheus
 // exposition is byte-stable between scrapes.
-func (s *Store) stageHistogramsFor(pipelineID string) []stageHistogramSnapshot {
+func (s *Store) stageHistogramsFor(pipelineID string) []StageHistogramSnapshot {
 	s.mu.RLock()
 	e, ok := s.pipelines[pipelineID]
 	s.mu.RUnlock()
@@ -372,18 +375,41 @@ func (s *Store) stageHistogramsFor(pipelineID string) []stageHistogramSnapshot {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	out := make([]stageHistogramSnapshot, 0, len(names))
+	out := make([]StageHistogramSnapshot, 0, len(names))
 	for _, name := range names {
 		h := e.stageHist[name]
 		buckets := make([]uint64, len(h.bucketCounts))
 		copy(buckets, h.bucketCounts)
-		out = append(out, stageHistogramSnapshot{
+		out = append(out, StageHistogramSnapshot{
 			StageName:    name,
 			BucketCounts: buckets,
 			SumMs:        h.sumMs,
 			Count:        h.count,
 		})
 	}
+	return out
+}
+
+// StageHistogramsFor is the exported accessor for the per-stage
+// latency histogram slice. Returns a copy — callers may mutate
+// the returned slice without affecting the store. nil when the
+// pipeline isn't registered or has no per-stage observations.
+//
+// Used by internal/explain's latency explainer to compute per-
+// stage p50/p95/p99 without going through the Prometheus text
+// format.
+func (s *Store) StageHistogramsFor(pipelineID string) []StageHistogramSnapshot {
+	return s.stageHistogramsFor(pipelineID)
+}
+
+// LatencyBuckets returns the upper-bound (ms) values for the
+// shared per-pipeline + per-stage histograms. Used by callers
+// that need to interpret the cumulative bucket counts emitted by
+// StageHistogramsFor — they pair each count with the bound at the
+// same index. The returned slice is a defensive copy.
+func LatencyBuckets() []float64 {
+	out := make([]float64, len(latencyBuckets))
+	copy(out, latencyBuckets)
 	return out
 }
 

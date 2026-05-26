@@ -30,12 +30,10 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Skeleton from '$lib/components/Skeleton.svelte';
 
+  import ConnectionTypeIcon from '$lib/components/ConnectionTypeIcon.svelte';
   import {
     Plus,
     Search as SearchIcon,
-    Rabbit,
-    Server,
-    Database,
     Pencil,
     Trash2,
     PlayCircle,
@@ -315,6 +313,12 @@
       {/each}
     </div>
   {:else if connections.length === 0}
+    <!--
+      Empty-state CTA is the friendlier "Add your first connection"
+      rather than the generic "Add connection" used in the page
+      header. Functionally identical (both call startNew); the copy
+      shift acknowledges this is the operator's first encounter.
+    -->
     <EmptyState
       illustration="connections"
       title={t($locale, 'empty.connections.title')}
@@ -323,7 +327,7 @@
       <svelte:fragment slot="action">
         <Button on:click={startNew}>
           <Plus size={14} aria-hidden="true" />
-          <span class="ms-1">{t($locale, 'connections.add')}</span>
+          <span class="ms-1">{t($locale, 'empty.connections.cta')}</span>
         </Button>
       </svelte:fragment>
     </EmptyState>
@@ -352,19 +356,38 @@
       </thead>
       <tbody>
         {#each filtered as c (c.id || c.name)}
+          {@const endpoint = endpointOf(c)}
+          {@const testState = c.id ? testing[c.id] : 'idle'}
           <tr>
             <td>
               <div class="cell-name">
+                <!--
+                  Broker glyph shared with the Studio canvas, Dashboard
+                  pipeline cards, and Metrics flow column — 16px so it
+                  matches the icon size we settled on for the Dashboard
+                  cards (parity is the whole point of this pass).
+                -->
                 <span class="cell-type-icon" data-type={c.type} aria-hidden="true">
-                  {#if c.type === 'rabbitmq'}
-                    <Rabbit size={14} />
-                  {:else if c.type === 'kafka'}
-                    <Server size={14} />
-                  {:else}
-                    <Database size={14} />
-                  {/if}
+                  <ConnectionTypeIcon type={c.type} size={16} />
                 </span>
-                <span class="cell-name-text">{c.name}</span>
+                <!--
+                  No `/connections/{id}` route exists today, so the name
+                  becomes a button that opens the existing Edit dialog
+                  instead of a link. Visual treatment matches the
+                  `cell-name-link` pattern from /pipelines: bold body
+                  weight at rest, subtle border-strong underline on
+                  hover / focus, NEVER maroon (brand rule — maroon is
+                  reserved for primary CTAs, destructive actions, count
+                  badges).
+                -->
+                <button
+                  type="button"
+                  class="cell-name-link"
+                  on:click={() => startEdit(c)}
+                  aria-label={`${t($locale, 'common.edit')}: ${c.name}`}
+                >
+                  {c.name}
+                </button>
                 {#if c.id && testing[c.id] === 'ok'}
                   <span class="test-pill ok" title={testMsg[c.id]}>
                     <CheckCircle2 size={12} aria-hidden="true" />
@@ -381,23 +404,47 @@
             <td>
               <Badge variant="neutral">{c.type}</Badge>
             </td>
-            <td class="cell-mono">{endpointOf(c) || '—'}</td>
+            <!--
+              Endpoint cell: wrap the connection string in a monospace
+              span and let the truncation + `title` attribute reveal
+              the full value on hover. The .cell-mono rule already
+              handles overflow/ellipsis; the explicit title on the
+              child <span> is what gives mouse users the full URI
+              tooltip without sacrificing the row height.
+            -->
+            <td class="cell-mono">
+              {#if endpoint}
+                <span class="cell-mono-text" title={endpoint}>{endpoint}</span>
+              {:else}
+                —
+              {/if}
+            </td>
             <td class="cell-mono">{c.queue_name || c.topic || '—'}</td>
             <td>
               <div class="row-actions">
+                <!--
+                  Test is now a labelled pill — the play-icon-only
+                  version was reading as a tertiary affordance even
+                  though it's the primary verb on this row. Stays a
+                  semantic <button> so the disabled state during a
+                  pending request still suppresses input. Edit + Delete
+                  remain icon-only because they're universally
+                  recognised at this size.
+                -->
                 <button
                   type="button"
-                  class="icon-action"
+                  class="test-action"
+                  class:test-action-pending={testState === 'pending'}
                   aria-label={t($locale, 'connections.test')}
-                  title={t($locale, 'connections.test')}
-                  disabled={c.id ? testing[c.id] === 'pending' : false}
+                  disabled={testState === 'pending'}
                   on:click={() => testConn(c)}
                 >
-                  {#if c.id && testing[c.id] === 'pending'}
-                    <Loader2 size={14} class="spin" aria-hidden="true" />
+                  {#if testState === 'pending'}
+                    <Loader2 size={13} class="spin" aria-hidden="true" />
                   {:else}
-                    <PlayCircle size={14} aria-hidden="true" />
+                    <PlayCircle size={13} aria-hidden="true" />
                   {/if}
+                  <span>{t($locale, 'connections.test')}</span>
                 </button>
                 <button
                   type="button"
@@ -520,8 +567,33 @@
     align-items: center;
     gap: 0.5rem;
   }
-  .cell-name-text {
-    font-weight: 500;
+  /*
+   * Name cell, rendered as a button (because no /connections/{id}
+   * route exists — click opens the existing Edit dialog instead).
+   * Same visual language as the .cell-name-link pattern on
+   * /pipelines: bold body weight, subtle border-strong underline on
+   * hover / focus only. No maroon — brand discipline reserves it
+   * for primary CTAs, destructive actions, and count badges.
+   */
+  .cell-name-link {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text);
+    text-align: start;
+    border-block-end: 1px solid transparent;
+    padding-block-end: 1px;
+    transition: color 120ms ease, border-color 120ms ease;
+  }
+  .cell-name-link:hover,
+  .cell-name-link:focus-visible {
+    color: var(--text);
+    border-block-end-color: var(--border-strong, var(--border));
+    outline: none;
   }
   .cell-mono {
     font-family: 'SFMono-Regular', Menlo, monospace;
@@ -532,21 +604,33 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Inline wrapper so we can attach the title= hover-reveal to the
+     truncated value (the <td> itself can't take title without it
+     also covering the surrounding cell area). */
+  .cell-mono-text {
+    display: inline-block;
+    max-inline-size: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
 
   /*
    * Neutral monogram chip — the broker type is communicated by the
    * icon glyph itself + the type code rendered next to the connection
-   * name. We deliberately do NOT tint by vendor brand colours
-   * (#ff6600 RabbitMQ orange, #1f70c1 IBM blue, etc.); those sit
-   * outside the app's closed palette and shout louder than every
-   * other surface on the page.
+   * name. We deliberately do NOT tint by vendor brand colours (the
+   * RabbitMQ orange and IBM blue sit outside the app's closed
+   * palette and shout louder than every other surface on the page).
+   * Sized to comfortably hold a 16px glyph + 3px padding on each
+   * side — matches the Dashboard pipeline-card glyph chip.
    */
   .cell-type-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     border-radius: 6px;
     background: var(--surface-2);
     color: var(--text-muted);
@@ -576,8 +660,43 @@
   .row-actions {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     justify-content: flex-end;
+  }
+  /*
+   * Labelled Test pill — promotion from the previous icon-only
+   * affordance. Test is the primary verb on a Connection row, so
+   * it deserves the body-text label that an icon alone can't carry.
+   * Tone is neutral (border + body text colour) rather than primary
+   * because primary is reserved for irreversible page-level CTAs;
+   * Test is reversible and per-row.
+   */
+  .test-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding-inline: 0.55rem;
+    padding-block: 0.3rem;
+    border-radius: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms, color 120ms;
+  }
+  .test-action:hover,
+  .test-action:focus-visible {
+    background: var(--surface-2, var(--surface));
+    border-color: var(--border-strong, var(--border));
+    color: var(--text);
+    outline: none;
+  }
+  .test-action:disabled,
+  .test-action-pending {
+    cursor: progress;
+    opacity: 0.7;
   }
   .icon-action {
     display: inline-flex;

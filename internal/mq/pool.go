@@ -23,9 +23,9 @@ type Pool struct {
 }
 
 type poolEntry struct {
-	conn      Connector
-	lastUsed  time.Time
-	mu        sync.Mutex // serialises Send/Receive/Disconnect on this connector
+	conn     Connector
+	lastUsed time.Time
+	mu       sync.Mutex // serialises Send/Receive/Disconnect on this connector
 }
 
 // PoolOptions configures a pool. Zero values fall back to safe defaults.
@@ -224,6 +224,36 @@ func (p *Pool) Size() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.entries)
+}
+
+// Has reports whether the pool currently holds an entry under the
+// given key. Cheap point-in-time check used by the /api/v1/topology
+// aggregator to mark a broker connection as "currently held by a
+// running pipeline" without forcing a fresh dial. A true result is
+// not a liveness guarantee — the sweeper may evict the entry on its
+// next tick — but it is the most accurate "is this connector
+// currently armed?" signal the pool can offer without surfacing
+// per-connector health state.
+func (p *Pool) Has(key string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, ok := p.entries[key]
+	return ok
+}
+
+// Keys returns a snapshot of every key currently in the pool. Used by
+// the topology aggregator to map pipeline-derived pool keys (source-{id},
+// dest-{id}, source-{id}-wN, route-{connID}, shadow-{id}) back onto
+// the underlying connection IDs. The returned slice is a snapshot;
+// the pool may evolve concurrently after this returns.
+func (p *Pool) Keys() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]string, 0, len(p.entries))
+	for k := range p.entries {
+		out = append(out, k)
+	}
+	return out
 }
 
 // InjectForTest preseeds the pool with a pre-built Connector under id. The

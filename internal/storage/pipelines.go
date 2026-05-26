@@ -34,13 +34,13 @@ func (r *PipelineRepo) Create(ctx context.Context, tenantID string, p *Pipeline)
 		INSERT INTO pipelines (id, tenant_id, name, source_id, destination_id, output_format,
 		                       schema_id, filter_paths, enabled, workers, retry_max,
 		                       retry_backoff_ms, max_msgs_per_minute, dedup_window_seconds,
-		                       shadow_destination_id, shadow_percent,
+		                       shadow_destination_id, shadow_percent, requires_approval,
 		                       created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, tenantID, p.Name, p.SourceID, p.DestinationID, p.OutputFormat,
 		nullable(p.SchemaID), string(pathsJSON), p.Enabled,
 		p.Workers, p.RetryMax, p.RetryBackoffMs, p.MaxMsgsPerMinute, p.DedupWindowSeconds,
-		nullable(p.ShadowDestinationID), p.ShadowPercent,
+		nullable(p.ShadowDestinationID), p.ShadowPercent, p.RequiresApproval,
 		p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert pipeline: %w", err)
@@ -49,6 +49,27 @@ func (r *PipelineRepo) Create(ctx context.Context, tenantID string, p *Pipeline)
 }
 
 func (r *PipelineRepo) Update(ctx context.Context, tenantID string, p *Pipeline) error {
+	return r.updateExec(ctx, r.db, tenantID, p)
+}
+
+// UpdateTx is the tx-aware variant of Update. Mirrors the contract of
+// Update exactly — the only difference is the executor. Used by the
+// server-layer applyRevisionLive helper so the pipeline write and the
+// child-row replacements all commit (or roll back) together. Accepts
+// the exported *Tx so external callers don't need access to the
+// unexported wrapper type.
+func (r *PipelineRepo) UpdateTx(ctx context.Context, tx *Tx, tenantID string, p *Pipeline) error {
+	return r.updateExec(ctx, tx, tenantID, p)
+}
+
+// pipelineExec is the narrow set of database/sql verbs the Update path
+// needs. Both *dbWrap and *txWrap satisfy it, so updateExec can run
+// against either without code duplication.
+type pipelineExec interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func (r *PipelineRepo) updateExec(ctx context.Context, exec pipelineExec, tenantID string, p *Pipeline) error {
 	if tenantID == "" {
 		return ErrTenantRequired
 	}
@@ -57,18 +78,19 @@ func (r *PipelineRepo) Update(ctx context.Context, tenantID string, p *Pipeline)
 		p.FilterPaths = []string{}
 	}
 	pathsJSON, _ := json.Marshal(p.FilterPaths)
-	res, err := r.db.ExecContext(ctx, `
+	res, err := exec.ExecContext(ctx, `
 		UPDATE pipelines SET name=?, source_id=?, destination_id=?, output_format=?,
 		                     schema_id=?, filter_paths=?, enabled=?,
 		                     workers=?, retry_max=?, retry_backoff_ms=?,
 		                     max_msgs_per_minute=?, dedup_window_seconds=?,
-		                     shadow_destination_id=?, shadow_percent=?, updated_at=?
+		                     shadow_destination_id=?, shadow_percent=?,
+		                     requires_approval=?, updated_at=?
 		WHERE id=? AND tenant_id=?`,
 		p.Name, p.SourceID, p.DestinationID, p.OutputFormat,
 		nullable(p.SchemaID), string(pathsJSON), p.Enabled,
 		p.Workers, p.RetryMax, p.RetryBackoffMs, p.MaxMsgsPerMinute, p.DedupWindowSeconds,
 		nullable(p.ShadowDestinationID), p.ShadowPercent,
-		p.UpdatedAt, p.ID, tenantID)
+		p.RequiresApproval, p.UpdatedAt, p.ID, tenantID)
 	if err != nil {
 		return fmt.Errorf("update pipeline: %w", err)
 	}
@@ -154,7 +176,7 @@ const pipelineSelect = `
 SELECT id, tenant_id, name, source_id, destination_id, output_format, COALESCE(schema_id,''),
        filter_paths, enabled, workers, retry_max, retry_backoff_ms, max_msgs_per_minute,
        dedup_window_seconds, COALESCE(shadow_destination_id,''), shadow_percent,
-       created_at, updated_at
+       requires_approval, created_at, updated_at
 FROM pipelines`
 
 func scanPipeline(s scanner) (*Pipeline, error) {
@@ -164,7 +186,7 @@ func scanPipeline(s scanner) (*Pipeline, error) {
 		&p.SchemaID, &pathsJSON, &p.Enabled,
 		&p.Workers, &p.RetryMax, &p.RetryBackoffMs, &p.MaxMsgsPerMinute, &p.DedupWindowSeconds,
 		&p.ShadowDestinationID, &p.ShadowPercent,
-		&p.CreatedAt, &p.UpdatedAt)
+		&p.RequiresApproval, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

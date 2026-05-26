@@ -393,6 +393,22 @@ components:
         last_retry_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 
+    DLQDiffSide:
+      type: object
+      required: [id, pipeline_id, created_at, error_reason, fingerprint, template, body, format]
+      properties:
+        id:           { type: string, format: uuid }
+        pipeline_id:  { type: string, format: uuid }
+        created_at:   { type: string, format: date-time }
+        error_reason: { type: string }
+        fingerprint:  { type: string }
+        template:     { type: string }
+        body:         { type: string }
+        format:
+          type: string
+          description: Best-effort format guess. One of json | xml | text.
+          enum: [json, xml, text]
+
     DLQRedactionRule:
       type: object
       required: [rule_kind, pattern]
@@ -822,6 +838,250 @@ paths:
         '200':
           description: Replaced.
 
+  /api/v1/pipelines/{id}/revisions:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: List pipeline revisions, newest-first.
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 25 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Revisions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revisions:
+                    type: array
+                    items: { type: object }
+                  total:  { type: integer }
+                  limit:  { type: integer }
+                  offset: { type: integer }
+        '404': { description: Pipeline not found. }
+
+  /api/v1/pipelines/{id}/revisions/current:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Get the latest deployed revision for this pipeline.
+      responses:
+        '200':
+          description: Latest deployed revision.
+          content:
+            application/json:
+              schema: { type: object }
+        '404': { description: Pipeline not found or no deployed revision. }
+
+  /api/v1/pipelines/{id}/revisions/{rev}:
+    parameters:
+      - { $ref: '#/components/parameters/pathID' }
+      - in: path
+        name: rev
+        required: true
+        schema: { type: integer, minimum: 1 }
+        description: Revision number assigned at save time.
+    get:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Get one pipeline revision by revision number.
+      responses:
+        '200':
+          description: Revision.
+          content:
+            application/json:
+              schema: { type: object }
+        '400': { description: Revision number must be a positive integer. }
+        '404': { description: Pipeline or revision not found. }
+
+  /api/v1/pipelines/{id}/revisions/{rev}/diff:
+    parameters:
+      - { $ref: '#/components/parameters/pathID' }
+      - in: path
+        name: rev
+        required: true
+        schema: { type: integer, minimum: 1 }
+        description: Baseline revision number (the "from" side of the diff).
+    get:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Diff two pipeline revisions (positional, structural).
+      description: |
+        Returns a structured diff describing what would change if the
+        operator moved FROM `rev` TO `against`. Used by the Pipeline
+        Studio diff viewer for both rollback previews
+        (rev=current, against=older) and forward-deploy previews
+        (rev=current, against=newer draft).
+
+        Child rows (stages, transforms, routing rules) are matched
+        positionally by their executor-visible ordering field
+        (stage_order, order, priority). This is pragmatic: the legacy
+        "replace all children" save path regenerates row UUIDs on
+        every PUT, so identity-based matching can't survive a save.
+        Pipeline scalar fields are diffed by JSON tag with
+        created_at / updated_at excluded.
+      parameters:
+        - in: query
+          name: against
+          required: true
+          schema: { type: integer, minimum: 1 }
+          description: Target revision number (the "to" side of the diff).
+      responses:
+        '200':
+          description: Structured diff.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, diff]
+                properties:
+                  from:
+                    type: integer
+                    description: "Echo of {rev} — the baseline."
+                  to:
+                    type: integer
+                    description: "Echo of against — the target."
+                  diff:
+                    type: object
+                    properties:
+                      pipeline_fields:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            path:   { type: string }
+                            before: {}
+                            after:  {}
+                      stages:        { type: object }
+                      transforms:    { type: object }
+                      routing_rules: { type: object }
+                      schema_version:
+                        type: object
+                        nullable: true
+        '400': { description: Revision number must be a positive integer, or against query parameter missing. }
+        '404': { description: Pipeline or either revision not found. }
+
+  /api/v1/pipelines/{id}/revisions/{rev}/rollback:
+    parameters:
+      - { $ref: '#/components/parameters/pathID' }
+      - in: path
+        name: rev
+        required: true
+        schema: { type: integer, minimum: 1 }
+        description: Revision number to roll back to.
+    post:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Roll back the pipeline's live configuration to a prior revision.
+      description: |
+        Creates a NEW revision whose snapshot equals revision {rev}'s
+        snapshot, writes it through to the live pipelines / stages /
+        transforms / routing_rules tables under one transaction, marks
+        the new revision deployed, and hot-reloads the pipeline manager.
+
+        Requires operator role on the pipeline (per-pipeline gate;
+        honours grants).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                change_summary:
+                  type: string
+                  description: |
+                    Free-text summary for the new revision row. Defaults
+                    to "Rollback to revision N" when absent or empty.
+      responses:
+        '200':
+          description: |
+            Rollback applied. Response is the newly-created revision's
+            metadata fields flat at the top level (revision_number,
+            deployed_at, author_sub, change_summary, etc.) plus a
+            `snapshot` field carrying the decoded PipelineSnapshot —
+            same shape as GET /revisions/{rev}.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [snapshot]
+                properties:
+                  snapshot: { type: object }
+        '400': { description: Revision number must be a positive integer, or body malformed. }
+        '403': { description: Caller lacks operator role on this pipeline. }
+        '404': { description: Pipeline not in tenant, or revision not found. }
+        '500': { description: Transactional write-through failed; live tables untouched. }
+
+  /api/v1/pipelines/{id}/deploy:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    post:
+      tags: [pipelines]
+      security: [{ sessionCookie: [] }]
+      summary: Promote an existing revision to live.
+      description: |
+        Loads the named revision, writes its snapshot through to the
+        live pipelines / stages / transforms / routing_rules tables
+        under one transaction, marks the EXISTING revision deployed
+        (no new revision row is created — that distinguishes /deploy
+        from /rollback), and hot-reloads the pipeline manager.
+
+        When the pipeline's requires_approval flag is true, the
+        request body MUST carry a non-empty `approver` field or the
+        request is rejected 409. The flag defaults false and has no
+        Wave-1 UI to flip it; the gate is implemented now so a later
+        wave can flip the flag without server changes.
+
+        Requires operator role on the pipeline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [revision_number]
+              properties:
+                revision_number:
+                  type: integer
+                  minimum: 1
+                  description: Revision to promote to live.
+                change_summary:
+                  type: string
+                  description: Free-text deploy note; recorded on the audit row.
+                approver:
+                  type: string
+                  description: |
+                    Required when the pipeline has requires_approval=true;
+                    optional (and ignored) otherwise.
+      responses:
+        '200':
+          description: |
+            Deploy applied. Response is the now-deployed revision's
+            metadata fields flat at the top level (revision_number,
+            deployed_at, author_sub, change_summary, etc.) plus a
+            `snapshot` field carrying the decoded PipelineSnapshot —
+            same shape as GET /revisions/{rev}.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [snapshot]
+                properties:
+                  snapshot: { type: object }
+        '400': { description: Body malformed or revision_number missing/invalid. }
+        '403': { description: Caller lacks operator role on this pipeline. }
+        '404': { description: Pipeline not in tenant, or revision_number doesn't exist. }
+        '409': { description: Pipeline requires approval and `approver` field is missing. }
+        '500': { description: Transactional write-through failed; live tables untouched. }
+
   /api/v1/pipelines/{id}/grants:
     parameters: [{ $ref: '#/components/parameters/pathID' }]
     get:
@@ -1056,6 +1316,209 @@ paths:
                 type: object
                 properties:
                   succeeded: { type: integer }
+
+  /api/v1/dlq/clusters:
+    get:
+      summary: Roll up DLQ entries into error-fingerprint clusters.
+      description: |
+        DLQ Intelligence Console rollup. Aggregates the tenant's DLQ
+        entries by `error_fingerprint` (a SimHash over the tokenised
+        error template) and returns the top-N clusters sorted by row
+        count descending. Each cluster carries the canonical template,
+        first/last-seen timestamps, distinct affected pipelines and
+        failing stage names, a representative entry id (oldest in the
+        cluster), and the 5 most-recent entry ids.
+
+        Empty-fingerprint rows (legacy entries written before
+        migration 0023, plus send-side failures with no stage
+        attribution) are excluded — they remain reachable via the
+        regular list endpoint.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: query
+          name: pipeline_id
+          description: Exact pipeline ID match.
+          schema: { type: string, format: uuid }
+        - in: query
+          name: since
+          description: RFC3339 lower bound on created_at.
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          description: Max clusters to return (default 50, hard cap 200).
+          schema: { type: integer, default: 50, maximum: 200 }
+        - in: query
+          name: min_count
+          description: Exclude clusters with fewer than N entries (default 1).
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: ai
+          description: |
+            Opt-in AI enrichment. When set to `names` AND the AI
+            subsystem is enabled with the `dlq_cluster_naming`
+            capability allowed, each of the first 10 clusters is
+            named/summarised/suggested by the configured LLM
+            provider; the bundle lands in `ai_name` with
+            `ai_source="ai"`. On any provider failure the cluster
+            gets `ai_source="deterministic"` and the UI renders the
+            template as the title. Absent / AI disabled: the
+            `ai_name` and `ai_source` fields are omitted.
+          schema: { type: string, enum: [names] }
+      responses:
+        '200':
+          description: Ranked clusters.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [generated_at, total, returned, clusters]
+                properties:
+                  generated_at: { type: string, format: date-time }
+                  total:        { type: integer }
+                  returned:     { type: integer }
+                  clusters:
+                    type: array
+                    items:
+                      type: object
+                      required: [fingerprint, template, count, first_seen, last_seen, pipelines_affected, failing_stages, representative_id, recent_ids]
+                      properties:
+                        fingerprint:        { type: string }
+                        template:           { type: string }
+                        count:              { type: integer }
+                        first_seen:         { type: string, format: date-time }
+                        last_seen:          { type: string, format: date-time }
+                        pipelines_affected:
+                          type: array
+                          items: { type: string }
+                        failing_stages:
+                          type: array
+                          items: { type: string }
+                        representative_id:  { type: string }
+                        recent_ids:
+                          type: array
+                          items: { type: string }
+                        ai_name:
+                          description: |
+                            LLM-generated cluster name + summary +
+                            next-action suggestion. Present only
+                            when `?ai=names` was requested and the
+                            provider returned successfully.
+                          type: object
+                          required: [title, summary, suggestion]
+                          properties:
+                            title:      { type: string, maxLength: 80 }
+                            summary:    { type: string, maxLength: 240 }
+                            suggestion: { type: string, maxLength: 200 }
+                        ai_source:
+                          description: |
+                            Source of the cluster's name surface.
+                            `"ai"` when the LLM answered;
+                            `"deterministic"` when the provider
+                            failed and the UI should render the
+                            template as the title. Absent when
+                            `?ai=names` was not requested.
+                          type: string
+                          enum: [ai, deterministic]
+
+  /api/v1/dlq/{id}/replay-sim:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    post:
+      summary: Preview a DLQ retry against the live deployed revision.
+      description: |
+        Operator-only. Re-runs the entry's original payload through the
+        pipeline's currently-deployed revision in preview mode — no
+        broker sends, no DB mutation. Returns the per-stage observation
+        log so the operator can see exactly where the message would
+        fail today (or whether a fix has landed and a retry would now
+        succeed).
+
+        Uses `OriginalMsg` even for redacted rows; admin-only access to
+        the sealed raw payload is a separate endpoint and not part of
+        the simulation path.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Simulation result (would_succeed=false also returns 200).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entry_id, pipeline_id, revision_number, would_succeed, stage_runs]
+                properties:
+                  entry_id:        { type: string }
+                  pipeline_id:     { type: string }
+                  revision_number: { type: integer }
+                  would_succeed:   { type: boolean }
+                  stage_runs:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, duration_ns, failed]
+                      properties:
+                        name:        { type: string }
+                        duration_ns: { type: integer, format: int64 }
+                        failed:      { type: boolean }
+                        body:        { type: string }
+                        format:      { type: string }
+                        err:         { type: string }
+                  final_output:  { type: string }
+                  format:        { type: string }
+                  error:         { type: string }
+                  failing_stage: { type: string }
+        '403':
+          description: Caller lacks operator role on the entry's pipeline.
+        '404':
+          description: DLQ entry not found, or entry carries no pipeline_id.
+        '409':
+          description: Pipeline has no deployed revision; cannot simulate.
+
+  /api/v1/dlq/{id}/diff:
+    parameters: [{ $ref: '#/components/parameters/pathID' }]
+    get:
+      summary: Side-by-side payload diff between two DLQ entries.
+      description: |
+        Returns the line-level edit script transforming the `{id}`
+        entry's payload into the `against=` entry's payload, along
+        with metadata (pipeline, error_reason, fingerprint, template,
+        format guess) for both sides. The line diff is an ordered
+        flat list of `{op, text}` operations where `op` is one of
+        `eq` | `add` | `del`.
+
+        Passing the same id as `against` is allowed and yields an
+        all-`eq` diff.
+      tags: [dlq]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: query
+          name: against
+          required: true
+          description: The other DLQ entry id to diff against.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Payload diff.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, diff]
+                properties:
+                  from: { $ref: '#/components/schemas/DLQDiffSide' }
+                  to:   { $ref: '#/components/schemas/DLQDiffSide' }
+                  diff:
+                    type: array
+                    items:
+                      type: object
+                      required: [op, text]
+                      properties:
+                        op:   { type: string, enum: [eq, add, del] }
+                        text: { type: string }
+        '400':
+          description: Missing required `against` query parameter.
+        '404':
+          description: Either DLQ entry not found.
 
   /api/v1/dlq/{id}/raw:
     parameters: [{ $ref: '#/components/parameters/pathID' }]
@@ -1867,6 +2330,240 @@ paths:
           application/json: {}
       responses:
         '200': { description: Stage-by-stage trace + final output. }
+
+  /api/v1/topology:
+    get:
+      tags: [pipelines]
+      summary: Live topology snapshot — every broker connection, every pipeline, every live signal.
+      description: |
+        Single aggregator read for the Live Topology page. Combines the
+        tenant's connections + pipelines with live metrics
+        (msg_per_min, processed/failed counters, avg latency), DLQ
+        depth per pipeline, circuit-breaker state, source-broker depth,
+        and pool "connected" state. Best-effort: a failure in any
+        sub-source (e.g. DLQ count query) logs a warn server-side and
+        zero-fills that column rather than failing the response — a
+        partial snapshot beats a 500. Viewer-readable; tenant-scoped.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Topology snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [generated_at, tenant_id, connections, pipelines]
+                properties:
+                  generated_at: { type: string, format: date-time }
+                  tenant_id: { type: string }
+                  connections:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, type, connected]
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        type: { type: string, enum: [rabbitmq, kafka, ibm, mqtt, nats, amqp10] }
+                        topic: { type: string }
+                        depth: { type: integer, format: int64, nullable: true, description: "Broker-side backlog; null when unknown/unsupported" }
+                        connected: { type: boolean, description: "Pool currently holds an open client for this broker" }
+                  pipelines:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, source_id, destination_id, enabled, msg_per_min, processed, failed, avg_latency_ms, dlq_depth, circuit_state, status]
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        source_id: { type: string }
+                        destination_id: { type: string }
+                        enabled: { type: boolean }
+                        msg_per_min: { type: integer, format: int64 }
+                        processed: { type: integer, format: int64 }
+                        failed: { type: integer, format: int64 }
+                        avg_latency_ms: { type: number, format: double }
+                        dlq_depth: { type: integer, format: int64 }
+                        circuit_state: { type: string, enum: [closed, open, half-open, unknown] }
+                        shadow_destination_id: { type: string }
+                        shadow_percent: { type: integer, minimum: 0, maximum: 100 }
+                        route_destination_ids:
+                          type: array
+                          items: { type: string }
+                        status: { type: string, enum: [connected, error, disabled, idle] }
+                        last_error: { type: string }
+
+  /api/v1/explain/{subject}/{id}:
+    parameters:
+      - in: path
+        name: subject
+        required: true
+        description: |
+          The kind of state being explained. One of:
+          `circuit` (pipeline outbound breaker), `drift` (pipeline
+          validate-stage failure rate), `latency` (per-stage
+          latency waterfall), `dlq_cluster` (rollup of a single
+          fingerprint), `dlq_entry` (one DLQ row).
+        schema:
+          type: string
+          enum: [circuit, drift, latency, dlq_cluster, dlq_entry]
+      - in: path
+        name: id
+        required: true
+        description: |
+          The keying id for the subject. pipeline_id for
+          circuit/drift/latency, fingerprint for dlq_cluster,
+          entry id for dlq_entry.
+        schema: { type: string }
+    get:
+      tags: [pipelines]
+      summary: Composable structured "why" answer for one operational subject.
+      description: |
+        Composes existing telemetry (metrics counters, DLQ rows,
+        audit trail, breaker state, latency histograms) into a
+        structured Explanation document. The frontend drilldown
+        drawer renders Sections in order, Facts as label/value
+        rows, and Headline above all. Best-effort: a single
+        sub-source failure yields a degraded Explanation rather
+        than a 500.
+
+        Tenant-scoped via the session cookie; viewer minimum.
+
+        Optional `?ai=summary` adds a 2-sentence LLM paraphrase
+        of the Explanation when the AI subsystem is enabled with
+        the `explain_why_summary` capability. On provider
+        failure: `ai_source="deterministic"` and the UI should
+        fall back to the Headline as the summary.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: query
+          name: ai
+          description: |
+            Opt-in AI sidecar. `summary` triggers the LLM
+            paraphrase when the capability is allowed. Any other
+            value is ignored.
+          schema: { type: string, enum: [summary] }
+      responses:
+        '200':
+          description: Structured explanation, optionally with AI summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subject, id, headline, severity, facts, as_of]
+                properties:
+                  subject:
+                    type: string
+                    enum: [circuit, drift, latency, dlq_cluster, dlq_entry]
+                  id:       { type: string }
+                  headline: { type: string }
+                  severity:
+                    type: string
+                    enum: [info, warning, critical]
+                  facts:
+                    type: array
+                    items:
+                      type: object
+                      required: [label, value]
+                      properties:
+                        label:  { type: string }
+                        value:  { type: string }
+                        source: { type: string }
+                        as_of:  { type: string, format: date-time }
+                  sections:
+                    type: array
+                    items:
+                      type: object
+                      required: [kind, title, data]
+                      properties:
+                        kind:  { type: string, description: "Renderer hint: timeline | stages | fields | narrative | table" }
+                        title: { type: string }
+                        data:  { description: "Payload typed per kind." }
+                  as_of:   { type: string, format: date-time }
+                  sources:
+                    type: array
+                    items: { type: string }
+                  ai_summary:
+                    type: string
+                    description: |
+                      LLM-produced 2-sentence paraphrase. Present
+                      only when `?ai=summary` was requested and
+                      the provider returned successfully.
+                  ai_source:
+                    type: string
+                    enum: [ai, deterministic]
+                    description: |
+                      Source of the summary. `ai` when the LLM
+                      answered; `deterministic` when the
+                      provider failed and the UI should fall
+                      back to the Headline. Absent when
+                      `?ai=summary` was not requested.
+        '400':
+          description: Unknown subject.
+        '404':
+          description: Id not found for the subject (cross-tenant indistinguishable).
+
+  /api/v1/alerts/active:
+    get:
+      tags: [pipelines]
+      summary: Currently-firing SLO alerts from the in-process evaluator.
+      description: |
+        Reads the snapshot of currently-firing alerts maintained by
+        the in-process slo.Evaluator. The evaluator parses the same
+        Prometheus rules YAML the operator's Prometheus instance
+        consumes (deploy/prometheus/mqconnector-slos.yaml), so the
+        binary's "what is on fire right now" view never drifts from
+        the real Alertmanager.
+
+        Viewer-readable; tenant scoping is global today (the
+        project's rule labels are pipeline-keyed but not
+        tenant-keyed). When labels gain a tenant_id the handler
+        scopes automatically.
+
+        Returns evaluator_enabled=false when the binary started
+        without a rules file — the UI uses it to distinguish "no
+        alerts" from "alerting not configured".
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: query
+          name: severity
+          description: Comma-separated severities to keep (e.g. `warning,critical`).
+          schema: { type: string }
+        - in: query
+          name: pipeline
+          description: Keep only alerts whose labels carry `pipeline_id=<value>`.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Active alerts snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [generated_at, total, alerts, evaluator_enabled]
+                properties:
+                  generated_at: { type: string, format: date-time }
+                  total: { type: integer }
+                  evaluator_enabled: { type: boolean }
+                  alerts:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, severity, value, started_at]
+                      properties:
+                        name: { type: string }
+                        severity: { type: string, enum: [info, warning, critical] }
+                        value: { type: number, format: double }
+                        threshold: { type: string }
+                        started_at: { type: string, format: date-time }
+                        annotations:
+                          type: object
+                          additionalProperties: { type: string }
+                        labels:
+                          type: object
+                          additionalProperties: { type: string }
+                        group: { type: string }
+                        expr: { type: string }
 
   /api/v1/samples/extract:
     post:

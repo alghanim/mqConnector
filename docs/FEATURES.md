@@ -95,6 +95,36 @@ Sandboxed JavaScript for the cases declarative stages can't reach. The script re
 
 ---
 
+## Pipeline Studio (Wave 1)
+
+The Pipeline Studio is the canonical configure surface for a pipeline, mounted at `/pipelines/[id]/studio`. The legacy form view (`/pipelines/[id]?legacy=1`) is preserved as a one-release safety net; any plain visit to `/pipelines/{id}` 307-redirects into the Studio.
+
+**What ships in Wave 1:**
+
+- **Three-pane shell** — palette + canvas + inspector, with a bottom dry-run dock. Collapses above the canvas at ≤ 900 px viewports.
+- **Visual canvas** — SVG-rendered stage chain (source → stages → destination + alternate route destinations). Drag-and-drop from the palette appends to the chain; click selects a node.
+- **Structured per-stage editors** (one per stage type — Filter / Transform / Translate / Route / Script / Validate / Wasm) with an "Advanced (raw JSON)" `<details>` escape hatch that preserves unknown keys.
+- **Inspector** — surfaces stage metadata, an enable toggle, the structured editor, a green/red validity indicator, and a Delete action. Connection nodes show a read-only details card.
+- **Dry-run dock** — paste a JSON sample, click Run, see a per-stage outcome strip and the final output + routes. Clicking a stage cell opens an inline payload diff against the previous stage's output. Per-stage "Test on sample" jumps from an editor straight to a single-stage `/preview`.
+- **Version rail** — collapsible per-pipeline revision history. Pick one or two revisions and Compare; if only one is selected, the compare is against the live deployed revision.
+- **Diff viewer** — structured pipeline / stage / transform / routing-rule diff. Added / Modified / Removed sections render the change set; the comparison overlay sits on the canvas.
+- **Deploy + Rollback dialogs** — confirm against the diff before applying. Rollback creates a NEW revision holding the target's snapshot and promotes it to live; Deploy promotes an existing revision without creating a row. Both go through the standard `AuditAdminActions` middleware.
+- **Backend endpoints** — `GET /v1/pipelines/{id}/revisions`, `GET .../revisions/current`, `GET .../revisions/{rev}`, `GET .../revisions/{rev}/diff?against=`, `POST .../revisions/{rev}/rollback`, `POST .../deploy`.
+- **Command palette entries** (gated on `/studio` routes): "Studio: Deploy", "Studio: Compare to live", "Studio: Discard draft" (only when there are unsaved changes).
+- **Brand-token discipline** — `scripts/check-no-hex.sh` runs in CI; no raw hex outside `web/src/lib/brand-tokens.css`. Every new Studio component is theme-token-driven (dark + light) and uses CSS logical properties for RTL.
+
+**Deferred to Wave 2 (call out explicitly):**
+
+- **Proper draft-vs-deploy separation.** Wave 1's Studio Deploy button re-deploys the *latest existing* revision (round-tripping the operator through the approval/summary ceremony); legacy PUTs on `/pipelines/{id}/stages|transforms|routing-rules` still auto-deploy by snapshotting after the write. There is no "save draft without deploy" path yet. The per-stage Inspector validity indicator does not gate the Deploy button — it's a visual cue, not an enforcement.
+- **Tenant-saved samples library** in the DryRunDock (only paste-from-clipboard works today).
+- **Recent-traffic sample picker** tab in the DryRunDock.
+- **PathPicker integration** in the wrapped TransformEditor / RouteEditor row UIs (PathPicker itself lands in Wave 1, but the row UIs still take a hand-typed path).
+- **Approval-required-to-deploy UI** — the `requires_approval` column exists on `pipelines` and the DeployDialog honours it, but the toggle to flip it from the UI is not yet exposed.
+- **Topology overlays** on the canvas (throughput annotations, last-seen latency, error pulses).
+- **AI-assisted suggestions** ("rename this transform to…", "add a validate stage here?").
+
+---
+
 ## Multi-tenancy
 
 - **Tenant scoping** on every storage row — connections, pipelines, schemas, scripts, transforms, routing rules, DLQ, API tokens, webhooks.
@@ -197,7 +227,8 @@ Useful for: dev → staging promotion, disaster-recovery seeding, multi-tenant t
   - `/` — Operations overview: dense KPI strip, throughput chart (processed + failed series), pipeline health matrix, recent activity feed.
   - `/connections` — CRUD for broker connections, per-type form fields, "Test connection" probe.
   - `/pipelines` — Pipeline registry with live metrics inline, sparkline per row, error pill on failure.
-  - `/pipelines/[id]` — Per-pipeline form fallback: stages, transforms, routing rules, schemas, scripts.
+  - `/pipelines/[id]/studio` — **Pipeline Studio** (Wave 1, see section below): visual canvas + structured stage editors + dry-run dock + version rail + diff viewer + deploy/rollback dialogs.
+  - `/pipelines/[id]?legacy=1` — Legacy form view (preserved one release as a safety net). Plain visits to `/pipelines/{id}` 307-redirect into the Studio.
   - `/flow` — Visual flow editor: drag-and-drop nodes, draggable edges, pinned sample/preview drawer.
   - `/dlq` — Dead-letter triage: filter, retry, bulk delete, pagination, sortable columns.
   - `/metrics` — Live throughput table, sortable, with sparklines and totals row.

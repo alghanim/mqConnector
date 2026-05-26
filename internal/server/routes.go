@@ -177,6 +177,25 @@ func (s *Server) routes() http.Handler {
 			r.Put("/{id}/transforms", s.handleReplaceTransforms)
 			r.Get("/{id}/routing-rules", s.handleListRoutingRules)
 			r.Put("/{id}/routing-rules", s.handleReplaceRoutingRules)
+			// Revision history (Pipeline Studio Wave 1). Read-only;
+			// authenticated viewers can browse. Rollback /
+			// save-draft / deploy land in later waves.
+			r.Get("/{id}/revisions", s.handleListRevisions)
+			r.Get("/{id}/revisions/current", s.handleGetCurrentRevision)
+			r.Get("/{id}/revisions/{rev}", s.handleGetRevision)
+			// Structured diff between two revisions. Direction is
+			// from {rev} → to against, so the Studio diff viewer
+			// can render both rollback previews and forward-deploy
+			// previews with the same wire shape. Viewer-readable.
+			r.Get("/{id}/revisions/{rev}/diff", s.handleDiffRevisions)
+			// Pipeline Studio Wave 1 write-through endpoints.
+			// /revisions/{rev}/rollback creates a NEW revision
+			// holding the target's snapshot and promotes it to
+			// live. /deploy promotes an EXISTING revision to
+			// live without creating a new row. Both gate on
+			// operator role per-pipeline.
+			r.Post("/{id}/revisions/{rev}/rollback", s.handleRollbackRevision)
+			r.Post("/{id}/deploy", s.handleDeployRevision)
 			// Per-pipeline RBAC grants. Mounted under the pipeline
 			// so the chi router carries the pipeline id through the
 			// handler chain via {id}; the grant subject is named
@@ -197,10 +216,38 @@ func (s *Server) routes() http.Handler {
 		r.Post("/api/v1/reload", s.handleReload)
 		r.Post("/api/v1/pipelines/{id}/replay", s.handleReplayPipeline)
 
+		// Wave 2 — Live Topology aggregator. One read returns every
+		// broker connection in the tenant, every pipeline that flows
+		// between them, and the live health/throughput/depth signals
+		// for the topology page. Viewer-readable; tenant-scoped.
+		r.Get("/api/v1/topology", s.handleTopology)
+
+		// Wave 4 — Explain endpoint. Composable telemetry → a
+		// structured "why" answer for one of the known subjects
+		// (circuit, drift, latency, dlq_cluster, dlq_entry).
+		// Viewer-readable; tenant-scoped. Optional ?ai=summary
+		// gates on the CapExplainWhySummary capability.
+		r.Get("/api/v1/explain/{subject}/{id}", s.handleExplain)
+
+		// Wave 4 Task 4 — currently-firing SLO alerts from the
+		// in-process evaluator. The evaluator parses the same
+		// Prometheus rules YAML the operator's Prometheus
+		// consumes, so the binary's view never drifts from the
+		// real Alertmanager. Viewer-readable; alerts are global
+		// (rule labels carry pipeline_id but no tenant_id) — when
+		// labels gain a tenant_id the handler will scope here.
+		r.Get("/api/v1/alerts/active", s.handleListActiveAlerts)
+
 		r.Route("/api/v1/dlq", func(r chi.Router) {
 			r.Get("/", s.handleListDLQ)
 			r.Get("/groups", s.handleGroupDLQ)
+			// DLQ Intelligence Console (Wave 3 Task 3). Clusters +
+			// payload-diff are viewer-readable; replay-sim is
+			// operator-gated per-pipeline inside the handler.
+			r.Get("/clusters", s.handleListDLQClusters)
 			r.Post("/{id}/retry", s.handleRetryDLQ)
+			r.Post("/{id}/replay-sim", s.handleReplaySimDLQ)
+			r.Get("/{id}/diff", s.handleDiffDLQ)
 			r.Delete("/{id}", s.handleDeleteDLQ)
 			// Raw payload view is admin-only; every successful read
 			// is audited as action=dlq_raw_view (see handler).

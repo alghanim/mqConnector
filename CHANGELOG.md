@@ -26,6 +26,185 @@ This section accumulates changes between tagged releases. Move entries into a ne
 
 ---
 
+## 1.7.0 — Observability Drilldown + Explainers + SLO evaluator — 2026-05-26
+
+### Added — Operator experience
+
+- **`/observability` — Operations Intelligence surface.** A new top-level page that drills into a single pipeline's latency + drift + circuit health with explanatory panels. Pipeline picker + URL deep-link (`?pipeline=<id>`). Stat ribbon (Total p99 · dominant stage · failure rate · DLQ depth · circuit state) with stale-data indicator. Per-stage **WaterfallStages** chart with dominant-stage outline + click-to-drill. Three explain tabs (Latency / Drift / Circuit) consume the new `/api/v1/explain/{subject}/{id}` endpoint. Optional `?ai=summary` toggle pipes the explanation through the self-hosted LLM for a 2-sentence operator paraphrase.
+- **Alert ribbon in the app shell.** A sticky bar below the topnav that surfaces firing alerts from the in-process SLO evaluator. Severity-tinted (warning vs. danger). Headline + "View all" link → `/observability/alerts`. Session-dismissable. Hidden when nothing is firing.
+- **Explanation cards** — wherever an explainer attaches to a state (circuit open, drift spike, latency dominance, DLQ root cause), the operator gets a structured panel with: severity-tinted headline + facts list with source attribution + per-section renderers (stages waterfall / timeline table / fields chips / narrative prose) + optional AI summary chip.
+- **CommandPalette + nav** — new "Observability" entry in the Operations section (LineChart icon) + matching palette entry.
+
+### Added — Backend primitives
+
+- **`internal/explain/` package** — composable explainer modules over existing telemetry. Four explainers: `CircuitExplainer` (breaker state + recent failures + last deploy), `DriftExplainer` (validate-failure rate + top error templates + last stage edit), `LatencyExplainer` (per-stage p50/p95/p99 + dominant-stage detection), `DLQRootCauseExplainer` (cluster + entry modes with template field extraction + audit correlation). Engine dispatches by `subject` ; `MetricsSource` / `DLQSource` / `AuditSource` / `PipelinesSource` / `BreakersSource` interfaces are minimal — only the read-shape the explainers need.
+- **`GET /api/v1/explain/{subject}/{id}`** — returns the structured `Explanation` (headline + severity + facts[] + sections[] + sources[]). Supported subjects: `circuit`, `drift`, `latency`, `dlq_cluster` (fingerprint), `dlq_entry` (entry id). Opt-in `?ai=summary` runs the explanation through the LLM for a paraphrase + `ai_audit` row; gracefully degrades to deterministic when the provider is unreachable or the `explain_why_summary` capability isn't allowlisted.
+- **`internal/slo/` package** — in-process Prometheus rule evaluator. Loads `deploy/prometheus/mqconnector-slos.yaml` at startup (configurable via `slo.rules_file`); parses standard Prometheus alerting rules; evaluates a tractable PromQL subset (`rate()` / `sum` / `sum by (...)` / arithmetic / comparisons / `and|or|unless` / `clamp_min` / `clamp_max` / `histogram_quantile` / vector selectors + label matchers). Standard inactive → pending → firing → inactive lifecycle. Per-rule warn-throttling at 5 minutes. Recording rules parsed + made available to alert expressions via name resolution.
+- **`GET /api/v1/alerts/active`** — returns currently-firing alerts ordered by severity + start time. Optional `?severity=warning,critical` + `?pipeline=<id>` filters. Returns `evaluator_enabled: false` when no rules file is wired so the UI can distinguish "all good" from "alerting not configured."
+- **5-minute metrics ring buffer** (`internal/metrics/history.go`) for `rate()` evaluation — sampled every 30s, 10 windows.
+- **Storage helpers** the explainers need: `DLQRepo.RecentForPipeline`, `DLQRepo.ClusterByFingerprint`, `AuditRepo.RecentForResource`.
+
+### Added — Frontend primitives
+
+- **`PercentileBand.svelte`** — p50/p95/p99 visualisation with two modes (overtime line chart + snapshot horizontal band). ResizeObserver auto-sizing; reduced-motion safe.
+- **`WaterfallStages.svelte`** — horizontal per-stage latency waterfall with p99 bars + p50/p95 marker ticks. Dominant stage gets a primary-tone outline + Badge.
+- **`AnomalyMarker.svelte`** — composable severity-coloured triangle overlay for time-series charts.
+- **`ExplanationCard.svelte`** — generic renderer for the explain endpoint response. One component drives all three Observability tabs + future cross-surface drawer integrations.
+- **`ObservabilityStatRibbon.svelte`** — 5-tile compact strip used in the `/observability` header.
+
+### Deferred to Wave 5
+
+- Cross-surface explain drawer (slide-up panel on DLQ cluster cards + Topology side panel + Studio canvas nodes). The endpoint + ExplanationCard component ship today; surface integration is a wave-5 polish.
+- Backend windowed time-series API for the percentile band's overtime mode (current implementation synthesises the series from the latest point-in-time triple).
+- Anomaly markers fed from a real `/events` feed (today they're derived from explainer severities for illustration).
+- SLO evaluator coverage of metrics that live outside `metrics.Store` (DLQ depth, leader state, master-key version) — small follow-up per metric.
+
+### No breaking changes
+
+All Wave 1–3 routes + contracts continue to work. The new endpoints are additive; the new pages do not replace existing surfaces.
+
+---
+
+## 1.6.0 — DLQ Intelligence Console + AI workstream foundation — 2026-05-26
+
+### Added — Operator experience
+
+- **`/dlq` rebuilt as the Intelligence Console.** Three-pane layout: filter rail + cluster list on the left, cluster detail in the center, action drawer on the right. Tab strip toggles between the new **Clusters** view (default) and the legacy **All entries** flat list. Empty states explicitly tell the operator nothing is on fire when there are no clusters and the queue is clean.
+- **Fuzzy clustering of DLQ failures.** Errors collapse to stable fingerprints regardless of variable parts (UUIDs / timestamps / IPs / IDs / paths / email / numbers / field references all replaced with placeholders). A typical failure cluster shows the canonical template (e.g. `"[stage:validate] validation: missing field <field>"`) with a count, first/last seen, affected pipelines, and the failing stages — collapsing dozens of nearly-identical errors into one triage row.
+- **Replay simulation against the live revision.** From the action drawer, click "Replay simulation" on any entry → re-runs the original payload through the pipeline's currently-deployed revision in preview mode (no broker sends). Returns per-stage outcomes, a retry-confidence pill (`would-succeed` / `would-fail at <stage>`), and an "explain why this failed" hint backed by the structured run trace.
+- **Side-by-side payload diff.** Pick "Compare to..." on any entry to diff its body against another entry in the same cluster. The page renders a hand-rolled LCS line diff with `--success-bg` / `--danger-bg` highlights — useful for telling apart "same failure" vs "payload shape drifted."
+- **AI cluster names (opt-in, off by default).** A switch in the page header turns on `?ai=names` on the clusters endpoint. When the operator's self-hosted LLM endpoint is configured + the `dlq_cluster_naming` capability is allowlisted, each cluster gets an `ai_name: {title, summary, suggestion}` rendered via a small "AI" badge. The deterministic template stays as the fallback when AI is off or the provider is unreachable. A 60-second in-memory cache keeps repeat renders from re-costing the LLM.
+- **`?pipeline=<id>` deep links** preserved from Wave 1.4.0 polish — the Metrics drilldown's "View DLQ" button still lands on a pre-filtered console. New `?tab=all` switches straight to the legacy view for operators with a fixed workflow.
+
+### Added — Backend primitives
+
+- **DLQ schema extension (migration 0023).** Four new columns on the `dlq` table — `error_fingerprint`, `error_template`, `failing_stage_name`, `failing_stage_index` — plus two indexes (`(tenant_id, error_fingerprint)` + `(tenant_id, failing_stage_name)`). Existing rows carry empty fingerprints; new rows are populated by the push path.
+- **`internal/dlq/cluster` package.** Hand-rolled SimHash fingerprinter over a tokenised-template projection of the error string. Nine ordered substitutions (UUID → `<uuid>`, ISO timestamps → `<time>`, ≥3-digit integers → `<int>`, email → `<email>`, IPs → `<host>`, file paths → `<path>`, JSON-pointer field refs → `<field>`, quoted strings → `<str>`, whitespace collapse). `Fingerprint(errStr)` + `FingerprintWithStage(errStr, stage)` — the stage variant scopes the cluster so identical errors at different stages don't collapse together.
+- **`internal/ai/` workstream foundation.** `LLMProvider` interface + `OpenAIProvider` (pure `net/http` + `encoding/json`; chat-completions endpoint with optional `response_format.json_schema` structured outputs) + `NoopProvider` sentinel for off-by-default deployments + `FakeProvider` for tests. Per-call `AuditLogger` writes to a new `ai_audit` table (migration 0024) keyed by feature/tenant/prompt-hash. `mqconnector_ai_calls_total{feature, model, outcome}` Prometheus counter exposes provider health.
+- **`internal/dlq/cluster/naming.go`.** `Name(ctx, provider, audit, cfg, NameRequest)` → `NameResult{Title, Summary, Suggestion}`. System prompt + JSON schema are Go constants (versioned with the code). Best-effort: returns `ErrAINotAvailable` on every failure mode (feature disabled, provider error, bad JSON, timeout); caller decides whether to fall back to the deterministic template.
+- **3 new HTTP endpoints**:
+  - `GET /api/v1/dlq/clusters` — fingerprint-aggregated triage view with filters (`pipeline_id`, `since`, `limit`, `min_count`) and an opt-in `?ai=names` enrichment query
+  - `POST /api/v1/dlq/{id}/replay-sim` — preview replay against the live revision; returns per-stage outcomes + would-succeed flag
+  - `GET /api/v1/dlq/{id}/diff?against={other}` — server-computed LCS line diff between two entries
+
+### Added — Frontend primitives
+
+- **`web/src/lib/components/charts/Heatmap.svelte`** — calendar-heatmap of cluster occurrences (7 days × 24 hours). Hand-rolled SVG; 5-quintile fill scale on brand tokens; `<title>` per cell for hover tooltips.
+- **`web/src/lib/components/charts/PayloadDiff.svelte`** — side-by-side diff renderer consuming the server-computed `[{op, text}]` operations array. Reusable: the Studio dry-run dock's payload-diff modal can move to this component in a follow-up.
+- **`web/src/lib/components/dlq/`** — `ClusterCard`, `ClusterDetail`, `ActionDrawer`, `AINameBadge`, `StageOutcomeStrip` — the composable pieces of the new console. Each is small, focused, brand-token-clean, and individually testable.
+
+### Migrations
+
+- **Migration 0023** — `dlq` fingerprint + template + failing-stage columns + 2 indexes.
+- **Migration 0024** — `ai_audit` table + 3 indexes.
+
+### Configuration
+
+A new `ai:` section in `config.example.yaml` (commented out, `enabled: false` by default). Operators wire up their self-hosted LLM (OpenAI-compatible — vLLM, llama.cpp server, TGI, Ollama, etc.) by setting `endpoint`, `model`, optional `auth_header`, and the explicit `features` allowlist. Capabilities declared but not yet consumed: `transformation_from_example`, `explain_why_summary`, `redaction_pattern_detect` (Wave 4+).
+
+### Deferred to Wave 4
+
+- Real per-cluster heatmap data — currently derived from cluster `first_seen` + `last_seen` + `count` via a rough binning. Wave 4 will add a proper per-cluster recent-activity SQL.
+- Explainer-engine consumers for `explain_why_summary` capability (already declared in `internal/ai/config.go`).
+
+### No breaking changes
+
+Existing `/api/v1/dlq` list + `GET /api/v1/dlq/{id}` + retry + delete + bulk endpoints unchanged. The flat-list UI survives as the "All entries" tab.
+
+---
+
+## 1.5.0 — Live Topology + UX consistency sweep — 2026-05-25
+
+### Added — Operator experience
+
+- **`/topology` — Live Topology & Flow Command Center.** A new top-level operator surface: hand-rolled force-directed SVG graph of every broker + every pipeline running in the tenant. Edges are coloured + stroke-weighted by circuit state and `msg/min`, with marching-ants animation on open circuits (motion-safe). Side detail panel resolves selection to a connection or pipeline card with quick-action links into Studio, the metrics drilldown, and the DLQ filter. Polls every 5s with visibility-aware pause and a stale-data indicator. Sidebar entry `Topology` + CommandPalette nav entry.
+- **Studio elevated** with per-stage type-coloured accents on the palette, hairline brand-gradient strip on the header, broker glyphs on Source/Destination canvas nodes, marching-ants edge flow when dry-running, informative Pipeline Overview empty state in the Inspector (composition counts + last deployed + throughput + quick-add buttons), compact DryRunDock sample chips with a Last-run status line, and a friendlier VersionRail empty state.
+- **Overview dashboard fixed**: pipeline cards now resolve `pipeline_id` UUIDs to names, render broker glyphs on source/destination, and carry a soft shadow + hover lift. Throughput chart got a friendlier empty state.
+- **Metrics page rebuilt**: status dots, name-as-link, broker glyphs in the Flow column, larger status-tinted sparkline, and per-pipeline drilldown panel (inline expand) with throughput chart, latency pills, and three quick-action buttons (Open in Studio, View DLQ, Edit).
+- **Connections list polished**: name is a clickable button that opens the Edit dialog, broker glyphs bumped to 16px, "Test" became a labelled pill, endpoint cells truncate with full-value tooltip.
+- **DLQ page polished**: pipeline names resolved (no more UUIDs in the column or the detail drawer), filter dropdown labels match, relative-time + retry-count badge per row, friendlier empty-state copy, and `?pipeline={id}` query string pre-applies the filter (the Metrics drilldown's "View DLQ" button lands pre-filtered).
+- **Pipelines list**: name is now a clickable link directly to Studio; a labelled `Studio` pill replaces the prior icon-only gear button.
+- **Top-of-app nav** moved from a left sidebar to a horizontal top bar to reclaim full content width (clipped at viewport so the page can never horizontal-scroll).
+
+### Added — Backend primitives
+
+- **`GET /api/v1/topology`** — single aggregator returning connections (with type, topic, depth, connected flag) + pipelines (with status, msg/min, processed, failed, avg latency, DLQ depth, circuit state, shadow + routing destinations) in one snapshot. Best-effort: a failing sub-source (DLQ count, routing rules) logs `slog.Warn` and zero-fills rather than 500'ing.
+- **`Pool.Has(key)` + `Pool.Keys()`** — read-only accessors on the MQ pool so the topology aggregator can determine `connected` without opening a new connection.
+- **`DLQRepo.CountByPipeline(ctx, tenantID)`** — single grouped query (`SELECT pipeline_id, COUNT(*) GROUP BY pipeline_id`) for the topology DLQ depth column.
+- **`Manager.CircuitStateForPipeline(pipelineID)`** — exposes the outbound circuit-breaker state (`closed | open | half-open | unknown`) per pipeline. Wired via a `CircuitStatePublisher` hook the manager sets on each executor; state is cleared in the executor's unwind defer so stopped pipelines report `unknown` instead of stale.
+
+### Added — Frontend primitives
+
+- **`web/src/lib/charts/force.ts`** — ~200-line hand-rolled force-directed layout (repulsion + spring + centering, Euler integration, settles in 30 iterations + ~2s of per-frame refinement, honors `prefers-reduced-motion`).
+- **`web/src/lib/components/charts/TopologyGraph.svelte`** — SVG graph with node drag, edge selection, marker-arrow definitions, dotted/dashed/solid/marching-ants edge styling per circuit state, and a `ResizeObserver` for parent-column resize.
+- **`web/src/lib/stores/catalogue.ts`** — lifted name + connection resolution helpers from the Dashboard + Metrics duplication into a shared module; DLQ + Topology side panel now reuse the same `pipelineLabel` / `endpointFor` / `endpointType` / `endpointName` lookups.
+- **`ConnectionTypeIcon.svelte`** — shared broker glyph component (rabbitmq / kafka / ibm / mqtt / nats / amqp1) used by Studio, Dashboard, Metrics, Connections, DLQ filter, Topology, and the side detail panel.
+
+### Migrations
+
+None. All new functionality is read-only over existing schemas.
+
+### Deferred to Wave 3
+
+- SSE delta channel for circuit-state changes — the `/topology` page polls every 5s instead. Add when topology page performance dictates.
+- Standalone `EdgePulse` / `LiveSankey` chart primitives — the equivalent edge-pulse rendering is inlined into `TopologyGraph` for now; extract into reusable primitives when the dashboard flow strip lands.
+- Overview dashboard flow strip + alert ribbon — defer until SSE delta channel exists so the strip doesn't double-poll.
+
+### No breaking changes
+
+All Wave 1.x routes and contracts continue to work. Two surfaces evolved (Pipelines list link target, Pipeline detail redirect to Studio) but both remain reachable; legacy form view is still gated behind `?legacy=1`.
+
+---
+
+## 1.4.0 — Pipeline Studio (Wave 1) — 2026-05-25
+
+### Added — Operator experience
+
+- **Pipeline Studio** — a new visual pipeline workflow at `/pipelines/{id}/studio`. Replaces forms-first config with a three-pane shell: drag-drop stage palette, SVG canvas (source → stages → destination + routing branches), structured per-stage editors (Filter / Transform / Translate / Route / Script / Validate / WASM) replacing raw-JSON textareas.
+- **Live dry-run dock** — paste a sample message and inspect per-stage outcomes (timing, body, format, error) with click-to-diff between adjacent stages. Hand-rolled LCS diff renders side-by-side with line-level highlights.
+- **Version rail + diff viewer + deploy ceremony** — every save snapshots a `pipeline_revisions` row; explicit "Deploy" dialog shows the diff vs live, captures a change summary, and enforces an optional approver gate. "Rollback to revision N" creates a new revision from the target snapshot and write-throughs transactionally.
+- **CommandPalette Studio entries** — `Deploy`, `Compare to live`, `Discard draft`.
+- **Legacy form view** preserved at `/pipelines/{id}?legacy=1` (one-release safety net); `/pipelines/{id}` now 307-redirects to `/studio`.
+
+### Added — Backend primitives
+
+- **`pipeline_revisions` table** — append-only snapshots (pipeline + stages + transforms + routing rules). Canonical-JSON hash dedup (excludes child IDs and timestamps from the hash projection so identical PUTs collapse). Per-pipeline mutex makes revision-number assignment race-free.
+- **6 new HTTP endpoints**:
+  - `GET /api/v1/pipelines/{id}/revisions` (paginated list)
+  - `GET /api/v1/pipelines/{id}/revisions/current` (latest deployed)
+  - `GET /api/v1/pipelines/{id}/revisions/{rev}` (single)
+  - `GET /api/v1/pipelines/{id}/revisions/{rev}/diff?against={other}` (structured diff with positional child matching)
+  - `POST /api/v1/pipelines/{id}/revisions/{rev}/rollback` (creates new revision from target, transactional write-through, Manager.Reload)
+  - `POST /api/v1/pipelines/{id}/deploy` (promotes existing revision; latent `requires_approval` gate returns 409)
+- **`StageRun` extension** — preview engine now captures per-stage `body`, `format`, `err`; surfaced as `stage_runs[]` on `POST /v1/preview`. Body is `bytes.Clone`d so the dry-run dock can render without read corruption.
+- **Tx-aware repo variants** — `ReplaceForPipelineTx` on stages/transforms/routing rules and `UpdateTx` on pipelines, sharing one `storage.Tx` for atomic deploy/rollback writes.
+- **`Pipeline.RequiresApproval` field** — surfaced on the Go model; column already existed from migration 0022.
+- **`CreateForce`** — bypasses hash dedup for operator-intent inserts (rollback).
+- **Snapshot helper** — async via background goroutine with 5s timeout (replaces the synchronous request-context path), tracked by a `pendingBackgroundOps` WaitGroup so tests can wait deterministically and the shutdown drain blocks for in-flight writes (bounded 5s).
+
+### Added — Hygiene
+
+- **`scripts/check-no-hex.sh`** — brand-token discipline CI lint. Comment-aware, perl-stripping, with an `# check-no-hex: ignore` escape hatch for intentional exceptions (e.g. `<meta name="theme-color">`).
+
+### Deferred to Wave 2
+
+- Proper draft-vs-deploy separation. Today the Studio's Deploy button re-deploys the latest existing revision; legacy PUTs still auto-deploy via the snapshot helper.
+- Tenant-saved samples library in DryRunDock (Wave 1 ships fixtures + paste only).
+- Recent-traffic sample picker tab (Wave 1 omits; requires a Manager ring buffer).
+- PathPicker integration in the wrapped TransformEditor / RouteEditor row UIs (wrappers preserved; row UIs untouched).
+- Approval-required-to-deploy UI (column exists; toggle to flip `requires_approval` is not yet exposed).
+- Deploy button auto-disable when any per-stage editor reports `valid=false` (today: visual `!` indicator in the Inspector, not button-gated; server still rejects).
+
+### Migrations
+
+- Migration 0022 — new `pipeline_revisions` table + `pipelines.requires_approval` column.
+
+### No breaking changes
+
+Existing PUT handlers continue to work; their semantics (save = deploy) are preserved. Legacy `/pipelines/{id}` URL still serves the form view when `?legacy=1` is appended.
+
+---
+
 ## [1.3.0] — 2026-05-24
 
 Operability + compliance release. Ten additive features layered on the 1.2.0 enterprise-hardening base: payload-level PII protection on the DLQ, a destination-side dedup window for non-idempotent downstreams, pluggable key custody (Vault), schema-drift detection earlier than DLQ-depth alarms, per-stage latency observation without a trace backend, CEF for SIEM integrations, tenant-aggregate fairness, broker-side mTLS hot reload, bulk DLQ triage, and shadow-destination canarying for broker migrations. No breaking changes — every new field is default-off and preserves prior behaviour.

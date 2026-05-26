@@ -290,12 +290,12 @@ func isSerializationFailure(err error) bool {
 // FirstBrokenID is the id of the earliest row that fails verification
 // (zero on a clean chain). Checked is the total number of rows walked.
 type ChainStatus struct {
-	TenantID        string `json:"tenant_id"`
-	Status          string `json:"status"`
-	Checked         int    `json:"checked"`
-	FirstBrokenID   string `json:"first_broken_id,omitempty"`
-	FirstBrokenAt   string `json:"first_broken_at,omitempty"`
-	FirstBrokenWhy  string `json:"first_broken_why,omitempty"`
+	TenantID       string `json:"tenant_id"`
+	Status         string `json:"status"`
+	Checked        int    `json:"checked"`
+	FirstBrokenID  string `json:"first_broken_id,omitempty"`
+	FirstBrokenAt  string `json:"first_broken_at,omitempty"`
+	FirstBrokenWhy string `json:"first_broken_why,omitempty"`
 }
 
 // Verify walks the audit chain for one tenant (or all tenants when
@@ -448,6 +448,32 @@ func (r *AuditRepo) List(ctx context.Context, tenantID string, f AuditFilter, pa
 		out = append(out, e)
 	}
 	return out, total, rows.Err()
+}
+
+// RecentForResource returns the most recent audit rows whose
+// resource path begins with `resourcePrefix`, newest-first.
+// Tenant-scoped — a missing tenantID is rejected. limit caps the
+// result (defaults to 25 when ≤ 0).
+//
+// Thin wrapper over List that pre-fills the filter and discards
+// the total count — callers of the explain Source surface only
+// need the rows, not the page metadata. Kept separate so the
+// explain package's interface stays read-shape-narrow.
+func (r *AuditRepo) RecentForResource(ctx context.Context, tenantID, resourcePrefix string, limit int) ([]*AuditEntry, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	if resourcePrefix == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+	rows, _, err := r.List(ctx, tenantID, AuditFilter{Resource: resourcePrefix}, 1, limit)
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // AuditDiff is the optional before/after JSON snapshot for PUT actions.

@@ -392,7 +392,11 @@
                     <GitFork size={14} />
                   </span>
                   <div class="cell-name-stack">
-                    <span class="cell-name-text">{p.name}</span>
+                    {#if p.id}
+                      <a class="cell-name-link" href="/pipelines/{p.id}/studio">{p.name}</a>
+                    {:else}
+                      <span class="cell-name-text">{p.name}</span>
+                    {/if}
                     <span class="cell-name-sub">
                       {#if !p.enabled}<Badge variant="warning">{t($locale, 'common.disabled')}</Badge>{/if}
                       {#if m?.last_error}
@@ -453,21 +457,30 @@
               <td>
                 <div class="row-actions">
                   {#if p.id}
+                    <!--
+                      Studio is the canonical configure path. The
+                      GitFork link is the gated escape hatch into the
+                      legacy form view — Task 14 made /pipelines/{id}
+                      redirect into the Studio, so the `?legacy=1`
+                      query string is now mandatory to reach the form.
+                      Wave 2 will delete both the route and this icon.
+                    -->
                     <a
-                      class="icon-action"
-                      href="/flow?pipeline={p.id}"
-                      aria-label={t($locale, 'flow.openVisual')}
-                      title={t($locale, 'flow.openVisual')}
-                    >
-                      <GitFork size={14} aria-hidden="true" />
-                    </a>
-                    <a
-                      class="icon-action"
-                      href="/pipelines/{p.id}"
+                      class="studio-action"
+                      href="/pipelines/{p.id}/studio"
                       aria-label={t($locale, 'pipelines.configure')}
                       title={t($locale, 'pipelines.configure')}
                     >
                       <Settings2 size={14} aria-hidden="true" />
+                      <span>{t($locale, 'pipelines.studio')}</span>
+                    </a>
+                    <a
+                      class="icon-action"
+                      href="/pipelines/{p.id}?legacy=1"
+                      aria-label={t($locale, 'studio.legacy.openForm')}
+                      title={t($locale, 'studio.legacy.openForm')}
+                    >
+                      <GitFork size={14} aria-hidden="true" />
                     </a>
                   {/if}
                   <button
@@ -692,6 +705,19 @@
   .cell-name-text {
     font-weight: 500;
   }
+  .cell-name-link {
+    font-weight: 600;
+    color: var(--text);
+    text-decoration: none;
+    border-block-end: 1px solid transparent;
+    padding-block-end: 1px;
+    transition: color 120ms ease, border-color 120ms ease;
+  }
+  .cell-name-link:hover,
+  .cell-name-link:focus-visible {
+    color: var(--text);
+    border-block-end-color: var(--border-strong, var(--border));
+  }
 
   /* flow viz */
   .flow {
@@ -761,6 +787,30 @@
   .icon-action.danger:hover {
     color: var(--danger);
     border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  }
+
+  .studio-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding-inline: 0.6rem;
+    padding-block: 0.3rem;
+    border-radius: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 0.78rem;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms, color 120ms;
+    margin-inline-end: 0.25rem;
+  }
+  .studio-action:hover,
+  .studio-action:focus-visible {
+    background: var(--surface-2, var(--surface));
+    border-color: var(--border-strong, var(--border));
+    color: var(--text);
   }
 
   .empty-filter {

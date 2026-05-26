@@ -29,6 +29,86 @@ type Config struct {
 	Leadership LeadershipConfig `yaml:"leadership"`
 	Audit      AuditConfig      `yaml:"audit"`
 	Secrets    SecretsConfig    `yaml:"secrets"`
+	AI         AIConfig         `yaml:"ai"`
+	SLO        SLOConfig        `yaml:"slo"`
+}
+
+// SLOConfig configures the in-process SLO evaluator. The evaluator
+// parses the same Prometheus rule files Prometheus itself consumes,
+// so the binary can surface currently-firing SLO breaches at
+// /api/v1/alerts/active without standing up an external alertmanager.
+//
+// Defaults: RulesFile empty (evaluator disabled);
+// Interval = 30s; HistoryInterval = 30s. A missing RulesFile is NOT a
+// boot-fatal error — main.go logs a warn and skips wiring the
+// evaluator, so deployments that drop the bundled rules file get a
+// degraded view rather than a hard failure.
+type SLOConfig struct {
+	// RulesFile is the path to a Prometheus rules YAML. Empty
+	// disables the SLO evaluator entirely.
+	RulesFile string `yaml:"rules_file"`
+	// RulesDir is the path to a directory of Prometheus rules YAML
+	// files. Mutually exclusive with RulesFile; if both are set,
+	// RulesFile wins.
+	RulesDir string `yaml:"rules_dir"`
+	// Interval is how often the evaluator re-evaluates each rule.
+	// Default: 30s.
+	Interval time.Duration `yaml:"interval"`
+	// HistoryInterval is how often the metrics-store snapshot is
+	// captured for rate() lookback. Default: 30s.
+	HistoryInterval time.Duration `yaml:"history_interval"`
+	// HistoryKeep is the number of historical snapshots to retain
+	// (ring buffer size). Default: 10 (= 5min at 30s interval).
+	HistoryKeep int `yaml:"history_keep"`
+}
+
+// AIConfig is the application-level wrapper around internal/ai's
+// Config. Lives here (rather than reusing ai.Config directly) so the
+// config package doesn't depend on internal/ai — cmd/mqconnector
+// translates AIConfig → ai.Config at startup.
+//
+// Defaults: Enabled=false, Features empty, AuditEvery=true. An
+// operator who pastes the example block into a fresh config gets a
+// gated, audit-on setup that does nothing until they opt features
+// in.
+type AIConfig struct {
+	// Enabled is the master switch. When false, every AI call
+	// short-circuits to ErrAINotAvailable.
+	Enabled bool `yaml:"enabled"`
+	// Provider names the implementation. Only "openai_compatible"
+	// is shipped in v1.
+	Provider string `yaml:"provider"`
+	// Endpoint is the OpenAI-compatible base URL (e.g.
+	// http://llm.internal/v1). Empty disables AI even when
+	// Enabled=true.
+	Endpoint string `yaml:"endpoint"`
+	// Model is the model name (e.g. "qwen2.5-14b-instruct").
+	Model string `yaml:"model"`
+	// AuthHeader is the raw Authorization header value (typically
+	// "Bearer <api-key>"). Empty sends no header.
+	AuthHeader string `yaml:"auth_header"`
+	// TimeoutMs caps a single provider call. Defaults to 8000.
+	TimeoutMs int `yaml:"timeout_ms"`
+	// MaxTokens is the per-call ceiling. Defaults to 1024.
+	MaxTokens int `yaml:"max_tokens"`
+	// Features is the explicit capability allowlist. Nothing is
+	// enabled by default. Known values: dlq_cluster_naming,
+	// transformation_from_example, explain_why_summary,
+	// redaction_pattern_detect.
+	Features []string `yaml:"features"`
+	// AuditEvery controls whether every provider attempt is
+	// audited. Defaults to true; only set false in load-test /
+	// dev where audit volume matters more than completeness.
+	AuditEvery *bool `yaml:"audit_every_call"`
+}
+
+// AuditEveryEnabled returns the effective audit-every setting:
+// AuditEvery if explicitly set, else true (the safer default).
+func (c AIConfig) AuditEveryEnabled() bool {
+	if c.AuditEvery == nil {
+		return true
+	}
+	return *c.AuditEvery
 }
 
 // SecretsConfig selects the envelope-encryption key source.
@@ -50,9 +130,9 @@ type Config struct {
 // Only one source is active. A future AWS KMS / GCP KMS provider
 // plugs in here with no surface-level change to call sites.
 type SecretsConfig struct {
-	Source string              `yaml:"source"` // env (default) | file | vault
-	File   SecretsFileConfig   `yaml:"file"`
-	Vault  SecretsVaultConfig  `yaml:"vault"`
+	Source string             `yaml:"source"` // env (default) | file | vault
+	File   SecretsFileConfig  `yaml:"file"`
+	Vault  SecretsVaultConfig `yaml:"vault"`
 }
 
 // SecretsFileConfig configures the file-based key provider.
@@ -130,13 +210,13 @@ type AuditConfig struct {
 // upload (Archiver.SetS3Uploader sees nil and treats archival as
 // local-only).
 type AuditS3Config struct {
-	Endpoint        string `yaml:"endpoint"`           // e.g. https://s3.amazonaws.com or http://minio:9000
-	Region          string `yaml:"region"`             // e.g. us-east-1
-	Bucket          string `yaml:"bucket"`             // destination bucket
-	Prefix          string `yaml:"prefix"`             // optional key prefix (folder)
-	AccessKey       string `yaml:"access_key"`
-	SecretKey       string `yaml:"secret_key"`
-	DeleteAfterUpload bool `yaml:"delete_after_upload"` // remove local copy after successful upload
+	Endpoint          string `yaml:"endpoint"` // e.g. https://s3.amazonaws.com or http://minio:9000
+	Region            string `yaml:"region"`   // e.g. us-east-1
+	Bucket            string `yaml:"bucket"`   // destination bucket
+	Prefix            string `yaml:"prefix"`   // optional key prefix (folder)
+	AccessKey         string `yaml:"access_key"`
+	SecretKey         string `yaml:"secret_key"`
+	DeleteAfterUpload bool   `yaml:"delete_after_upload"` // remove local copy after successful upload
 }
 
 // LeadershipConfig controls the multi-replica safety lease. When Enabled
@@ -308,9 +388,27 @@ func Default() Config {
 			TTL:     30 * time.Second,
 		},
 		Audit: AuditConfig{
-			ArchiveDir:    "",                  // disabled by default
-			MaxAge:        7 * 24 * time.Hour,  // archive rows older than a week
+			ArchiveDir:    "",                 // disabled by default
+			MaxAge:        7 * 24 * time.Hour, // archive rows older than a week
 			SweepInterval: time.Hour,
+		},
+		// AI defaults: every knob off. The cmd/mqconnector wiring
+		// builds a no-op provider when Enabled=false, so handlers
+		// can rely on the provider field being non-nil without a
+		// nil check.
+		AI: AIConfig{
+			Enabled:   false,
+			Provider:  "openai_compatible",
+			TimeoutMs: 8000,
+			MaxTokens: 1024,
+		},
+		// SLO defaults: evaluator off until an operator points it
+		// at a rules file. Sensible interval/keep so the
+		// rate(…[5m]) lookback works out of the box.
+		SLO: SLOConfig{
+			Interval:        30 * time.Second,
+			HistoryInterval: 30 * time.Second,
+			HistoryKeep:     10,
 		},
 	}
 }

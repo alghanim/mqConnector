@@ -80,6 +80,16 @@ type Manager struct {
 	// thread-safe.
 	budgetMu      sync.Mutex
 	tenantBudgets map[string]*budget
+
+	// breakerState caches the most recent circuit-breaker state token
+	// ("closed" / "open" / "half-open") published by each running
+	// executor. Read by CircuitStateForPipeline so the topology
+	// aggregator can surface breaker state without poking at
+	// executor internals. Keys are pipeline IDs; entries are cleared
+	// when the executor unwinds so a stopped pipeline reports
+	// "unknown" rather than a stale token.
+	breakerMu    sync.Mutex
+	breakerState map[string]string
 }
 
 // tenantBudgetFor returns the shared budget for a tenant, building it
@@ -388,6 +398,7 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 		}
 	}
 
+	pipelineID := p.ID
 	executor := &Executor{
 		Pipeline:     p,
 		Stages:       stages,
@@ -403,6 +414,12 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 		Dedup:        m.dedup,
 		TenantBudget: tenantBudget,
 		Logger:       m.logger,
+		// Bridge the executor's breaker state back to the manager so
+		// the /api/v1/topology aggregator can surface circuit state
+		// without poking at executor internals.
+		CircuitStatePublisher: func(state string) {
+			m.publishCircuitState(pipelineID, state)
+		},
 	}
 
 	handle := &executorHandle{cancel: cancel, done: make(chan struct{})}
@@ -438,6 +455,10 @@ func (m *Manager) startPipeline(ctx context.Context, p *storage.Pipeline) error 
 				delete(m.active, p.ID)
 			}
 			m.mu.Unlock()
+			// Drop any cached breaker state so the topology endpoint
+			// reports "unknown" instead of a stale snapshot of a
+			// stopped pipeline.
+			m.clearCircuitState(p.ID)
 			// Lifecycle event: pipeline stopped. Reasons include
 			// explicit Stop, Reload churn, or an executor error.
 			m.emit(context.Background(), events.TypePipelineStopped, p.TenantID, map[string]any{
@@ -536,6 +557,70 @@ func (m *Manager) ActiveCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.active)
+}
+
+// CircuitStateForPipeline returns a fixed lowercase token describing the
+// outbound circuit-breaker state for one pipeline:
+//
+//   - "closed"    — healthy; sends are flowing.
+//   - "open"      — breaker has tripped on consecutive failures; sends
+//     short-circuit and the worker Nacks to the source.
+//   - "half-open" — cool-down elapsed; one probe send is in flight.
+//   - "unknown"   — the pipeline isn't currently running on this
+//     replica (most often: the executor hasn't started
+//     yet, or this replica isn't the leader). The caller
+//     should treat this as "no signal" rather than
+//     conflating with "closed".
+//
+// Used by the /api/v1/topology aggregator. Cheap: one map lookup plus
+// the breaker's own internal mutex.
+func (m *Manager) CircuitStateForPipeline(pipelineID string) string {
+	m.mu.Lock()
+	_, ok := m.active[pipelineID]
+	m.mu.Unlock()
+	if !ok {
+		return "unknown"
+	}
+	// The breaker lives on the executor, not the handle. The handle's
+	// design hides the executor so the manager doesn't grow a coupling
+	// to executor internals — but the topology endpoint needs read-only
+	// access to the per-pipeline circuit state. We track that
+	// separately via SetCircuitState (executor publishes; we read).
+	m.breakerMu.Lock()
+	defer m.breakerMu.Unlock()
+	if m.breakerState == nil {
+		return "unknown"
+	}
+	st, present := m.breakerState[pipelineID]
+	if !present {
+		// Executor is running but hasn't published a state yet (no
+		// send has happened). Treat as healthy — the breaker default
+		// is closed and the executor would only publish a non-closed
+		// state on a failure.
+		return "closed"
+	}
+	return st
+}
+
+// publishCircuitState lets an executor report its breaker state to
+// the manager so the topology endpoint can surface it without poking
+// at executor internals. Idempotent; the latest write wins.
+func (m *Manager) publishCircuitState(pipelineID, state string) {
+	m.breakerMu.Lock()
+	defer m.breakerMu.Unlock()
+	if m.breakerState == nil {
+		m.breakerState = map[string]string{}
+	}
+	m.breakerState[pipelineID] = state
+}
+
+// clearCircuitState drops the cached breaker state for a pipeline,
+// called when the executor unwinds so the topology endpoint reports
+// "unknown" rather than a stale snapshot of a stopped pipeline.
+func (m *Manager) clearCircuitState(pipelineID string) {
+	m.breakerMu.Lock()
+	defer m.breakerMu.Unlock()
+	delete(m.breakerState, pipelineID)
 }
 
 // ToMQConfig converts a storage.Connection to an mq.Config. The real work

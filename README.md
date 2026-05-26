@@ -76,6 +76,8 @@ Across six broker types:
 
 Configuration is in SQLite — no etcd, no Postgres, no external state store. The admin UI ships embedded; the entire deploy is one binary and one database file.
 
+Operators configure pipelines through the **Pipeline Studio** at `/pipelines/{id}/studio` — a visual canvas + structured stage editors + dry-run dock + versioned diff / deploy / rollback ceremony. The legacy form view is still available at `/pipelines/{id}?legacy=1` as a one-release safety net; any plain visit to `/pipelines/{id}` redirects into the Studio. See [docs/FEATURES.md → Pipeline Studio (Wave 1)](docs/FEATURES.md#pipeline-studio-wave-1) for the full surface and Wave-2 deferrals.
+
 ---
 
 ## Quick start (5 minutes, Docker)
@@ -430,6 +432,17 @@ For changes that span both halves, the typical loop is:
 1. Frontend dev server keeps running (HMR handles UI iteration)
 2. Backend: `Ctrl-C` + `go run` after each Go change (or use `air`)
 3. `npm run check` + `go test ./...` before committing
+
+### Pre-commit checks
+
+Before committing frontend changes, run [`./scripts/check-no-hex.sh`](scripts/check-no-hex.sh)
+to verify no raw hex colors have leaked outside `web/src/lib/brand-tokens.css`.
+All component colors must come from CSS custom properties — the script is the
+tripwire that catches `color: #fff` slipping in. CI runs the same check after
+`npm run build`. The script honors `/* check-no-hex: ignore */` and
+`<!-- check-no-hex: ignore -->` markers for the rare line where an inline hex
+is unavoidable (e.g. the `<meta name="theme-color">` tag the browser reads
+before any stylesheet loads).
 
 ---
 

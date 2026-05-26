@@ -119,6 +119,13 @@ type Executor struct {
 	// circuit (used in tests that don't want the open-state
 	// behaviour to interfere).
 	breaker *breaker
+
+	// CircuitStatePublisher, when set, is called after every send
+	// result with the current breaker state token ("closed" / "open"
+	// / "half-open"). Used by Manager to expose breaker state to the
+	// topology endpoint without coupling the manager to executor
+	// internals. nil disables the publish path.
+	CircuitStatePublisher func(state string)
 }
 
 // Run blocks until ctx is cancelled or the executor encounters an unrecoverable
@@ -302,14 +309,23 @@ func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.L
 		// the broker stops redelivering); if it fails we Nack with
 		// requeue so the broker redelivers and we get another shot
 		// next iteration.
+		//
+		// Stage attribution: when RunStages errors, the tail entry of
+		// outcome.Runs is the failing stage (RunStages contract). We
+		// hand the name + zero-based index to the DLQ so the cluster
+		// console can group "transform" failures separately from
+		// "validate" failures even when the error text is identical.
+		failName, failIdx := failingStageFromRuns(outcome.Runs)
 		dlqErr := errors.New("dlq disabled")
 		if e.DLQ != nil {
 			dlqErr = e.DLQ.Push(ctx, storage.DLQEntry{
-				TenantID:    e.Pipeline.TenantID,
-				PipelineID:  e.Pipeline.ID,
-				SourceQueue: e.SourceQueue,
-				OriginalMsg: message,
-				ErrorReason: runErr.Error(),
+				TenantID:          e.Pipeline.TenantID,
+				PipelineID:        e.Pipeline.ID,
+				SourceQueue:       e.SourceQueue,
+				OriginalMsg:       message,
+				ErrorReason:       runErr.Error(),
+				FailingStageName:  failName,
+				FailingStageIndex: failIdx,
 			})
 		}
 		if e.Metrics != nil {
@@ -384,11 +400,17 @@ func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.L
 
 	if e.breaker != nil {
 		e.breaker.recordResult(sendErr == nil)
+		e.publishBreakerState()
 	}
 
 	if sendErr != nil {
 		dlqErr := errors.New("dlq disabled")
 		if e.DLQ != nil {
+			// Send-side failures have no stage attribution — the
+			// stages all ran successfully and the send phase is
+			// outside the stage list. The cluster console surfaces
+			// these rows in a synthetic "send" bucket via the empty
+			// FailingStageName.
 			dlqErr = e.DLQ.Push(ctx, storage.DLQEntry{
 				TenantID:    e.Pipeline.TenantID,
 				PipelineID:  e.Pipeline.ID,
@@ -425,6 +447,29 @@ func (e *Executor) processOne(ctx context.Context, workerIdx int, logger *slog.L
 
 	e.finalize(ctx, source, true, logger)
 	return nil
+}
+
+// publishBreakerState forwards the breaker's current state token to
+// the manager (via the configured publisher) so the topology endpoint
+// can surface it without coupling to executor internals. nil
+// publisher or nil breaker → no-op.
+func (e *Executor) publishBreakerState() {
+	if e.CircuitStatePublisher == nil || e.breaker == nil {
+		return
+	}
+	st, _ := e.breaker.snapshot()
+	var token string
+	switch st {
+	case breakerClosed:
+		token = "closed"
+	case breakerOpen:
+		token = "open"
+	case breakerHalfOpen:
+		token = "half-open"
+	default:
+		token = "unknown"
+	}
+	e.CircuitStatePublisher(token)
 }
 
 // shadowSend publishes a payload to the configured shadow destination
@@ -493,6 +538,24 @@ func (e *Executor) finalize(ctx context.Context, source mq.Connector, handled bo
 	if err := source.Nack(ctx, true); err != nil {
 		logger.Warn("source nack failed", "err", err)
 	}
+}
+
+// failingStageFromRuns extracts the failing stage's name + zero-based
+// index from a RunStages outcome. By RunStages' contract the failing
+// stage is the tail of the runs slice on error; we still gate on the
+// Failed flag so a misuse (the caller hands us a successful runs
+// slice) returns the safe zero-value rather than mis-attributing the
+// last successful stage. Returns ("", 0) when the slice is empty,
+// which the DLQ persists as "no attribution."
+func failingStageFromRuns(runs []StageRun) (string, int) {
+	if len(runs) == 0 {
+		return "", 0
+	}
+	tail := runs[len(runs)-1]
+	if !tail.Failed {
+		return "", 0
+	}
+	return tail.Name, len(runs) - 1
 }
 
 // recordStageObservations forwards per-stage outcomes to the metrics

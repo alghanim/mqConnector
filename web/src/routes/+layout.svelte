@@ -29,7 +29,7 @@
   import '../app.css';
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
-  import { goto } from '$app/navigation';
+  import { goto, afterNavigate } from '$app/navigation';
   import { auth } from '$lib/stores/auth';
   import { tenants } from '$lib/stores/tenants';
   import { locale, t } from '$lib/stores/locale';
@@ -50,13 +50,16 @@
   import CommandPalette from '$lib/components/CommandPalette.svelte';
   import KeyboardShortcuts from '$lib/components/KeyboardShortcuts.svelte';
   import Toaster from '$lib/components/Toaster.svelte';
+  import AlertRibbon from '$lib/components/AlertRibbon.svelte';
   import {
     LayoutDashboard,
     Plug,
     Workflow,
     GitFork,
+    Network,
     AlertOctagon,
     Activity,
+    LineChart,
     Users2,
     KeyRound as KeyIcon,
     Webhook as WebhookIcon,
@@ -64,8 +67,7 @@
     HelpCircle,
     LifeBuoy,
     Search,
-    BellDot,
-    KeyRound
+    BellDot
   } from 'lucide-svelte';
 
   let dlqCount = 0;
@@ -170,6 +172,8 @@
       label: t($locale, 'nav.section.operations'),
       items: [
         { href: '/', label: t($locale, 'nav.overview'), icon: LayoutDashboard },
+        { href: '/topology', label: t($locale, 'nav.topology'), icon: Network },
+        { href: '/observability', label: t($locale, 'nav.observability'), icon: LineChart },
         { href: '/metrics', label: t($locale, 'nav.metrics'), icon: Activity },
         { href: '/dlq', label: t($locale, 'nav.dlq'), icon: AlertOctagon, badge: dlqCount }
       ] as NavItem[]
@@ -206,6 +210,60 @@
     if (href === '/') return pathname === '/';
     return pathname === href || pathname.startsWith(href + '/');
   }
+
+  // ─── Section dropdowns use the native HTML popover API ──────────
+  //
+  // The browser handles open/close + outside-click + Escape natively
+  // by virtue of `popover="auto"` + `popovertarget="..."`. We only
+  // need to position each popover under its triggering button — see
+  // the `beforetoggle` listener in the onMount block below.
+  //
+  // Native popover renders the element in the top layer, escaping
+  // every overflow:hidden clip and stacking context the old
+  // {#if isOpen}-rendered absolute popup got trapped in.
+  //
+  // Close-on-navigate: SvelteKit's afterNavigate hook calls
+  // hidePopover() on every open popover so navigating via a menu
+  // link tidies up the popover before the next route renders.
+  afterNavigate(() => {
+    if (typeof document === 'undefined') return;
+    document
+      .querySelectorAll<HTMLDivElement>('.nav-menu[popover]')
+      .forEach((p) => {
+        if (p.matches(':popover-open')) p.hidePopover();
+      });
+  });
+
+  function sectionActive(section: Section, pathname: string): boolean {
+    return section.items.some((it) => isActive(it.href, pathname));
+  }
+  function sectionBadge(section: Section): number {
+    return section.items.reduce((sum, it) => sum + (it.badge ?? 0), 0);
+  }
+
+  // Position a popover under its triggering button. Called on the
+  // `beforetoggle` event of each <div popover>; the browser fires
+  // this BEFORE the popover actually opens so coordinates land
+  // before paint.
+  function positionPopover(e: Event, triggerId: string) {
+    const ev = e as ToggleEvent;
+    if (ev.newState !== 'open') return;
+    const pop = ev.currentTarget as HTMLDivElement | null;
+    if (!pop) return;
+    const trigger = document.getElementById(triggerId);
+    if (!trigger) return;
+    const r = trigger.getBoundingClientRect();
+    const isRTL = document.documentElement.dir === 'rtl';
+    // offsetWidth may be 0 on the very first open (popover not yet
+    // measured); fall back to the CSS min-inline-size of 14rem.
+    const popWidth = Math.max(pop.offsetWidth, 224);
+    const left = isRTL
+      ? Math.max(r.right - popWidth, 8)
+      : Math.min(r.left, window.innerWidth - popWidth - 8);
+    const top = r.bottom + 6;
+    pop.style.top = `${top}px`;
+    pop.style.left = `${left}px`;
+  }
 </script>
 
 {#if showChrome}
@@ -217,88 +275,93 @@
   -->
   <a href="#main-content" class="skip-link">{t($locale, 'a11y.skipToMain')}</a>
   <div class="shell">
-    <!-- ─── Sidebar ─────────────────────────────────────────────── -->
-    <aside class="sidebar">
-      <!-- Brand strip — single decorative line of the gold gradient -->
+    <!-- ─── Top nav (was a left sidebar; flipped horizontal so the main
+         content area gets the full viewport width) ─────────────────── -->
+    <header class="topnav">
       <div class="brand-strip" aria-hidden="true"></div>
-
-      <a class="brand" href="/" aria-label="mqConnector">
-        <span class="brand-mark"><Logo size={28} /></span>
-        <span class="brand-words">
+      <div class="topnav-row">
+        <a class="brand" href="/" aria-label="mqConnector">
+          <span class="brand-mark"><Logo size={24} /></span>
           <span class="brand-name">mq<span class="brand-name-accent">Connector</span></span>
-          <span class="brand-tagline">{t($locale, 'app.subtitle')}</span>
-        </span>
-      </a>
+        </a>
 
-      <nav class="nav" aria-label="primary">
-        {#each navSections as section (section.id)}
-          <p class="nav-section">{section.label}</p>
-          <ul class="nav-list">
-            {#each section.items as item (item.href)}
-              {@const active = isActive(item.href, $page.url.pathname)}
-              <li>
-                <a
-                  href={item.href}
-                  class="nav-item"
-                  class:active
-                  aria-current={active ? 'page' : undefined}
-                >
-                  <span class="nav-icon" aria-hidden="true">
-                    <svelte:component this={item.icon} size={16} strokeWidth={1.75} />
-                  </span>
-                  <span class="nav-label">{item.label}</span>
-                  {#if item.badge && item.badge > 0}
-                    <span class="nav-badge">{item.badge > 99 ? '99+' : item.badge}</span>
-                  {/if}
-                </a>
-              </li>
-            {/each}
-          </ul>
-        {/each}
-      </nav>
+        <nav class="nav-row" aria-label="primary">
+          {#each navSections as section (section.id)}
+            {@const active = sectionActive(section, $page.url.pathname)}
+            {@const badge = sectionBadge(section)}
+            {@const popoverId = `nav-menu-${section.id}`}
+            {@const triggerId = `nav-trigger-${section.id}`}
+            <div class="nav-section">
+              <!--
+                Native HTML popover API. The browser places <div popover>
+                in its TOP LAYER — above every page stacking context —
+                and handles outside-click + Escape close natively. This
+                bypasses every Svelte / CSS stacking-context bug that
+                an `{#if isOpen}`-rendered absolute popup can hit.
+                Brave / Chrome / Edge 114+, Safari 17+, Firefox 125+.
+              -->
+              <button
+                id={triggerId}
+                type="button"
+                class="nav-section-btn"
+                class:active
+                popovertarget={popoverId}
+                aria-haspopup="menu"
+                aria-current={active ? 'page' : undefined}
+                title={section.label}
+              >
+                <span class="nav-label">{section.label}</span>
+                {#if badge > 0}
+                  <span class="nav-badge">{badge > 99 ? '99+' : badge}</span>
+                {/if}
+                <span class="nav-chevron" aria-hidden="true">
+                  <svg viewBox="0 0 10 6" width="10" height="6" fill="none">
+                    <path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </span>
+              </button>
 
-      <!-- Bottom: keyboard hints -->
-      <div class="sidebar-foot">
-        <button
-          type="button"
-          class="cmdk-hint"
-          on:click={() => (paletteOpen = true)}
-          aria-label={t($locale, 'palette.title')}
-        >
-          <KeyRound size={14} aria-hidden="true" />
-          <span>{t($locale, 'shell.cmdKHint')}</span>
-        </button>
-        <button
-          type="button"
-          class="kbd-hint-btn"
-          on:click={() => (shortcutsOpen = true)}
-          aria-label={t($locale, 'shortcuts.title')}
-          title={t($locale, 'shortcuts.title')}
-        >
-          ?
-        </button>
-      </div>
-    </aside>
+              <div
+                id={popoverId}
+                popover="auto"
+                class="nav-menu"
+                role="menu"
+                aria-label={section.label}
+                on:beforetoggle={(e) => positionPopover(e, triggerId)}
+              >
+                {#each section.items as item (item.href)}
+                  {@const itemActive = isActive(item.href, $page.url.pathname)}
+                  <a
+                    href={item.href}
+                    class="nav-menu-item"
+                    class:active={itemActive}
+                    role="menuitem"
+                    aria-current={itemActive ? 'page' : undefined}
+                  >
+                    <span class="nav-menu-icon" aria-hidden="true">
+                      <svelte:component this={item.icon} size={15} strokeWidth={1.75} />
+                    </span>
+                    <span class="nav-menu-label">{item.label}</span>
+                    {#if item.badge && item.badge > 0}
+                      <span class="nav-badge nav-badge-inline">{item.badge > 99 ? '99+' : item.badge}</span>
+                    {/if}
+                  </a>
+                {/each}
+              </div>
+            </div>
+          {/each}
+        </nav>
 
-    <!-- ─── Main column ─────────────────────────────────────────── -->
-    <div class="main">
-      <header class="topbar">
-        <div class="topbar-start">
-          <Breadcrumbs />
-        </div>
-
-        <button
-          type="button"
-          class="search-trigger"
-          on:click={() => (paletteOpen = true)}
-          aria-label={t($locale, 'shell.searchHint')}
-        >
-          <Search size={14} aria-hidden="true" />
-          <span class="search-trigger-label">{t($locale, 'shell.search')}</span>
-          <span class="search-trigger-kbd">⌘K</span>
-        </button>
-
-        <div class="topbar-end">
+        <div class="topnav-end">
+          <button
+            type="button"
+            class="search-trigger"
+            on:click={() => (paletteOpen = true)}
+            aria-label={t($locale, 'shell.searchHint')}
+          >
+            <Search size={14} aria-hidden="true" />
+            <span class="search-trigger-kbd">⌘K</span>
+          </button>
           <SystemHealthPill />
           <button
             type="button"
@@ -314,26 +377,26 @@
               <span class="icon-btn-dot" aria-hidden="true"></span>
             {/if}
           </button>
-          <button
-            type="button"
-            class="icon-btn"
-            aria-label={t($locale, 'nav.help')}
-            title={t($locale, 'nav.help')}
-            on:click={() => goto('/help')}
-          >
-            <HelpCircle size={16} aria-hidden="true" />
-          </button>
           <TenantSwitcher />
           <LocaleToggle />
           <ThemeToggle />
           <ProfileMenu />
         </div>
-      </header>
+      </div>
+      <div class="topnav-crumbs">
+        <Breadcrumbs />
+      </div>
+    </header>
 
-      <main id="main-content" class="page" tabindex="-1">
-        <slot />
-      </main>
-    </div>
+    <!-- Wave 4 T4 — SLO alert ribbon. Sticky band that materialises
+         under the topnav when at least one alert is firing; renders
+         nothing otherwise so the chrome stays minimal on a healthy
+         system. -->
+    <AlertRibbon />
+
+    <main id="main-content" class="page" tabindex="-1">
+      <slot />
+    </main>
   </div>
 
   <CommandPalette bind:open={paletteOpen} {dlqCount} />
@@ -373,142 +436,235 @@
   .shell {
     min-height: 100vh;
     display: grid;
-    grid-template-columns: 260px 1fr;
-    grid-template-rows: 100vh;
+    grid-template-rows: auto 1fr;
     background: var(--bg);
     color: var(--text);
+    inline-size: 100%;
+    max-inline-size: 100vw;
+    overflow-x: hidden;
   }
-  .sidebar {
-    position: relative;
-    display: flex;
-    flex-direction: column;
+  .topnav {
+    position: sticky;
+    top: 0;
+    z-index: 30;
     background: var(--surface);
-    border-inline-end: 1px solid var(--border);
-    overflow-y: auto;
+    border-block-end: 1px solid var(--border);
+    inline-size: 100%;
+    min-inline-size: 0;
+    overflow: visible;
+    /* No overflow clip here — the section dropdowns hang below the
+       row and need to escape. Horizontal clipping is handled at
+       .shell + .nav-row instead. Isolation ensures the topnav's
+       sticky z-index doesn't trap children's higher z-indexes. */
+    isolation: isolate;
   }
   .brand-strip {
     height: 3px;
     background: var(--brand-gradient);
   }
-  .main {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-
-  /* ─── Brand block ──────────────────────────────────────────────── */
-  .brand {
+  .topnav-row {
+    position: relative;
+    z-index: 2;
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 1.125rem 1.125rem 1rem;
+    padding-inline: 1rem;
+    padding-block: 0.5rem;
+    min-block-size: 56px;
+    inline-size: 100%;
+    min-inline-size: 0;
+    box-sizing: border-box;
+  }
+  .topnav-crumbs {
+    position: relative;
+    z-index: 1;
+    padding-inline: 1rem;
+    padding-block: 0.5rem 0.625rem;
+    border-block-start: 1px solid var(--border);
+  }
+
+  /* ─── Brand block (compact horizontal form) ────────────────────── */
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
     color: var(--text);
     text-decoration: none;
+    flex-shrink: 0;
   }
   .brand-mark {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
-    border-radius: 12px;
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
     background: var(--surface-2);
     border: 1px solid var(--border);
     color: var(--text);
   }
-  .brand-words {
-    display: flex;
-    flex-direction: column;
-    line-height: 1.1;
-  }
   .brand-name {
-    font-size: 1rem;
+    font-size: 0.9375rem;
     font-weight: 700;
     letter-spacing: -0.01em;
   }
-  /*
-   * Wordmark "Connector" used to render in --accent (maroon). Reserved
-   * the maroon for the Logo glyph (and live CTAs / count badges) so the
-   * eye finds maroon = action, not maroon = branding text.
-   */
   .brand-name-accent {
     color: var(--text);
   }
-  .brand-tagline {
-    margin-top: 2px;
-    font-size: 0.6875rem;
-    color: var(--text-muted);
-    letter-spacing: 0.01em;
-  }
 
-  /* ─── Nav ──────────────────────────────────────────────────────── */
-  .nav {
-    flex: 1;
-    padding: 0.25rem 0.625rem 0.5rem;
-  }
-  .nav-section {
-    margin: 0.875rem 0.625rem 0.375rem;
-    font-size: 0.625rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-tertiary);
-  }
-  .nav-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .nav-item {
+  /* ─── Horizontal nav (top bar) ─────────────────────────────────── */
+  .nav-row {
+    flex: 1 1 0;
     display: flex;
     align-items: center;
-    gap: 0.625rem;
-    padding: 0.5rem 0.625rem;
+    gap: 0.25rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-inline-size: 0;
+    inline-size: 0;
+    scrollbar-width: thin;
+  }
+  /* ─── Section dropdown buttons ─────────────────────────────────── */
+  .nav-section {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    /* Always above any sibling chrome (breadcrumbs row, page header) so
+       the popover never gets occluded. Don't rely on :has() for this —
+       it works in modern browsers but is too easy to lose to a
+       stacking-context bug. A constant high z-index is bulletproof. */
+    z-index: 60;
+  }
+  .nav-section-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding-inline: 0.75rem;
+    padding-block: 0.4rem;
+    border-radius: 0.625rem;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 150ms, color 150ms, border-color 150ms;
+  }
+  .nav-section-btn:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  .nav-section-btn.active {
+    background: var(--surface-2);
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: inset 0 -2px 0 var(--primary);
+  }
+  .nav-chevron {
+    display: inline-flex;
+    color: var(--text-tertiary);
+    transition: transform 150ms;
+  }
+  /*
+   * The native popover doesn't propagate "open" state back to the
+   * trigger as a class. Use the chevron's CSS variable mirror set on
+   * the body when ANY popover is open, OR fall back to no rotation —
+   * the chevron-direction signal isn't load-bearing now that the
+   * popover itself appears on click.
+   */
+  .nav-section-btn:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  /*
+   * Native HTML popover. The browser places this in its top layer —
+   * outside every stacking context, NOT clipped by any ancestor's
+   * overflow — and handles outside-click + Esc close natively.
+   *
+   * Default popover positioning is viewport-centered. We override
+   * with a `position: fixed` + JS-computed top/left set on the
+   * `beforetoggle` event (see positionPopover action below).
+   */
+  .nav-menu {
+    margin: 0;
+    border: 1px solid var(--border-strong);
     border-radius: 0.75rem;
+    padding: 0.5rem;
+    min-inline-size: 14rem;
+    background: var(--surface-highest, var(--surface-high));
+    color: var(--text);
+    box-shadow:
+      0 1px 3px rgba(0, 0, 0, 0.25),
+      0 16px 40px -10px rgba(0, 0, 0, 0.55);
+    /* Closed state: native popover hides it. Open state: flex column. */
+    flex-direction: column;
+    gap: 2px;
+    inset: unset;
+    /* fixed positioning lives in the top layer regardless of ancestors. */
+    position: fixed;
+  }
+  .nav-menu:popover-open {
+    display: flex;
+  }
+  :global([data-theme='light']) .nav-menu {
+    background: var(--surface);
+    box-shadow:
+      0 1px 3px rgba(51, 63, 72, 0.16),
+      0 16px 40px -10px rgba(51, 63, 72, 0.34);
+  }
+  .nav-menu-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding-inline: 0.625rem;
+    padding-block: 0.45rem;
+    border-radius: 0.5rem;
     color: var(--text-muted);
     text-decoration: none;
     font-size: 0.8125rem;
     font-weight: 500;
-    transition:
-      background-color 150ms,
-      color 150ms;
-    min-height: 36px;
+    white-space: nowrap;
+    transition: background-color 120ms, color 120ms;
   }
-  .nav-item:hover {
+  .nav-menu-item:hover,
+  .nav-menu-item:focus-visible {
     background: var(--surface-2);
     color: var(--text);
+    outline: none;
   }
-  /*
-   * Active-nav indicator: gold (--primary), not maroon. Maroon (--accent)
-   * is reserved for actions (CTAs, count badges, destructive). A nav
-   * indicator is selection, not action — per brand-guide §5.3 it sits in
-   * the gold family.
-   */
-  .nav-item.active {
+  .nav-menu-item.active {
     background: var(--surface-2);
     color: var(--text);
     font-weight: 600;
-    box-shadow: inset 3px 0 0 var(--primary);
+    box-shadow: inset 2px 0 0 var(--primary);
   }
-  :global([dir='rtl']) .nav-item.active {
-    box-shadow: inset -3px 0 0 var(--primary);
+  :global([dir='rtl']) .nav-menu-item.active {
+    box-shadow: inset -2px 0 0 var(--primary);
   }
-  .nav-icon {
+  .nav-menu-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
+    width: 16px;
     color: inherit;
     flex-shrink: 0;
   }
-  .nav-item.active .nav-icon {
+  .nav-menu-item.active .nav-menu-icon {
     color: var(--primary);
   }
-  .nav-label {
+  .nav-menu-label {
     flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .nav-badge-inline {
+    margin-inline-start: auto;
+  }
+
+  .nav-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -533,97 +689,24 @@
     letter-spacing: 0.02em;
   }
 
-  /* ─── Sidebar foot ─────────────────────────────────────────────── */
-  .sidebar-foot {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.625rem;
-    border-top: 1px solid var(--border);
-  }
-  .cmdk-hint {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex: 1;
-    padding: 0.5rem 0.625rem;
-    border-radius: 0.75rem;
-    border: 1px dashed var(--border-strong);
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 0.75rem;
-    cursor: pointer;
-    transition:
-      color 150ms,
-      border-color 150ms,
-      background-color 150ms;
-  }
-  .cmdk-hint:hover {
-    color: var(--text);
-    border-color: var(--text-tertiary);
-    background: var(--surface-2);
-  }
-  .kbd-hint-btn {
-    flex: 0 0 auto;
-    inline-size: 30px;
-    block-size: 30px;
-    border-radius: 0.75rem;
-    border: 1px dashed var(--border-strong);
-    background: transparent;
-    color: var(--text-muted);
-    font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
-    font-size: 0.875rem;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transition:
-      color 150ms,
-      border-color 150ms,
-      background-color 150ms;
-  }
-  .kbd-hint-btn:hover {
-    color: var(--text);
-    border-color: var(--text-tertiary);
-    background: var(--surface-2);
-  }
-
-  /* ─── Topbar ───────────────────────────────────────────────────── */
-  .topbar {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.625rem 1.25rem;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    min-height: 56px;
-    position: sticky;
-    top: 0;
-    z-index: 30;
-    backdrop-filter: saturate(140%) blur(6px);
-  }
-  .topbar-start {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-  }
-  .topbar-end {
+  /* ─── Topbar right cluster ─────────────────────────────────────── */
+  .topnav-end {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
+    flex-shrink: 0;
   }
   .search-trigger {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.375rem;
     padding-block: 0.3125rem;
-    padding-inline: 0.625rem 0.5rem;
-    border-radius: 0.75rem;
+    padding-inline: 0.5rem;
+    border-radius: 0.625rem;
     border: 1px solid var(--border);
     background: var(--surface-2);
     color: var(--text-muted);
-    font-size: 0.8125rem;
-    min-width: 14rem;
+    font-size: 0.75rem;
     cursor: pointer;
     transition:
       background-color 150ms,
@@ -634,10 +717,6 @@
     color: var(--text);
     background: var(--surface);
     border-color: var(--border-strong);
-  }
-  .search-trigger-label {
-    flex: 1;
-    text-align: start;
   }
   .search-trigger-kbd {
     display: inline-flex;
@@ -690,21 +769,17 @@
 
   /* ─── Page area ────────────────────────────────────────────────── */
   .page {
-    flex: 1;
     padding: 1.125rem 1.5rem 2rem;
     overflow-y: auto;
     inline-size: 100%;
     max-inline-size: 1680px;
     margin-inline: auto;
+    min-block-size: 0;
   }
 
   @media (max-width: 900px) {
-    .shell {
-      grid-template-columns: 1fr;
-      grid-template-rows: auto 1fr;
-    }
-    .sidebar {
-      display: none; /* mobile shell is a follow-up — keep the desktop bar tidy for now */
+    .nav-section-btn {
+      padding-inline: 0.5rem;
     }
   }
 </style>

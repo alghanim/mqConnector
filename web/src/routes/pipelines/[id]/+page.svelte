@@ -23,8 +23,18 @@
   import PipelineGrantsEditor from '$lib/components/PipelineGrantsEditor.svelte';
   import Alert from '$lib/components/Alert.svelte';
   import { SAMPLE_FIXTURES } from '$lib/sample-fixtures';
+  import type { PageData } from './$types';
 
-  $: id = $page.params.id;
+  // `data` is populated by +page.ts when `?legacy=1` is present.
+  // Without the query string, +page.ts throws a redirect into the
+  // Studio and this component never instantiates.
+  export let data: PageData;
+
+  // Prefer the load-supplied id; fall back to the live route param
+  // for the (impossible-in-practice) case where data isn't ready yet
+  // — this keeps the original $page.params.id semantics intact.
+  $: id = data?.pipelineId || $page.params.id;
+  $: pipelineId = id;
 
   let pipeline: Pipeline | null = null;
   let connections: Connection[] = [];
@@ -327,6 +337,21 @@
   <a href="/pipelines" style="color: var(--accent); font-size: 14px;">
     {t($locale, 'pipelines.back')}
   </a>
+
+  <!--
+    Wave 1 / Task 14 — explicit demotion banner. This page is only
+    reachable via /pipelines/{id}?legacy=1; +page.ts redirects every
+    other entry into the Studio. The banner spells out that the form
+    view is a safety net and offers a one-click jump to the canonical
+    surface. Wave 2 deletes the route entirely.
+  -->
+  <Alert variant="info">
+    <span slot="title">{t($locale, 'studio.legacy.banner.title')}</span>
+    {t($locale, 'studio.legacy.banner.body')}
+    <a class="banner-link" href="/pipelines/{pipelineId}/studio">
+      {t($locale, 'studio.legacy.banner.openStudio')}
+    </a>
+  </Alert>
 
   {#if pipeline}
     <div class="flex items-baseline justify-between">
@@ -711,4 +736,23 @@
   }
   .btn-visual-link:hover { background: var(--palette-copper); }
   .btn-visual-link:active { background: var(--palette-gold-muted); }
+  /*
+   * Demotion-banner link. Lives inside an info Alert, so it inherits
+   * the alert's color (var(--info)) for hue. We just make it bold and
+   * give it the standard hover underline so it reads as the call-to-
+   * action of the banner without breaking the alert's tonal language.
+   */
+  .banner-link {
+    margin-inline-start: 6px;
+    font-weight: 600;
+    color: currentColor;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .banner-link:hover { opacity: 0.85; }
+  .banner-link:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
 </style>

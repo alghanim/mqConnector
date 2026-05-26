@@ -12,19 +12,23 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { api, type Connection, type Pipeline, type DLQEntry } from '$lib/api';
   import { auth } from '$lib/stores/auth';
   import { tenants } from '$lib/stores/tenants';
   import { locale, t } from '$lib/stores/locale';
   import { theme } from '$lib/stores/theme';
+  import { studio, studioState } from '$lib/stores/studio';
   import {
     Search,
     LayoutDashboard,
     Plug,
     Workflow,
     GitFork,
+    Network,
     AlertOctagon,
     Activity,
+    LineChart,
     Users2,
     SunMoon,
     Languages,
@@ -32,7 +36,10 @@
     RotateCw,
     LogOut,
     FileText,
-    CornerDownLeft
+    CornerDownLeft,
+    Rocket,
+    GitCompare,
+    Undo2
   } from 'lucide-svelte';
 
   export let open = false;
@@ -62,6 +69,8 @@
 
   $: navItems = [
     { id: 'nav.overview', label: t($locale, 'nav.overview'), icon: LayoutDashboard, action: () => goto('/') },
+    { id: 'nav.topology', label: t($locale, 'nav.topology'), icon: Network, action: () => goto('/topology') },
+    { id: 'nav.observability', label: t($locale, 'nav.observability'), icon: LineChart, action: () => goto('/observability') },
     { id: 'nav.metrics', label: t($locale, 'nav.metrics'), icon: Activity, action: () => goto('/metrics') },
     {
       id: 'nav.dlq',
@@ -127,8 +136,64 @@
     }
   ] as Item[];
 
+  // Studio entries are only meaningful while the user is on a Studio
+  // route (`/pipelines/<id>/studio`). The palette pre-filters them
+  // out everywhere else so they don't clutter the global launcher.
+  // The Studio shell listens for the window-level events the palette
+  // dispatches here ('studio:requestDeploy' / 'studio:openCompare') —
+  // see Studio.svelte.onWindow* handlers for the Task-12 wiring.
+  $: onStudioRoute = /^\/pipelines\/[^/]+\/studio(\/|$|\?)/.test($page.url.pathname + ($page.url.search || ''));
+  $: studioDirty = $studioState?.dirtyCount > 0;
+
+  $: studioItems = (
+    [
+      {
+        id: 'act.studioDeploy',
+        label: t($locale, 'palette.cmd.studioDeploy'),
+        icon: Rocket,
+        action: () => {
+          // Studio.svelte's window listener opens the DeployDialog
+          // against the latest revision (re-deploy of current) or
+          // surfaces a toast when there's no revision history yet.
+          // Wave 1 doesn't have a separate "save draft" path, so the
+          // dirty branch falls through to the same dialog — Wave 2
+          // will introduce explicit draft-vs-deploy separation.
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('studio:requestDeploy'));
+          }
+        }
+      },
+      {
+        id: 'act.studioCompare',
+        label: t($locale, 'palette.cmd.studioCompare'),
+        icon: GitCompare,
+        action: () => {
+          // Studio.svelte expands the VersionRail (via its exposed
+          // expandForCompare method) and stages the latest revision
+          // for compare. The operator then taps Compare from the rail.
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('studio:openCompare'));
+          }
+        }
+      },
+      {
+        id: 'act.studioDiscard',
+        label: t($locale, 'palette.cmd.studioDiscard'),
+        icon: Undo2,
+        // Always show on studio routes; disabled when nothing to discard.
+        action: () => {
+          if (studioDirty) studio.resetDraft();
+        }
+      }
+    ] as Item[]
+  ).filter((it) => {
+    if (!onStudioRoute) return false;
+    if (it.id === 'act.studioDiscard') return studioDirty;
+    return true;
+  });
+
   $: filteredNav = filterItems(navItems, query);
-  $: filteredActions = filterItems(actionItems, query);
+  $: filteredActions = filterItems([...actionItems, ...studioItems], query);
 
   function filterItems(items: Item[], q: string): Item[] {
     const needle = q.trim().toLowerCase();
@@ -204,7 +269,10 @@
         sublabel: `pipeline · ${p.output_format}`,
         icon: Workflow,
         section: 'resources',
-        action: () => goto(`/pipelines/${p.id}`)
+        // Task 14: /pipelines/{id} now redirects into the Studio anyway;
+        // jump straight there so the palette doesn't trigger the
+        // through-redirect (which would flicker an "loading" frame).
+        action: () => goto(`/pipelines/${p.id}/studio`)
       });
     }
     for (const d of foundDLQ) {
