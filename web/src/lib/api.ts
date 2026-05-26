@@ -576,6 +576,34 @@ export interface TopologyResponse {
   pipelines: TopologyPipeline[];
 }
 
+// ─── SLO alerts (Wave 4 T4) ───────────────────────────────────────
+// Wire shape of GET /api/v1/alerts/active. The in-process SLO
+// evaluator parses the same Prometheus rules YAML the operator's
+// Prometheus consumes so the binary surfaces firing alerts without
+// an external Alertmanager. AlertRibbon polls every 30 s and renders
+// a sticky band when ≥ 1 alert is firing.
+
+export type AlertSeverity = 'info' | 'warning' | 'critical' | string;
+
+export interface FiringAlert {
+  name: string;
+  severity: AlertSeverity;
+  value: number;
+  threshold?: string;
+  started_at: string;
+  annotations?: Record<string, string>;
+  labels?: Record<string, string>;
+  group?: string;
+  expr?: string;
+}
+
+export interface AlertsResponse {
+  generated_at: string;
+  total: number;
+  alerts: FiringAlert[];
+  evaluator_enabled: boolean;
+}
+
 // ─── explainer (Wave 4 T1+T2) ─────────────────────────────────────
 // Wire shape of GET /api/v1/explain/{subject}/{id}.
 //

@@ -50,6 +50,7 @@
   import CommandPalette from '$lib/components/CommandPalette.svelte';
   import KeyboardShortcuts from '$lib/components/KeyboardShortcuts.svelte';
   import Toaster from '$lib/components/Toaster.svelte';
+  import AlertRibbon from '$lib/components/AlertRibbon.svelte';
   import {
     LayoutDashboard,
     Plug,
@@ -386,6 +387,12 @@
         <Breadcrumbs />
       </div>
     </header>
+
+    <!-- Wave 4 T4 — SLO alert ribbon. Sticky band that materialises
+         under the topnav when at least one alert is firing; renders
+         nothing otherwise so the chrome stays minimal on a healthy
+         system. -->
+    <AlertRibbon />
 
     <main id="main-content" class="page" tabindex="-1">
       <slot />
