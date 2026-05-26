@@ -26,6 +26,45 @@ This section accumulates changes between tagged releases. Move entries into a ne
 
 ---
 
+## 1.7.0 — Observability Drilldown + Explainers + SLO evaluator — 2026-05-26
+
+### Added — Operator experience
+
+- **`/observability` — Operations Intelligence surface.** A new top-level page that drills into a single pipeline's latency + drift + circuit health with explanatory panels. Pipeline picker + URL deep-link (`?pipeline=<id>`). Stat ribbon (Total p99 · dominant stage · failure rate · DLQ depth · circuit state) with stale-data indicator. Per-stage **WaterfallStages** chart with dominant-stage outline + click-to-drill. Three explain tabs (Latency / Drift / Circuit) consume the new `/api/v1/explain/{subject}/{id}` endpoint. Optional `?ai=summary` toggle pipes the explanation through the self-hosted LLM for a 2-sentence operator paraphrase.
+- **Alert ribbon in the app shell.** A sticky bar below the topnav that surfaces firing alerts from the in-process SLO evaluator. Severity-tinted (warning vs. danger). Headline + "View all" link → `/observability/alerts`. Session-dismissable. Hidden when nothing is firing.
+- **Explanation cards** — wherever an explainer attaches to a state (circuit open, drift spike, latency dominance, DLQ root cause), the operator gets a structured panel with: severity-tinted headline + facts list with source attribution + per-section renderers (stages waterfall / timeline table / fields chips / narrative prose) + optional AI summary chip.
+- **CommandPalette + nav** — new "Observability" entry in the Operations section (LineChart icon) + matching palette entry.
+
+### Added — Backend primitives
+
+- **`internal/explain/` package** — composable explainer modules over existing telemetry. Four explainers: `CircuitExplainer` (breaker state + recent failures + last deploy), `DriftExplainer` (validate-failure rate + top error templates + last stage edit), `LatencyExplainer` (per-stage p50/p95/p99 + dominant-stage detection), `DLQRootCauseExplainer` (cluster + entry modes with template field extraction + audit correlation). Engine dispatches by `subject` ; `MetricsSource` / `DLQSource` / `AuditSource` / `PipelinesSource` / `BreakersSource` interfaces are minimal — only the read-shape the explainers need.
+- **`GET /api/v1/explain/{subject}/{id}`** — returns the structured `Explanation` (headline + severity + facts[] + sections[] + sources[]). Supported subjects: `circuit`, `drift`, `latency`, `dlq_cluster` (fingerprint), `dlq_entry` (entry id). Opt-in `?ai=summary` runs the explanation through the LLM for a paraphrase + `ai_audit` row; gracefully degrades to deterministic when the provider is unreachable or the `explain_why_summary` capability isn't allowlisted.
+- **`internal/slo/` package** — in-process Prometheus rule evaluator. Loads `deploy/prometheus/mqconnector-slos.yaml` at startup (configurable via `slo.rules_file`); parses standard Prometheus alerting rules; evaluates a tractable PromQL subset (`rate()` / `sum` / `sum by (...)` / arithmetic / comparisons / `and|or|unless` / `clamp_min` / `clamp_max` / `histogram_quantile` / vector selectors + label matchers). Standard inactive → pending → firing → inactive lifecycle. Per-rule warn-throttling at 5 minutes. Recording rules parsed + made available to alert expressions via name resolution.
+- **`GET /api/v1/alerts/active`** — returns currently-firing alerts ordered by severity + start time. Optional `?severity=warning,critical` + `?pipeline=<id>` filters. Returns `evaluator_enabled: false` when no rules file is wired so the UI can distinguish "all good" from "alerting not configured."
+- **5-minute metrics ring buffer** (`internal/metrics/history.go`) for `rate()` evaluation — sampled every 30s, 10 windows.
+- **Storage helpers** the explainers need: `DLQRepo.RecentForPipeline`, `DLQRepo.ClusterByFingerprint`, `AuditRepo.RecentForResource`.
+
+### Added — Frontend primitives
+
+- **`PercentileBand.svelte`** — p50/p95/p99 visualisation with two modes (overtime line chart + snapshot horizontal band). ResizeObserver auto-sizing; reduced-motion safe.
+- **`WaterfallStages.svelte`** — horizontal per-stage latency waterfall with p99 bars + p50/p95 marker ticks. Dominant stage gets a primary-tone outline + Badge.
+- **`AnomalyMarker.svelte`** — composable severity-coloured triangle overlay for time-series charts.
+- **`ExplanationCard.svelte`** — generic renderer for the explain endpoint response. One component drives all three Observability tabs + future cross-surface drawer integrations.
+- **`ObservabilityStatRibbon.svelte`** — 5-tile compact strip used in the `/observability` header.
+
+### Deferred to Wave 5
+
+- Cross-surface explain drawer (slide-up panel on DLQ cluster cards + Topology side panel + Studio canvas nodes). The endpoint + ExplanationCard component ship today; surface integration is a wave-5 polish.
+- Backend windowed time-series API for the percentile band's overtime mode (current implementation synthesises the series from the latest point-in-time triple).
+- Anomaly markers fed from a real `/events` feed (today they're derived from explainer severities for illustration).
+- SLO evaluator coverage of metrics that live outside `metrics.Store` (DLQ depth, leader state, master-key version) — small follow-up per metric.
+
+### No breaking changes
+
+All Wave 1–3 routes + contracts continue to work. The new endpoints are additive; the new pages do not replace existing surfaces.
+
+---
+
 ## 1.6.0 — DLQ Intelligence Console + AI workstream foundation — 2026-05-26
 
 ### Added — Operator experience
