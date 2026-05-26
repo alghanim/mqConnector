@@ -575,3 +575,71 @@ export interface TopologyResponse {
   connections: TopologyConnection[];
   pipelines: TopologyPipeline[];
 }
+
+// ─── explainer (Wave 4 T1+T2) ─────────────────────────────────────
+// Wire shape of GET /api/v1/explain/{subject}/{id}.
+//
+// The deterministic Explanation always lands; the AI sidecar
+// (`ai_summary` + `ai_source`) only appears when ?ai=summary is
+// requested. `ai_source` is "ai" when the LLM produced the text,
+// "deterministic" when ?ai=summary was set but the provider failed
+// (and the UI falls back to the structured headline as a paraphrase).
+//
+// Section kinds the renderer knows about today:
+//   - "stages"    — per-stage latency waterfall data
+//                   ({ stages: StageLatency[], total_p99: number })
+//   - "timeline"  — circuit breaker transitions, deploys, etc.
+//                   ({ at: string, from: string, to: string, reason?: string }[])
+//   - "fields"    — template-extracted variable fields
+//                   ({ name: string, value: string }[])
+//   - "narrative" — one-or-two-sentence prose paragraph (string)
+//
+// Unknown kinds get a defensive JSON dump per the spec; this keeps
+// the renderer additive across explainer evolution.
+
+export type ExplainSubject = 'circuit' | 'drift' | 'latency' | 'dlq_cluster' | 'dlq_entry';
+export type ExplainSeverity = 'info' | 'warning' | 'critical';
+
+export interface ExplainFact {
+  label: string;
+  value: string;
+  source?: string;
+  as_of?: string;
+}
+
+export interface ExplainSection {
+  kind: string;
+  title: string;
+  data: unknown;
+}
+
+export interface Explanation {
+  subject: string;
+  id: string;
+  headline: string;
+  severity: ExplainSeverity;
+  facts: ExplainFact[];
+  sections?: ExplainSection[];
+  as_of: string;
+  sources?: string[];
+  ai_summary?: string;
+  ai_source?: 'ai' | 'deterministic';
+}
+
+// LatencyStagesData is what `sections[0].data` carries when
+// `sections[0].kind === 'stages'`. Mirrors the
+// explain.StageLatency Go type — field names + units identical.
+export interface LatencyStage {
+  name: string;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  count?: number;
+  sum_ms?: number;
+  share_of_p99?: number;
+}
+
+export interface LatencyStagesData {
+  stages: LatencyStage[];
+  total_p99: number;
+}
