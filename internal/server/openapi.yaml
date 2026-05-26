@@ -2503,6 +2503,68 @@ paths:
         '404':
           description: Id not found for the subject (cross-tenant indistinguishable).
 
+  /api/v1/alerts/active:
+    get:
+      tags: [pipelines]
+      summary: Currently-firing SLO alerts from the in-process evaluator.
+      description: |
+        Reads the snapshot of currently-firing alerts maintained by
+        the in-process slo.Evaluator. The evaluator parses the same
+        Prometheus rules YAML the operator's Prometheus instance
+        consumes (deploy/prometheus/mqconnector-slos.yaml), so the
+        binary's "what is on fire right now" view never drifts from
+        the real Alertmanager.
+
+        Viewer-readable; tenant scoping is global today (the
+        project's rule labels are pipeline-keyed but not
+        tenant-keyed). When labels gain a tenant_id the handler
+        scopes automatically.
+
+        Returns evaluator_enabled=false when the binary started
+        without a rules file — the UI uses it to distinguish "no
+        alerts" from "alerting not configured".
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - in: query
+          name: severity
+          description: Comma-separated severities to keep (e.g. `warning,critical`).
+          schema: { type: string }
+        - in: query
+          name: pipeline
+          description: Keep only alerts whose labels carry `pipeline_id=<value>`.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Active alerts snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [generated_at, total, alerts, evaluator_enabled]
+                properties:
+                  generated_at: { type: string, format: date-time }
+                  total: { type: integer }
+                  evaluator_enabled: { type: boolean }
+                  alerts:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, severity, value, started_at]
+                      properties:
+                        name: { type: string }
+                        severity: { type: string, enum: [info, warning, critical] }
+                        value: { type: number, format: double }
+                        threshold: { type: string }
+                        started_at: { type: string, format: date-time }
+                        annotations:
+                          type: object
+                          additionalProperties: { type: string }
+                        labels:
+                          type: object
+                          additionalProperties: { type: string }
+                        group: { type: string }
+                        expr: { type: string }
+
   /api/v1/samples/extract:
     post:
       tags: [pipelines]

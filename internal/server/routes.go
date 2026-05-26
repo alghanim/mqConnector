@@ -229,6 +229,15 @@ func (s *Server) routes() http.Handler {
 		// gates on the CapExplainWhySummary capability.
 		r.Get("/api/v1/explain/{subject}/{id}", s.handleExplain)
 
+		// Wave 4 Task 4 — currently-firing SLO alerts from the
+		// in-process evaluator. The evaluator parses the same
+		// Prometheus rules YAML the operator's Prometheus
+		// consumes, so the binary's view never drifts from the
+		// real Alertmanager. Viewer-readable; alerts are global
+		// (rule labels carry pipeline_id but no tenant_id) — when
+		// labels gain a tenant_id the handler will scope here.
+		r.Get("/api/v1/alerts/active", s.handleListActiveAlerts)
+
 		r.Route("/api/v1/dlq", func(r chi.Router) {
 			r.Get("/", s.handleListDLQ)
 			r.Get("/groups", s.handleGroupDLQ)

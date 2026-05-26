@@ -547,6 +547,30 @@ func run(configPath string) error {
 	// Health
 	checker := health.NewChecker(store, metricsStore, version)
 
+	// SLO evaluator. Parses the same Prometheus rules YAML the
+	// operator's Prometheus consumes so the binary can surface
+	// currently-firing alerts at /api/v1/alerts/active without an
+	// external Alertmanager. A missing rules file is best-effort:
+	// we log a warn and skip the evaluator entirely rather than
+	// failing startup.
+	sloEvaluator, sloHistory := buildSLOEvaluator(cfg.SLO, metricsStore, logger)
+	if sloEvaluator != nil {
+		// History samples the metrics store every HistoryInterval
+		// so rate() lookback works. Lifecycle bound to rootCtx via
+		// a stop channel.
+		sloHistoryStop := make(chan struct{})
+		go sloHistory.Run(sloHistoryStop)
+		// Prime one frame so the evaluator's first tick has SOMETHING
+		// to read; without it rate() returns 0 for the first
+		// 30 s.
+		sloHistory.Sample()
+		go sloEvaluator.Run(rootCtx)
+		defer close(sloHistoryStop)
+		logger.Info("SLO evaluator enabled",
+			"rules", sloEvaluator.RuleCount(),
+			"interval", cfg.SLO.Interval)
+	}
+
 	// AI subsystem. When disabled / unconfigured, buildAI returns a
 	// no-op provider so handlers can rely on the field being non-nil
 	// and the Allows() gate still short-circuits before any HTTP
@@ -555,20 +579,21 @@ func run(configPath string) error {
 
 	// Server
 	srv, err := server.New(cfg, server.Deps{
-		Auth:       authSvc,
-		Store:      store,
-		Pool:       pool,
-		Metrics:    metricsStore,
-		DLQ:        dlqSvc,
-		Pipeline:   mgr,
-		Health:     checker,
-		Leadership: leaseRunner, // nil when leadership is disabled
-		Sealer:     sealer,      // nil when MQC_MASTER_KEY is unset
-		Logger:     logger,
-		AIProvider: aiProvider,
-		AIAudit:    aiAudit,
-		AICounter:  aiCounter,
-		AIConfig:   aiCfg,
+		Auth:         authSvc,
+		Store:        store,
+		Pool:         pool,
+		Metrics:      metricsStore,
+		DLQ:          dlqSvc,
+		Pipeline:     mgr,
+		Health:       checker,
+		Leadership:   leaseRunner, // nil when leadership is disabled
+		Sealer:       sealer,      // nil when MQC_MASTER_KEY is unset
+		Logger:       logger,
+		AIProvider:   aiProvider,
+		AIAudit:      aiAudit,
+		AICounter:    aiCounter,
+		AIConfig:     aiCfg,
+		SLOEvaluator: sloEvaluator,
 	})
 	if err != nil {
 		return fmt.Errorf("init server: %w", err)

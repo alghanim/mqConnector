@@ -30,6 +30,7 @@ import (
 	"mqConnector/internal/mq"
 	"mqConnector/internal/pipeline"
 	"mqConnector/internal/secrets"
+	"mqConnector/internal/slo"
 	"mqConnector/internal/storage"
 	"mqConnector/internal/web"
 )
@@ -84,6 +85,13 @@ type Server struct {
 	// engine. The engine's own Source fields fan out to the
 	// underlying repos / metrics / manager.
 	explainEngine *explain.Engine
+
+	// sloEvaluator periodically evaluates Prometheus alerting
+	// rules against the in-process metrics store. Nil when SLO
+	// is disabled (RulesFile empty / loader failed); handlers
+	// that depend on it return an empty alert list rather than
+	// 500-ing.
+	sloEvaluator *slo.Evaluator
 
 	// topologyRates is the per-pipeline rate sampler used by the
 	// /api/v1/topology aggregator to derive msg_per_min from
@@ -140,6 +148,11 @@ type Deps struct {
 	AIAudit    ai.AuditLogger
 	AICounter  *ai.CallCounter
 	AIConfig   ai.Config
+	// SLOEvaluator is the in-process SLO rule evaluator. Optional
+	// — when nil the /api/v1/alerts/active endpoint still serves,
+	// returning an empty alert list with total=0 so the frontend
+	// AlertRibbon stays silent rather than erroring.
+	SLOEvaluator *slo.Evaluator
 }
 
 // New constructs a Server. Run blocks until Shutdown is called.
@@ -177,6 +190,7 @@ func New(cfg config.Config, deps Deps) (*Server, error) {
 		aiAudit:          deps.AIAudit,
 		aiCounter:        deps.AICounter,
 		aiCfg:            deps.AIConfig,
+		sloEvaluator:     deps.SLOEvaluator,
 		loginLimiter:     newLoginLimiter(10, time.Minute),
 		tenantLimiter:    newTenantLimiter(120, time.Minute, tenantOverrideFromStore(deps.Store)),
 		sensitiveLimiter: newSensitiveLimiter(6, time.Minute),

@@ -229,3 +229,21 @@ secrets:
 #     # - redaction_pattern_detect       # (Wave 4)
 ai:
   enabled: false
+
+# SLO evaluator (Wave 4 Task 4). Parses Prometheus alerting rules
+# in-process so the binary can surface currently-firing alerts at
+# /api/v1/alerts/active (and on the frontend AlertRibbon) without
+# requiring an external Alertmanager. The same rule file feeds the
+# operator's real Prometheus, so the in-binary view and the cluster
+# Alertmanager never drift.
+#
+# Disabled by default. To enable, point `rules_file` at the bundled
+# SLO rules. A missing file is best-effort: the evaluator stays
+# disabled and the binary boots normally.
+slo:
+  rules_file: ""    # e.g. "/etc/mqconnector/slos.yaml" or
+                    # "./deploy/prometheus/mqconnector-slos.yaml"
+  rules_dir: ""     # alternative: a directory of *.yaml files
+  interval: "30s"   # how often to re-evaluate every rule
+  history_interval: "30s"  # snapshot interval for rate() lookback
+  history_keep: 10  # ring-buffer size (10 × 30s = 5min window)

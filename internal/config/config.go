@@ -30,6 +30,36 @@ type Config struct {
 	Audit      AuditConfig      `yaml:"audit"`
 	Secrets    SecretsConfig    `yaml:"secrets"`
 	AI         AIConfig         `yaml:"ai"`
+	SLO        SLOConfig        `yaml:"slo"`
+}
+
+// SLOConfig configures the in-process SLO evaluator. The evaluator
+// parses the same Prometheus rule files Prometheus itself consumes,
+// so the binary can surface currently-firing SLO breaches at
+// /api/v1/alerts/active without standing up an external alertmanager.
+//
+// Defaults: RulesFile empty (evaluator disabled);
+// Interval = 30s; HistoryInterval = 30s. A missing RulesFile is NOT a
+// boot-fatal error — main.go logs a warn and skips wiring the
+// evaluator, so deployments that drop the bundled rules file get a
+// degraded view rather than a hard failure.
+type SLOConfig struct {
+	// RulesFile is the path to a Prometheus rules YAML. Empty
+	// disables the SLO evaluator entirely.
+	RulesFile string `yaml:"rules_file"`
+	// RulesDir is the path to a directory of Prometheus rules YAML
+	// files. Mutually exclusive with RulesFile; if both are set,
+	// RulesFile wins.
+	RulesDir string `yaml:"rules_dir"`
+	// Interval is how often the evaluator re-evaluates each rule.
+	// Default: 30s.
+	Interval time.Duration `yaml:"interval"`
+	// HistoryInterval is how often the metrics-store snapshot is
+	// captured for rate() lookback. Default: 30s.
+	HistoryInterval time.Duration `yaml:"history_interval"`
+	// HistoryKeep is the number of historical snapshots to retain
+	// (ring buffer size). Default: 10 (= 5min at 30s interval).
+	HistoryKeep int `yaml:"history_keep"`
 }
 
 // AIConfig is the application-level wrapper around internal/ai's
@@ -371,6 +401,14 @@ func Default() Config {
 			Provider:  "openai_compatible",
 			TimeoutMs: 8000,
 			MaxTokens: 1024,
+		},
+		// SLO defaults: evaluator off until an operator points it
+		// at a rules file. Sensible interval/keep so the
+		// rate(…[5m]) lookback works out of the box.
+		SLO: SLOConfig{
+			Interval:        30 * time.Second,
+			HistoryInterval: 30 * time.Second,
+			HistoryKeep:     10,
 		},
 	}
 }
