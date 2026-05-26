@@ -26,6 +26,54 @@ This section accumulates changes between tagged releases. Move entries into a ne
 
 ---
 
+## 1.6.0 — DLQ Intelligence Console + AI workstream foundation — 2026-05-26
+
+### Added — Operator experience
+
+- **`/dlq` rebuilt as the Intelligence Console.** Three-pane layout: filter rail + cluster list on the left, cluster detail in the center, action drawer on the right. Tab strip toggles between the new **Clusters** view (default) and the legacy **All entries** flat list. Empty states explicitly tell the operator nothing is on fire when there are no clusters and the queue is clean.
+- **Fuzzy clustering of DLQ failures.** Errors collapse to stable fingerprints regardless of variable parts (UUIDs / timestamps / IPs / IDs / paths / email / numbers / field references all replaced with placeholders). A typical failure cluster shows the canonical template (e.g. `"[stage:validate] validation: missing field <field>"`) with a count, first/last seen, affected pipelines, and the failing stages — collapsing dozens of nearly-identical errors into one triage row.
+- **Replay simulation against the live revision.** From the action drawer, click "Replay simulation" on any entry → re-runs the original payload through the pipeline's currently-deployed revision in preview mode (no broker sends). Returns per-stage outcomes, a retry-confidence pill (`would-succeed` / `would-fail at <stage>`), and an "explain why this failed" hint backed by the structured run trace.
+- **Side-by-side payload diff.** Pick "Compare to..." on any entry to diff its body against another entry in the same cluster. The page renders a hand-rolled LCS line diff with `--success-bg` / `--danger-bg` highlights — useful for telling apart "same failure" vs "payload shape drifted."
+- **AI cluster names (opt-in, off by default).** A switch in the page header turns on `?ai=names` on the clusters endpoint. When the operator's self-hosted LLM endpoint is configured + the `dlq_cluster_naming` capability is allowlisted, each cluster gets an `ai_name: {title, summary, suggestion}` rendered via a small "AI" badge. The deterministic template stays as the fallback when AI is off or the provider is unreachable. A 60-second in-memory cache keeps repeat renders from re-costing the LLM.
+- **`?pipeline=<id>` deep links** preserved from Wave 1.4.0 polish — the Metrics drilldown's "View DLQ" button still lands on a pre-filtered console. New `?tab=all` switches straight to the legacy view for operators with a fixed workflow.
+
+### Added — Backend primitives
+
+- **DLQ schema extension (migration 0023).** Four new columns on the `dlq` table — `error_fingerprint`, `error_template`, `failing_stage_name`, `failing_stage_index` — plus two indexes (`(tenant_id, error_fingerprint)` + `(tenant_id, failing_stage_name)`). Existing rows carry empty fingerprints; new rows are populated by the push path.
+- **`internal/dlq/cluster` package.** Hand-rolled SimHash fingerprinter over a tokenised-template projection of the error string. Nine ordered substitutions (UUID → `<uuid>`, ISO timestamps → `<time>`, ≥3-digit integers → `<int>`, email → `<email>`, IPs → `<host>`, file paths → `<path>`, JSON-pointer field refs → `<field>`, quoted strings → `<str>`, whitespace collapse). `Fingerprint(errStr)` + `FingerprintWithStage(errStr, stage)` — the stage variant scopes the cluster so identical errors at different stages don't collapse together.
+- **`internal/ai/` workstream foundation.** `LLMProvider` interface + `OpenAIProvider` (pure `net/http` + `encoding/json`; chat-completions endpoint with optional `response_format.json_schema` structured outputs) + `NoopProvider` sentinel for off-by-default deployments + `FakeProvider` for tests. Per-call `AuditLogger` writes to a new `ai_audit` table (migration 0024) keyed by feature/tenant/prompt-hash. `mqconnector_ai_calls_total{feature, model, outcome}` Prometheus counter exposes provider health.
+- **`internal/dlq/cluster/naming.go`.** `Name(ctx, provider, audit, cfg, NameRequest)` → `NameResult{Title, Summary, Suggestion}`. System prompt + JSON schema are Go constants (versioned with the code). Best-effort: returns `ErrAINotAvailable` on every failure mode (feature disabled, provider error, bad JSON, timeout); caller decides whether to fall back to the deterministic template.
+- **3 new HTTP endpoints**:
+  - `GET /api/v1/dlq/clusters` — fingerprint-aggregated triage view with filters (`pipeline_id`, `since`, `limit`, `min_count`) and an opt-in `?ai=names` enrichment query
+  - `POST /api/v1/dlq/{id}/replay-sim` — preview replay against the live revision; returns per-stage outcomes + would-succeed flag
+  - `GET /api/v1/dlq/{id}/diff?against={other}` — server-computed LCS line diff between two entries
+
+### Added — Frontend primitives
+
+- **`web/src/lib/components/charts/Heatmap.svelte`** — calendar-heatmap of cluster occurrences (7 days × 24 hours). Hand-rolled SVG; 5-quintile fill scale on brand tokens; `<title>` per cell for hover tooltips.
+- **`web/src/lib/components/charts/PayloadDiff.svelte`** — side-by-side diff renderer consuming the server-computed `[{op, text}]` operations array. Reusable: the Studio dry-run dock's payload-diff modal can move to this component in a follow-up.
+- **`web/src/lib/components/dlq/`** — `ClusterCard`, `ClusterDetail`, `ActionDrawer`, `AINameBadge`, `StageOutcomeStrip` — the composable pieces of the new console. Each is small, focused, brand-token-clean, and individually testable.
+
+### Migrations
+
+- **Migration 0023** — `dlq` fingerprint + template + failing-stage columns + 2 indexes.
+- **Migration 0024** — `ai_audit` table + 3 indexes.
+
+### Configuration
+
+A new `ai:` section in `config.example.yaml` (commented out, `enabled: false` by default). Operators wire up their self-hosted LLM (OpenAI-compatible — vLLM, llama.cpp server, TGI, Ollama, etc.) by setting `endpoint`, `model`, optional `auth_header`, and the explicit `features` allowlist. Capabilities declared but not yet consumed: `transformation_from_example`, `explain_why_summary`, `redaction_pattern_detect` (Wave 4+).
+
+### Deferred to Wave 4
+
+- Real per-cluster heatmap data — currently derived from cluster `first_seen` + `last_seen` + `count` via a rough binning. Wave 4 will add a proper per-cluster recent-activity SQL.
+- Explainer-engine consumers for `explain_why_summary` capability (already declared in `internal/ai/config.go`).
+
+### No breaking changes
+
+Existing `/api/v1/dlq` list + `GET /api/v1/dlq/{id}` + retry + delete + bulk endpoints unchanged. The flat-list UI survives as the "All entries" tab.
+
+---
+
 ## 1.5.0 — Live Topology + UX consistency sweep — 2026-05-25
 
 ### Added — Operator experience
