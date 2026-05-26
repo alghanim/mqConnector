@@ -457,6 +457,86 @@ func coerceTimestamp(v any) time.Time {
 	return time.Time{}
 }
 
+// RecentForPipeline returns up to `limit` DLQ rows whose
+// pipeline_id matches, newest-first. When `since` is non-zero
+// it acts as a lower bound on created_at. Tenant-scoped — a
+// missing tenantID is rejected with ErrTenantRequired.
+//
+// Used by the internal/explain package's CircuitExplainer +
+// DriftExplainer + DLQRootCauseExplainer to sample representative
+// failure rows alongside the rollup data. Kept as its own helper
+// (rather than re-using ListFiltered) so the narrow read path
+// doesn't pull the page-count aggregate and so the SQL stays
+// fingerprint-friendly via the dlq_pipeline_id_created_at
+// composite index.
+func (r *DLQRepo) RecentForPipeline(ctx context.Context, tenantID, pipelineID string, limit int, since time.Time) ([]*DLQEntry, error) {
+	if tenantID == "" {
+		return nil, ErrTenantRequired
+	}
+	if pipelineID == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+	where := "tenant_id = ? AND pipeline_id = ?"
+	args := []any{tenantID, pipelineID}
+	if !since.IsZero() {
+		where += " AND created_at >= ?"
+		args = append(args, since.UTC())
+	}
+	args = append(args, limit)
+	rows, err := r.db.QueryContext(ctx,
+		dlqSelect+` WHERE `+where+` ORDER BY created_at DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("dlq recent for pipeline: %w", err)
+	}
+	defer rows.Close()
+	var out []*DLQEntry
+	for rows.Next() {
+		e, err := scanDLQ(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ClusterByFingerprint returns the cluster rollup for a single
+// fingerprint within the tenant. ErrNotFound when no rows share
+// the fingerprint. Counterpart to ListClusters that targets one
+// known fingerprint — used by the explain package's
+// DLQRootCauseExplainer for the "look up the cluster for this
+// entry" path.
+func (r *DLQRepo) ClusterByFingerprint(ctx context.Context, tenantID, fingerprint string) (DLQClusterRow, error) {
+	if tenantID == "" {
+		return DLQClusterRow{}, ErrTenantRequired
+	}
+	if fingerprint == "" {
+		return DLQClusterRow{}, ErrNotFound
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT error_fingerprint, error_template,
+		       COUNT(*) AS cnt,
+		       MIN(created_at) AS first_seen,
+		       MAX(created_at) AS last_seen
+		FROM dlq
+		WHERE tenant_id = ? AND error_fingerprint = ?
+		GROUP BY error_fingerprint, error_template`, tenantID, fingerprint)
+	var c DLQClusterRow
+	var firstRaw, lastRaw any
+	if err := row.Scan(&c.Fingerprint, &c.Template, &c.Count, &firstRaw, &lastRaw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return DLQClusterRow{}, ErrNotFound
+		}
+		return DLQClusterRow{}, fmt.Errorf("cluster by fingerprint: %w", err)
+	}
+	c.FirstSeen = coerceTimestamp(firstRaw)
+	c.LastSeen = coerceTimestamp(lastRaw)
+	return c, nil
+}
+
 // ClusterPipelines returns the distinct, alpha-sorted, non-empty
 // pipeline_ids for one fingerprint bucket. Used by the cluster detail
 // fan-out — empty pipeline_id (bridge endpoint failures) is dropped.
