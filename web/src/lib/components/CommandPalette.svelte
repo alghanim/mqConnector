@@ -28,6 +28,7 @@
     Network,
     AlertOctagon,
     Activity,
+    LineChart,
     Users2,
     SunMoon,
     Languages,
@@ -69,6 +70,7 @@
   $: navItems = [
     { id: 'nav.overview', label: t($locale, 'nav.overview'), icon: LayoutDashboard, action: () => goto('/') },
     { id: 'nav.topology', label: t($locale, 'nav.topology'), icon: Network, action: () => goto('/topology') },
+    { id: 'nav.observability', label: t($locale, 'nav.observability'), icon: LineChart, action: () => goto('/observability') },
     { id: 'nav.metrics', label: t($locale, 'nav.metrics'), icon: Activity, action: () => goto('/metrics') },
     {
       id: 'nav.dlq',

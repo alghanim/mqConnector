@@ -21,6 +21,7 @@ const strings: Record<Locale, Record<string, string>> = {
     'topology.empty.body':
       'Add a connection and create a pipeline to see the flow light up here.',
     'nav.dlq': 'Dead-letter queue',
+    'nav.observability': 'Observability',
     'nav.metrics': 'Metrics',
     'nav.tenants': 'Tenants',
     'nav.tokens': 'API tokens',
@@ -947,7 +948,37 @@ const strings: Record<Locale, Record<string, string>> = {
     // Connections — first-run empty-state CTA. The page-header
     // "Add connection" button is for routine use; this is the
     // friendlier "you have zero, start here" prompt.
-    'empty.connections.cta': 'Add your first connection'
+    'empty.connections.cta': 'Add your first connection',
+
+    // ─── Observability (Wave 4 T5) ─────────────────────────────
+    // Per-pipeline deep dive: stage waterfall, percentile bands,
+    // and the three explainers (latency / drift / circuit) rendered
+    // as tabs. Strings here mirror /metrics' vocabulary but lean
+    // analytical rather than operational.
+    'observability.title': 'Observability',
+    'observability.subtitle': 'Per-pipeline waterfall, percentile bands, and explainers.',
+    'observability.picker.label': 'Pipeline',
+    'observability.picker.placeholder': 'Pick a pipeline',
+    'observability.aiToggle': 'AI summary',
+    'observability.aiToggle.hint':
+      'When enabled, each explanation includes a two-sentence AI paraphrase.',
+    'observability.stat.totalP99': 'Total p99',
+    'observability.stat.dominantStage': 'Dominant stage',
+    'observability.stat.failureRate': 'Failure rate',
+    'observability.stat.dlqDepth': 'DLQ depth',
+    'observability.stat.circuit': 'Circuit',
+    'observability.stat.asOf': 'as of',
+    'observability.panel.waterfall': 'Per-stage waterfall',
+    'observability.panel.explain': 'Explain',
+    'observability.panel.percentiles': 'Percentile band · last 60 min',
+    'observability.tab.latency': 'Latency',
+    'observability.tab.drift': 'Drift',
+    'observability.tab.circuit': 'Circuit',
+    'observability.empty.title': 'No pipelines to observe',
+    'observability.empty.body':
+      'Create a pipeline to see its per-stage waterfall and explainers here.',
+    'observability.empty.noPipeline': 'Pick a pipeline to begin.',
+    'palette.cmd.observability': 'Open observability'
   },
   ar: {
     'app.title': 'موصل قوائم الرسائل',
@@ -964,6 +995,7 @@ const strings: Record<Locale, Record<string, string>> = {
     'topology.empty.body':
       'أضف اتصالاً وأنشئ أنبوبًا لمشاهدة التدفق يظهر هنا.',
     'nav.dlq': 'الرسائل الفاشلة',
+    'nav.observability': 'المراقبة',
     'nav.metrics': 'القياسات',
     'nav.tenants': 'المستأجرون',
     'nav.tokens': 'مفاتيح الـ API',
@@ -1862,7 +1894,33 @@ const strings: Record<Locale, Record<string, string>> = {
     'dlq.row.retryBadge': 'محاولة {n}',
 
     // Connections — first-run empty-state CTA
-    'empty.connections.cta': 'أضف أول اتصال'
+    'empty.connections.cta': 'أضف أول اتصال',
+
+    // ─── المراقبة (الموجة 4 المهمة 5) ──────────────────────────
+    'observability.title': 'المراقبة',
+    'observability.subtitle': 'شلال المراحل، شرائط المئينات، والمفسّرات لكل تدفّق.',
+    'observability.picker.label': 'التدفّق',
+    'observability.picker.placeholder': 'اختر تدفّقًا',
+    'observability.aiToggle': 'ملخّص الذكاء الاصطناعي',
+    'observability.aiToggle.hint':
+      'عند التفعيل، يتضمّن كل تفسير ملخّصًا قصيرًا من الذكاء الاصطناعي.',
+    'observability.stat.totalP99': 'إجمالي p99',
+    'observability.stat.dominantStage': 'المرحلة المهيمنة',
+    'observability.stat.failureRate': 'معدّل الفشل',
+    'observability.stat.dlqDepth': 'عمق طابور الفشل',
+    'observability.stat.circuit': 'القاطع',
+    'observability.stat.asOf': 'حتى',
+    'observability.panel.waterfall': 'شلال المراحل',
+    'observability.panel.explain': 'الشرح',
+    'observability.panel.percentiles': 'شريط المئينات · آخر ٦٠ دقيقة',
+    'observability.tab.latency': 'الكُمون',
+    'observability.tab.drift': 'الانحراف',
+    'observability.tab.circuit': 'القاطع',
+    'observability.empty.title': 'لا توجد تدفّقات لمراقبتها',
+    'observability.empty.body':
+      'أنشئ تدفّقًا لعرض شلال مراحله ومفسّراته هنا.',
+    'observability.empty.noPipeline': 'اختر تدفّقًا للبدء.',
+    'palette.cmd.observability': 'فتح المراقبة'
   }
 };
 

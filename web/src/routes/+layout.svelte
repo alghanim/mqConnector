@@ -58,6 +58,7 @@
     Network,
     AlertOctagon,
     Activity,
+    LineChart,
     Users2,
     KeyRound as KeyIcon,
     Webhook as WebhookIcon,
@@ -171,6 +172,7 @@
       items: [
         { href: '/', label: t($locale, 'nav.overview'), icon: LayoutDashboard },
         { href: '/topology', label: t($locale, 'nav.topology'), icon: Network },
+        { href: '/observability', label: t($locale, 'nav.observability'), icon: LineChart },
         { href: '/metrics', label: t($locale, 'nav.metrics'), icon: Activity },
         { href: '/dlq', label: t($locale, 'nav.dlq'), icon: AlertOctagon, badge: dlqCount }
       ] as NavItem[]
