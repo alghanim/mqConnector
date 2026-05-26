@@ -423,9 +423,12 @@
     border-block-end: 1px solid var(--border);
     inline-size: 100%;
     min-inline-size: 0;
+    overflow: visible;
     /* No overflow clip here — the section dropdowns hang below the
        row and need to escape. Horizontal clipping is handled at
-       .shell + .nav-row instead. */
+       .shell + .nav-row instead. Isolation ensures the topnav's
+       sticky z-index doesn't trap children's higher z-indexes. */
+    isolation: isolate;
   }
   .brand-strip {
     height: 3px;
@@ -506,10 +509,11 @@
     position: relative;
     display: inline-flex;
     flex-shrink: 0;
-    z-index: 1;
-  }
-  .nav-section:has(.nav-menu) {
-    z-index: 50;
+    /* Always above any sibling chrome (breadcrumbs row, page header) so
+       the popover never gets occluded. Don't rely on :has() for this —
+       it works in modern browsers but is too easy to lose to a
+       stacking-context bug. A constant high z-index is bulletproof. */
+    z-index: 60;
   }
   .nav-section-btn {
     display: inline-flex;
@@ -560,7 +564,7 @@
     position: absolute;
     top: calc(100% + 6px);
     inset-inline-start: 0;
-    z-index: 40;
+    z-index: 70;
     display: flex;
     flex-direction: column;
     gap: 2px;
