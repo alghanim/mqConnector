@@ -561,6 +561,10 @@
   }
 
   .nav-menu {
+    /* Anchored to the section wrapper, lifted above every other layer.
+       z-index 70 + the topnav's isolation: isolate ensures no parent
+       stacking context can trap us. Min-inline-size keeps the popover
+       a readable shape even for short labels. */
     position: absolute;
     top: calc(100% + 6px);
     inset-inline-start: 0;
@@ -568,20 +572,20 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    min-inline-size: 13rem;
+    min-inline-size: 14rem;
     padding: 0.5rem;
-    background: var(--surface-high);
+    background: var(--surface-highest, var(--surface-high));
     border: 1px solid var(--border-strong);
     border-radius: 0.75rem;
     box-shadow:
-      0 1px 2px rgba(0, 0, 0, 0.18),
-      0 12px 32px -10px rgba(0, 0, 0, 0.42);
+      0 1px 3px rgba(0, 0, 0, 0.25),
+      0 16px 40px -10px rgba(0, 0, 0, 0.55);
   }
   :global([data-theme='light']) .nav-menu {
     background: var(--surface);
     box-shadow:
-      0 1px 2px rgba(51, 63, 72, 0.10),
-      0 12px 32px -10px rgba(51, 63, 72, 0.22);
+      0 1px 3px rgba(51, 63, 72, 0.16),
+      0 16px 40px -10px rgba(51, 63, 72, 0.34);
   }
   .nav-menu-item {
     display: inline-flex;
