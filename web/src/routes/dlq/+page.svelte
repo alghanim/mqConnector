@@ -1,22 +1,40 @@
 <!--
   /dlq — Dead-letter queue console.
 
-  Phase 6 added the bits an oncall actually needs during an incident:
-    - Row-click drawer with full decoded payload (instead of a 200-char
-      preview), error reason, timestamps, retry history.
-    - Filter bar (pipeline + error-text contains + time window).
-    - Bulk select with parallel retry / delete.
+  Two-tabbed UI (Wave 3 T5):
 
-  Filtering is client-side over the currently loaded page; the API
-  endpoint only accepts page+per_page today. We default to per_page=100
-  so the visible window is large enough that filtering is useful for
-  the common case. Server-side filter is a follow-up — kept out of
-  Phase 6 to avoid backend changes.
+    [Clusters]   — failures grouped by error-text fingerprint.
+                   Three-pane console: cluster list | cluster detail | action drawer.
+                   Default tab; powered by GET /api/v1/dlq/clusters (+ ?ai=names).
+                   The right-pane drawer wires up replay-sim + diff-against
+                   + retry/delete.
+
+    [All entries] — the legacy flat-list view kept around for the operator
+                   that wants to triage by row rather than pattern. Same
+                   filter row, same bulk affordances, same detail drawer
+                   as Phase 6 — moved verbatim into an {#if activeTab === 'all'}
+                   block so it only mounts when actually selected.
+
+  URL params:
+    ?pipeline=<id>  — pre-applies the pipeline filter on both tabs (preserved
+                      from the legacy page so the /metrics drilldown link
+                      keeps working).
+    ?tab=all        — opens directly on the All entries tab (lets external
+                      surfaces deep-link straight into the flat list).
 -->
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { page } from '$app/stores';
-  import { api, type Connection, type DLQEntry, type Pipeline } from '$lib/api';
+  import {
+    api,
+    type Connection,
+    type DLQCluster,
+    type DLQClustersResponse,
+    type DLQDiffResponse,
+    type DLQEntry,
+    type DLQReplaySimResponse,
+    type Pipeline
+  } from '$lib/api';
   import { locale, t } from '$lib/stores/locale';
   import {
     loadCatalogues,
@@ -30,50 +48,42 @@
   import Dialog from '$lib/components/Dialog.svelte';
   import Input from '$lib/components/Input.svelte';
   import Select from '$lib/components/Select.svelte';
+  import Switch from '$lib/components/Switch.svelte';
+  import Skeleton from '$lib/components/Skeleton.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import StatChip from '$lib/components/StatChip.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import { toasts } from '$lib/stores/toasts';
   import { RotateCw, RefreshCw } from 'lucide-svelte';
 
-  // ─── List state ─────────────────────────────────────────────────
-  let entries: DLQEntry[] = [];
-  let total = 0;
-  let pageNum = 1;
-  // Page size is generous on purpose: during incident triage the
-  // operator scrolls a wide window of failures rather than clicking
-  // through pages. The CSS rule on .dlq-table tbody tr applies row
-  // virtualization (content-visibility) so 500 rows render fast.
-  const perPage = 500;
-  let error = '';
-  let busy = false;
+  import ClusterCard from '$lib/components/dlq/ClusterCard.svelte';
+  import ClusterDetail from '$lib/components/dlq/ClusterDetail.svelte';
+  import ActionDrawer from '$lib/components/dlq/ActionDrawer.svelte';
 
-  // ─── Catalogues for friendly-name resolution ─────────────────────
-  // DLQ rows are keyed by pipeline_id (UUID) only. We fetch the
-  // pipelines + connections catalogues best-effort on mount and on
-  // each refresh so the table + filter dropdown + detail drawer all
-  // render the human name. A row whose pipeline has been deleted
-  // resolves to a "(deleted)" placeholder; total fetch failure
-  // degrades silently to id:<short>.
+  // ─── Tabs ────────────────────────────────────────────────────────
+  // Default to clusters — that's the surface this task ships. The
+  // All-entries tab is reachable via the strip or ?tab=all deep link.
+  let activeTab: 'clusters' | 'all' = 'clusters';
+
+  // ─── Shared: catalogues ──────────────────────────────────────────
+  // Both tabs render pipeline labels; one catalogue load serves both.
   let pipelineMap = new Map<string, Pipeline>();
   let connectionMap = new Map<string, Connection>();
   $: deletedLabel = t($locale, 'dash.pipelines.deleted');
   async function refreshCatalogues(): Promise<void> {
     const c = await loadCatalogues('dlq');
     pipelineMap = c.pipelines;
-    // connectionMap is reserved for a future broker-glyph column;
-    // we already pay the round trip, no need to discard the result.
     connectionMap = c.connections;
   }
 
-  // Relative-time formatter — "2 minutes ago" / "in 3 seconds".
-  // Hand-rolled (not Intl.RelativeTimeFormat) so the strings come
-  // from our i18n table and stay terse. Returns '' for unparseable
-  // input so the caller can fall back to the absolute timestamp.
+  // ─── Shared: relative-time formatter ─────────────────────────────
+  // (kept here for the All-entries flat-list rows — the cluster
+  // components ship their own copy.)
   function formatRelative(ts: string | undefined, lc: 'en' | 'ar'): string {
     if (!ts) return '';
     const at = Date.parse(ts);
     if (Number.isNaN(at)) return '';
-    const diff = (Date.now() - at) / 1000; // seconds, +past / -future
+    const diff = (Date.now() - at) / 1000;
     const abs = Math.abs(diff);
     const past = diff >= 0;
     type Unit = 'second' | 'minute' | 'hour' | 'day';
@@ -99,6 +109,272 @@
       : t(lc, 'time.in').replace('{n}', String(value)).replace('{unit}', unitLabel);
   }
 
+  // ─── CLUSTERS TAB ────────────────────────────────────────────────
+
+  let clusters: DLQCluster[] = [];
+  let clustersTotal = 0;
+  let clustersReturned = 0;
+  let clustersLoading = false;
+  let clustersError = '';
+  let clustersGeneratedAt: string | null = null;
+  let aiNames = false;
+
+  // Filter row drives both the request URL and the empty-state copy.
+  let clusterPipelineId = '';
+  // Stored as a string so it binds cleanly into <Select> (which only
+  // round-trips string values). We coerce on the way into URLSearchParams.
+  let clusterSinceHours = '168'; // last week
+  let clusterMinCount = 1;
+
+  // Selection.
+  let selectedCluster: DLQCluster | null = null;
+  let selectedEntry: DLQEntry | null = null;
+  let recentEntries = new Map<string, DLQEntry>();
+  let representativeEntry: DLQEntry | null = null;
+
+  // Replay sim + diff state per selected entry.
+  let replaySim: DLQReplaySimResponse | null = null;
+  let busySim = false;
+  let diffResult: DLQDiffResponse | null = null;
+  let busyDiff = false;
+  let compareId = '';
+
+  // Build the option list for the cluster pipeline filter. We harvest
+  // from `pipelinesAffected` across the loaded clusters so the dropdown
+  // stays bounded to pipelines that actually have failures.
+  $: clusterPipelineOptions = (() => {
+    const seen = new Set<string>();
+    for (const c of clusters) for (const p of c.pipelines_affected) seen.add(p);
+    if (clusterPipelineId) seen.add(clusterPipelineId);
+    const opts = Array.from(seen)
+      .map((id) => ({ value: id, label: pipelineLabel(id, pipelineMap) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    return [
+      { value: '', label: t($locale, 'dlq.filter.allPipelines') },
+      ...opts
+    ];
+  })();
+
+  $: clusterSinceOptions = [
+    { value: '24', label: t($locale, 'dlq.clusters.filter.since.day') },
+    { value: '168', label: t($locale, 'dlq.clusters.filter.since.week') },
+    { value: '720', label: t($locale, 'dlq.clusters.filter.since.month') }
+  ];
+
+  async function fetchClusters(): Promise<void> {
+    clustersLoading = true;
+    try {
+      const params = new URLSearchParams();
+      if (clusterPipelineId) params.set('pipeline_id', clusterPipelineId);
+      const sinceHoursNum = Number(clusterSinceHours);
+      if (Number.isFinite(sinceHoursNum) && sinceHoursNum > 0) {
+        const since = new Date(Date.now() - sinceHoursNum * 3_600_000).toISOString();
+        params.set('since', since);
+      }
+      if (clusterMinCount > 1) params.set('min_count', String(clusterMinCount));
+      params.set('limit', '100');
+      if (aiNames) params.set('ai', 'names');
+      const res = await api.get<DLQClustersResponse>(
+        `/v1/dlq/clusters?${params.toString()}`
+      );
+      clusters = res.clusters ?? [];
+      clustersTotal = res.total ?? 0;
+      clustersReturned = res.returned ?? clusters.length;
+      clustersGeneratedAt = res.generated_at ?? null;
+      clustersError = '';
+
+      // Selection bookkeeping: if the previously-selected cluster is no
+      // longer in the new list, drop it. Otherwise re-bind to the fresh
+      // object so its fields (count, last_seen, ai_name) update live.
+      if (selectedCluster) {
+        const next = clusters.find(
+          (c) => c.fingerprint === selectedCluster!.fingerprint
+        );
+        if (next) {
+          selectedCluster = next;
+        } else {
+          selectedCluster = null;
+          selectedEntry = null;
+          representativeEntry = null;
+          recentEntries = new Map();
+        }
+      }
+    } catch (e: unknown) {
+      clustersError = (e as { message?: string }).message || 'failed to load clusters';
+      clusters = [];
+      clustersTotal = 0;
+      clustersReturned = 0;
+    } finally {
+      clustersLoading = false;
+    }
+  }
+
+  // Debounced refetch when filters or AI toggle change.
+  let clusterRefetchTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleClusterRefetch() {
+    if (clusterRefetchTimer) clearTimeout(clusterRefetchTimer);
+    clusterRefetchTimer = setTimeout(() => {
+      void fetchClusters();
+    }, 300);
+  }
+  // We trip the debounce on any of: pipeline filter, since window,
+  // min-count threshold, AI-names toggle. Wrapped so reactivity sees
+  // a single dependency-list invocation.
+  $: trackClusterFilters(clusterPipelineId, clusterSinceHours, clusterMinCount, aiNames);
+  function trackClusterFilters(
+    _p: string,
+    _h: string,
+    _m: number,
+    _ai: boolean
+  ) {
+    scheduleClusterRefetch();
+  }
+
+  // Cluster selection — fetch the representative entry + the recent_ids
+  // pile so the timeline can render names. We deliberately fetch all
+  // recent_ids in parallel (server lookup is cheap and the list is
+  // bounded to ~10 ids).
+  async function selectCluster(event: CustomEvent<{ cluster: DLQCluster }>) {
+    const cluster = event.detail.cluster;
+    selectedCluster = cluster;
+    // Reset per-entry state so the drawer doesn't show stale sim/diff
+    // bound to the previous cluster's entry.
+    selectedEntry = null;
+    representativeEntry = null;
+    recentEntries = new Map();
+    replaySim = null;
+    diffResult = null;
+    compareId = '';
+
+    try {
+      const rep = await api.get<DLQEntry>(`/v1/dlq/${cluster.representative_id}`);
+      representativeEntry = rep;
+      // The representative is also the default action-drawer target.
+      selectedEntry = rep;
+      // Seed the recent-entries map so the timeline + drawer have it.
+      const seed = new Map<string, DLQEntry>();
+      seed.set(rep.id, rep);
+      recentEntries = seed;
+    } catch (e: unknown) {
+      // The representative may have been purged between the clusters
+      // call and the row fetch; surface but don't blow away the
+      // cluster header (it's still valid metadata).
+      toasts.error(
+        t($locale, 'dlq.clusters.detail.representative'),
+        (e as { message?: string }).message || ''
+      );
+    }
+
+    // Fan out the rest of the recent_ids. Each one is independent —
+    // a failure on one shouldn't strand the others. allSettled keeps
+    // partial timelines rendering.
+    const others = cluster.recent_ids.filter(
+      (id) => id !== cluster.representative_id
+    );
+    if (others.length === 0) return;
+    const results = await Promise.allSettled(
+      others.map((id) => api.get<DLQEntry>(`/v1/dlq/${id}`))
+    );
+    const next = new Map(recentEntries);
+    results.forEach((r, idx) => {
+      if (r.status === 'fulfilled') {
+        next.set(others[idx], r.value);
+      }
+    });
+    recentEntries = next;
+  }
+
+  function selectTimelineEntry(event: CustomEvent<{ entry: DLQEntry }>) {
+    selectedEntry = event.detail.entry;
+    // Reset sim/diff — the operator clicked a different row.
+    replaySim = null;
+    diffResult = null;
+    compareId = '';
+  }
+
+  // ─── Drawer handlers ────────────────────────────────────────────
+  async function onRunReplaySim(event: CustomEvent<{ id: string }>) {
+    busySim = true;
+    try {
+      const res = await api.post<DLQReplaySimResponse>(
+        `/v1/dlq/${event.detail.id}/replay-sim`
+      );
+      replaySim = res;
+    } catch (e: unknown) {
+      toasts.error(
+        t($locale, 'dlq.clusters.drawer.replaySim'),
+        (e as { message?: string }).message || ''
+      );
+    } finally {
+      busySim = false;
+    }
+  }
+
+  async function onPickCompare(event: CustomEvent<{ againstId: string }>) {
+    if (!selectedEntry) return;
+    busyDiff = true;
+    try {
+      const res = await api.get<DLQDiffResponse>(
+        `/v1/dlq/${selectedEntry.id}/diff?against=${encodeURIComponent(event.detail.againstId)}`
+      );
+      diffResult = res;
+    } catch (e: unknown) {
+      toasts.error(
+        t($locale, 'dlq.clusters.drawer.compare'),
+        (e as { message?: string }).message || ''
+      );
+    } finally {
+      busyDiff = false;
+    }
+  }
+
+  async function onDrawerRetry(event: CustomEvent<{ id: string }>) {
+    try {
+      await api.post(`/v1/dlq/${event.detail.id}/retry`);
+      toasts.success(t($locale, 'common.retry'), event.detail.id.slice(0, 8));
+      // Refetch clusters — the entry may have left the DLQ, which can
+      // cascade to the cluster count / last_seen.
+      await fetchClusters();
+    } catch (e: unknown) {
+      toasts.error(
+        t($locale, 'common.retry'),
+        (e as { message?: string }).message || ''
+      );
+    }
+  }
+
+  // The drawer's delete request opens a confirm dialog (re-use the
+  // existing per-row dialog state below).
+  function onDrawerAskDelete(event: CustomEvent<{ id: string }>) {
+    pendingDeleteId = event.detail.id;
+  }
+
+  // ─── Compare-list excluding the focused entry ───────────────────
+  // The drawer wants "other recent ids" — its own id should never
+  // appear in the compare dropdown.
+  $: otherRecentIds = (() => {
+    if (!selectedCluster || !selectedEntry) return [] as string[];
+    return selectedCluster.recent_ids.filter((id) => id !== selectedEntry!.id);
+  })();
+
+  function resetClusterFilters() {
+    clusterPipelineId = '';
+    clusterSinceHours = '168';
+    clusterMinCount = 1;
+  }
+
+  $: hasClusterFilters =
+    clusterPipelineId !== '' || clusterSinceHours !== '168' || clusterMinCount !== 1;
+
+  // ─── ALL ENTRIES TAB (legacy flat list — preserved verbatim) ─────
+
+  let entries: DLQEntry[] = [];
+  let total = 0;
+  let pageNum = 1;
+  const perPage = 500;
+  let listError = '';
+  let busy = false;
+
   async function refresh() {
     busy = true;
     try {
@@ -106,10 +382,6 @@
         page: String(pageNum),
         per_page: String(perPage)
       });
-      // Push the filter through to the server so pagination counts and
-      // matches reflect the WHOLE table, not just the current page. The
-      // client-side `filtered` is still derived from the loaded rows for
-      // visual immediacy when the user is mid-keystroke.
       if (filterPipeline) params.set('pipeline_id', filterPipeline);
       if (filterError) params.set('error', filterError);
       const since = windowToSince(filterWindow);
@@ -123,61 +395,30 @@
       }>(`/v1/dlq?${params.toString()}`);
       entries = res.items ?? [];
       total = res.total ?? 0;
-      error = '';
+      listError = '';
     } catch (e: unknown) {
-      error = (e as { message?: string }).message || 'failed to load';
+      listError = (e as { message?: string }).message || 'failed to load';
     } finally {
       busy = false;
     }
   }
 
-  // Translates the UI's window selection into an RFC3339 lower-bound that
-  // the server understands. "all" → undefined (no bound applied).
   function windowToSince(win: 'all' | '1h' | '24h' | '7d'): string | undefined {
     if (win === 'all') return undefined;
     const ms = win === '1h' ? 3600_000 : win === '24h' ? 86_400_000 : 7 * 86_400_000;
     return new Date(Date.now() - ms).toISOString();
   }
 
-  // ─── Filters (client-side) ──────────────────────────────────────
-  // filterPipeline can be pre-applied from the URL query string —
-  // /dlq?pipeline=<id> is the link target the /metrics drilldown
-  // panel emits when an operator clicks "View DLQ" on a row. We
-  // capture it in onMount before the first refresh so the server
-  // call already carries the filter (saves one round trip and avoids
-  // a flash of unfiltered rows).
   let filterPipeline = '';
   let filterError = '';
   let filterWindow: 'all' | '1h' | '24h' | '7d' = 'all';
 
-  onMount(async () => {
-    const fromQuery = $page.url.searchParams.get('pipeline');
-    if (fromQuery) filterPipeline = fromQuery;
-    // Kick off catalogue load alongside the first list fetch so the
-    // pipeline column resolves to names as soon as possible.
-    void refreshCatalogues();
-    await refresh();
-  });
-
   $: pipelineOptions = (() => {
-    // Build options from the set of pipeline_ids actually present in
-    // the current page of results. Labels resolve through the
-    // catalogue map so the dropdown shows friendly names rather than
-    // raw UUIDs; we keep the option `value` as the UUID because the
-    // server filter / URL query string still keys on id.
     const seen = new Set<string>();
     for (const e of entries) if (e.pipeline_id) seen.add(e.pipeline_id);
-    // Include the URL-supplied filter even if no row matches yet
-    // (the drilldown filter survives an empty page).
     if (filterPipeline) seen.add(filterPipeline);
     const opts = Array.from(seen)
-      .map((id) => ({
-        value: id,
-        // pipelineLabel handles the missing-from-catalogue case by
-        // returning id:<short>; sort by label so the dropdown stays
-        // alphabetical from the operator's point of view.
-        label: pipelineLabel(id, pipelineMap)
-      }))
+      .map((id) => ({ value: id, label: pipelineLabel(id, pipelineMap) }))
       .sort((a, b) => a.label.localeCompare(b.label));
     return [{ value: '', label: t($locale, 'dlq.filter.allPipelines') }, ...opts];
   })();
@@ -199,7 +440,8 @@
 
   $: filtered = entries.filter((e) => {
     if (filterPipeline && e.pipeline_id !== filterPipeline) return false;
-    if (filterError && !e.error_reason.toLowerCase().includes(filterError.toLowerCase())) return false;
+    if (filterError && !e.error_reason.toLowerCase().includes(filterError.toLowerCase()))
+      return false;
     if (!withinWindow(e.created_at, filterWindow)) return false;
     return true;
   });
@@ -210,24 +452,26 @@
     filterWindow = 'all';
   }
 
-  // Re-fetch when the user pauses typing. The reactive statement watches
-  // the four filter inputs together so any change schedules a single
-  // debounce window. Skipped during the initial refresh (busy=true) and
-  // during page navigation (we want pageNum changes to fire immediately).
+  // Debounced refetch — only schedule while the All entries tab is
+  // mounted, so a Clusters-tab session doesn't trigger background
+  // /v1/dlq calls the operator can't see.
   let refetchTimer: ReturnType<typeof setTimeout> | undefined;
-  $: scheduleRefetch(filterPipeline, filterError, filterWindow);
-  function scheduleRefetch(_p: string, _e: string, _w: typeof filterWindow) {
+  $: scheduleRefetch(filterPipeline, filterError, filterWindow, activeTab);
+  function scheduleRefetch(
+    _p: string,
+    _e: string,
+    _w: typeof filterWindow,
+    tab: typeof activeTab
+  ) {
     if (refetchTimer) clearTimeout(refetchTimer);
+    if (tab !== 'all') return;
     refetchTimer = setTimeout(() => {
       pageNum = 1;
       refresh();
     }, 250);
   }
-  onDestroy(() => {
-    if (refetchTimer) clearTimeout(refetchTimer);
-  });
 
-  // ─── Selection (bulk) ───────────────────────────────────────────
+  // ─── Selection (bulk) — All entries tab ─────────────────────────
   let selected = new Set<string>();
   function toggleOne(id: string) {
     const next = new Set(selected);
@@ -260,7 +504,7 @@
       await api.post(`/v1/dlq/${id}/retry`);
       await refresh();
     } catch (e: unknown) {
-      error = (e as { message?: string }).message || 'retry failed';
+      listError = (e as { message?: string }).message || 'retry failed';
     }
   }
   function askRemove(id: string) {
@@ -271,10 +515,23 @@
     deleting = true;
     try {
       await api.del(`/v1/dlq/${pendingDeleteId}`);
+      // If the entry was the one focused in the cluster drawer, drop
+      // the selection so the right panel returns to the empty state.
+      if (selectedEntry?.id === pendingDeleteId) {
+        selectedEntry = null;
+        replaySim = null;
+        diffResult = null;
+        compareId = '';
+      }
       pendingDeleteId = null;
-      await refresh();
+      // Refresh both surfaces in case the delete spans tabs.
+      if (activeTab === 'all') {
+        await refresh();
+      } else {
+        await fetchClusters();
+      }
     } catch (e: unknown) {
-      error = (e as { message?: string }).message || 'delete failed';
+      listError = (e as { message?: string }).message || 'delete failed';
     } finally {
       deleting = false;
     }
@@ -282,10 +539,6 @@
 
   // ─── Bulk actions ───────────────────────────────────────────────
   let bulkAction: 'retry' | 'delete' | null = null;
-  // bulkScope decides whether the confirm path hits the per-id
-  // endpoints (selection-driven) or the server-side bulk endpoint
-  // keyed on the active filter. The latter is the only way to reach
-  // rows that don't fit in the current page.
   let bulkScope: 'selection' | 'filter' = 'selection';
   let bulkBusy = false;
 
@@ -299,10 +552,6 @@
     bulkScope = 'selection';
     bulkAction = 'delete';
   }
-  // ask*MatchingFilter targets every row that matches the current
-  // filter (server-side), not just the visible-page selection. Only
-  // active when at least one filter is set — bulk-deleting the entire
-  // table by accident is exactly the misclick this guards against.
   function askBulkRetryMatching() {
     if (!filterActive) return;
     bulkScope = 'filter';
@@ -318,9 +567,6 @@
     bulkBusy = true;
     try {
       if (bulkScope === 'filter') {
-        // Server-side bulk: one call, one transaction. Maps to the
-        // new POST /v1/dlq/bulk/{retry,delete} endpoint that accepts
-        // the same filter shape as the list endpoint.
         const since = windowToSince(filterWindow);
         const body: Record<string, unknown> = { max_rows: 1000 };
         if (filterPipeline) body.pipeline_id = filterPipeline;
@@ -332,18 +578,20 @@
           failures?: Record<string, string>;
         }>(`/v1/dlq/bulk/${bulkAction}`, body);
         if (res.failed > 0) {
-          error = `${res.failed}/${res.succeeded + res.failed} ${bulkAction} failed`;
+          listError = `${res.failed}/${res.succeeded + res.failed} ${bulkAction} failed`;
         }
       } else {
         const ids = Array.from(selected);
         const results = await Promise.allSettled(
           ids.map((id) =>
-            bulkAction === 'retry' ? api.post(`/v1/dlq/${id}/retry`) : api.del(`/v1/dlq/${id}`)
+            bulkAction === 'retry'
+              ? api.post(`/v1/dlq/${id}/retry`)
+              : api.del(`/v1/dlq/${id}`)
           )
         );
         const failures = results.filter((r) => r.status === 'rejected').length;
         if (failures > 0) {
-          error = `${failures}/${ids.length} ${bulkAction} failed`;
+          listError = `${failures}/${ids.length} ${bulkAction} failed`;
         }
       }
       selected = new Set();
@@ -351,7 +599,7 @@
       await refresh();
       await refreshGroups();
     } catch (e: unknown) {
-      error = (e as { message?: string }).message || `${bulkAction} failed`;
+      listError = (e as { message?: string }).message || `${bulkAction} failed`;
     } finally {
       bulkBusy = false;
     }
@@ -360,9 +608,6 @@
   $: filterActive = !!filterPipeline || !!filterError || filterWindow !== 'all';
 
   // ─── Top error patterns ─────────────────────────────────────────
-  // Surfaces what's burning so an oncall can triage on pattern first,
-  // rows second. Backed by GET /v1/dlq/groups — server-side aggregate,
-  // so the answer is meaningful even when total >> visible window.
   type ErrorGroup = { pattern: string; count: number; oldest_at: string };
   let groups: ErrorGroup[] = [];
   async function refreshGroups() {
@@ -373,22 +618,12 @@
       groups = [];
     }
   }
-  onMount(refreshGroups);
   function adoptGroupAsFilter(pattern: string) {
     filterError = pattern;
     refresh();
   }
 
-  // ─── Detail drawer ──────────────────────────────────────────────
-  // The drawer is a side-anchored modal. We can't reuse the centred
-  // Dialog primitive, so we replicate its a11y machinery here:
-  //   - role="dialog" + aria-modal + aria-labelledby
-  //   - Tab / Shift+Tab trap inside the drawer
-  //   - Escape closes (unless a confirm Dialog is open on top)
-  //   - Initial focus on the close button
-  //   - Focus restored to the row trigger on close
-  //   - <html> overflow locked while open so the page behind doesn't
-  //     scroll under the drawer
+  // ─── Detail drawer (All entries tab) ────────────────────────────
   let viewing: DLQEntry | null = null;
   let copied = false;
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -408,7 +643,6 @@
     lastFocused = typeof document !== 'undefined' ? document.activeElement : null;
     viewing = e;
     copied = false;
-    // First focusable in the drawer is the Close button.
     tick().then(() => focusables()[0]?.focus());
   }
   function closeDetail() {
@@ -422,8 +656,6 @@
 
   function onDrawerKey(e: KeyboardEvent) {
     if (!viewing) return;
-    // Defer to a confirm Dialog when one is layered over the drawer —
-    // its Escape handler should fire instead of ours.
     if (pendingDeleteId !== null || bulkAction !== null) return;
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -447,7 +679,6 @@
     }
   }
 
-  // Lock background scroll while the drawer is open.
   $: if (typeof document !== 'undefined') {
     if (viewing) {
       document.documentElement.style.overflow = 'hidden';
@@ -456,20 +687,9 @@
     }
   }
 
-  onDestroy(() => {
-    if (typeof document !== 'undefined') document.documentElement.style.overflow = '';
-    if (copiedTimer) clearTimeout(copiedTimer);
-  });
-
-  /**
-   * Decode the base64 payload to UTF-8. Falls back to a hex/byte
-   * preview when the bytes aren't valid UTF-8 (binary payloads — IBM
-   * MQ RFH2 headers and the like).
-   */
   function decodePayload(b64: string): { text: string; binary: boolean; bytes: number } {
     try {
       const raw = atob(b64);
-      // Try to detect binary by counting control chars (excluding \n \r \t)
       let ctrl = 0;
       for (let i = 0; i < raw.length; i++) {
         const c = raw.charCodeAt(i);
@@ -482,7 +702,6 @@
           .join(' ');
         return { text: hex, binary: true, bytes: raw.length };
       }
-      // Try to pretty-print JSON; leave as-is if it's not JSON.
       try {
         const parsed = JSON.parse(raw);
         return { text: JSON.stringify(parsed, null, 2), binary: false, bytes: raw.length };
@@ -503,309 +722,493 @@
       if (copiedTimer) clearTimeout(copiedTimer);
       copiedTimer = setTimeout(() => (copied = false), 1600);
     } catch {
-      // clipboard API can be blocked in some browsers — surface inline
       copied = false;
     }
   }
 
   $: pages = Math.max(1, Math.ceil(total / perPage));
-  $: anyFilter =
-    filterPipeline !== '' || filterError !== '' || filterWindow !== 'all';
+  $: anyFilter = filterPipeline !== '' || filterError !== '' || filterWindow !== 'all';
+
+  // ─── Tab change side effects ────────────────────────────────────
+  // Switching INTO All entries: kick off the legacy /v1/dlq fetch
+  // (the debounced reactive statement above will also fire — but we
+  // explicitly load here so the page paints rows immediately rather
+  // than after the 250 ms debounce window).
+  $: if (activeTab === 'all' && entries.length === 0 && !busy) {
+    void refresh();
+    void refreshGroups();
+  }
+
+  // ─── Mount / unmount ─────────────────────────────────────────────
+  onMount(async () => {
+    // URL deep-link: ?pipeline=<id> applies to both tabs.
+    const fromPipeline = $page.url.searchParams.get('pipeline');
+    if (fromPipeline) {
+      filterPipeline = fromPipeline;
+      clusterPipelineId = fromPipeline;
+    }
+    // ?tab=all opens directly on the legacy list.
+    const fromTab = $page.url.searchParams.get('tab');
+    if (fromTab === 'all') activeTab = 'all';
+
+    void refreshCatalogues();
+    // Always kick off the cluster fetch — it's the default tab and
+    // the count badge in the strip needs to populate even when the
+    // operator opened the page on ?tab=all.
+    void fetchClusters();
+  });
+
+  onDestroy(() => {
+    if (refetchTimer) clearTimeout(refetchTimer);
+    if (clusterRefetchTimer) clearTimeout(clusterRefetchTimer);
+    if (copiedTimer) clearTimeout(copiedTimer);
+    if (typeof document !== 'undefined') document.documentElement.style.overflow = '';
+  });
+
+  // ─── Header count: meaningful per active tab ────────────────────
+  // Clusters tab shows cluster count; All entries shows row total.
+  $: headerCount = activeTab === 'clusters' ? clustersTotal : total;
 </script>
 
-<div class="space-y-6 max-w-6xl">
+<div class="dlq-shell">
   <PageHeader
     title={t($locale, 'dlq.title')}
     subtitle={t($locale, 'dlq.pageSubtitle')}
-    count={total}
+    count={headerCount}
   >
     <svelte:fragment slot="primary">
-      <Button variant="ghost" on:click={refresh} loading={busy}>
+      <Switch bind:checked={aiNames} label={t($locale, 'dlq.clusters.aiToggle')} />
+      <Button
+        variant="ghost"
+        on:click={() => (activeTab === 'clusters' ? fetchClusters() : refresh())}
+        loading={activeTab === 'clusters' ? clustersLoading : busy}
+      >
         <RotateCw size={14} aria-hidden="true" />
         <span class="ms-1">{t($locale, 'common.refresh')}</span>
       </Button>
     </svelte:fragment>
 
     <svelte:fragment slot="stats">
-      <StatChip
-        label={t($locale, 'common.total')}
-        value={total}
-        tone={total > 0 ? 'danger' : 'default'}
-      />
-      {#if entries.length > 0}
+      {#if activeTab === 'clusters'}
         <StatChip
-          label={t($locale, 'dlq.retries')}
-          value={entries.filter((e) => e.retry_count > 0).length}
-          tone="warning"
+          label={t($locale, 'dlq.clusters.count')}
+          value={clustersTotal}
+          tone={clustersTotal > 0 ? 'danger' : 'default'}
         />
+      {:else}
+        <StatChip
+          label={t($locale, 'common.total')}
+          value={total}
+          tone={total > 0 ? 'danger' : 'default'}
+        />
+        {#if entries.length > 0}
+          <StatChip
+            label={t($locale, 'dlq.retries')}
+            value={entries.filter((e) => e.retry_count > 0).length}
+            tone="warning"
+          />
+        {/if}
       {/if}
     </svelte:fragment>
   </PageHeader>
 
-  {#if error}
-    <Alert variant="error" dismissible on:dismiss={() => (error = '')}>{error}</Alert>
-  {/if}
+  <!-- ─── Tab strip ─────────────────────────────────────────────── -->
+  <div class="dlq-tabs" role="tablist" aria-label={t($locale, 'dlq.title')}>
+    <button
+      type="button"
+      role="tab"
+      class="dlq-tab"
+      class:is-active={activeTab === 'clusters'}
+      aria-selected={activeTab === 'clusters'}
+      on:click={() => (activeTab = 'clusters')}
+    >
+      <span>{t($locale, 'dlq.tab.clusters')}</span>
+      <Badge variant="neutral">{clustersTotal}</Badge>
+    </button>
+    <button
+      type="button"
+      role="tab"
+      class="dlq-tab"
+      class:is-active={activeTab === 'all'}
+      aria-selected={activeTab === 'all'}
+      on:click={() => (activeTab = 'all')}
+    >
+      <span>{t($locale, 'dlq.tab.all')}</span>
+    </button>
+  </div>
 
-  <!-- ─── Filters ───────────────────────────────────────────────── -->
-  <section aria-label={t($locale, 'dlq.filters')}>
-    <Card>
-      <div class="dlq-filters">
-        <div class="dlq-filter-field">
-          <Select
-            bind:value={filterPipeline}
-            options={pipelineOptions}
-            label={t($locale, 'dlq.filter.pipeline')}
-          />
-        </div>
-        <div class="dlq-filter-field">
-          <Input
-            bind:value={filterError}
-            label={t($locale, 'dlq.filter.error')}
-            placeholder={t($locale, 'dlq.filter.errorPlaceholder')}
-          />
-        </div>
-        <div class="dlq-filter-field">
-          <Select
-            bind:value={filterWindow}
-            options={windowOptions}
-            label={t($locale, 'dlq.filter.window')}
-          />
-        </div>
-        {#if anyFilter}
-          <div class="dlq-filter-field dlq-filter-clear">
-            <Button variant="ghost" on:click={clearFilters}>
-              {t($locale, 'dlq.filter.clear')}
-            </Button>
+  {#if activeTab === 'clusters'}
+    <!-- ─── CLUSTERS TAB ──────────────────────────────────────── -->
+    {#if clustersError}
+      <Alert variant="error" dismissible on:dismiss={() => (clustersError = '')}>
+        {clustersError}
+      </Alert>
+    {/if}
+
+    <div class="cluster-console" role="tabpanel" aria-label="Clusters">
+      <!-- ── Left pane: filter row + cluster list ── -->
+      <aside class="cluster-left" aria-label="Cluster filters and list">
+        <Card>
+          <div class="cluster-filter-row">
+            <Select
+              bind:value={clusterPipelineId}
+              options={clusterPipelineOptions}
+              label={t($locale, 'dlq.clusters.filter.pipeline')}
+            />
+            <Select
+              bind:value={clusterSinceHours}
+              options={clusterSinceOptions}
+              label={t($locale, 'dlq.clusters.filter.since')}
+            />
+            <Input
+              type="number"
+              bind:value={clusterMinCount}
+              label={t($locale, 'dlq.clusters.filter.minCount')}
+            />
           </div>
-        {/if}
-      </div>
-    </Card>
-  </section>
+          {#if hasClusterFilters}
+            <div class="cluster-filter-reset">
+              <Button variant="ghost" on:click={resetClusterFilters}>
+                {t($locale, 'dlq.clusters.empty.filtered.reset')}
+              </Button>
+            </div>
+          {/if}
+        </Card>
 
-  <!-- ─── Top error patterns ──────────────────────────────────────
-       Server-side aggregate (GET /v1/dlq/groups). Lets the operator
-       triage by pattern before drilling into rows. Click a pattern
-       to set it as the error filter. -->
-  {#if groups.length > 0}
-    <section class="dlq-groups" aria-label="DLQ top error patterns">
-      <header class="dlq-groups-header">
-        <h2>Top error patterns</h2>
-        <span class="dlq-groups-hint">click to filter</span>
-      </header>
-      <ul class="dlq-groups-list">
-        {#each groups as g}
-          <li>
-            <button
-              type="button"
-              class="dlq-group-pill"
-              on:click={() => adoptGroupAsFilter(g.pattern.slice(0, 40))}
-            >
-              <span class="dlq-group-pattern" title={g.pattern}>{g.pattern}</span>
-              <Badge variant="neutral">{g.count}</Badge>
-            </button>
-          </li>
-        {/each}
-      </ul>
-    </section>
-  {/if}
-
-  <!-- ─── Bulk action bar ───────────────────────────────────────── -->
-  {#if selected.size > 0}
-    <section class="dlq-bulk-bar" aria-label={t($locale, 'dlq.bulk.region')}>
-      <span class="dlq-bulk-count" aria-live="polite">
-        <Badge variant="neutral">{selected.size}</Badge>
-        {t($locale, 'dlq.bulk.selected')}
-      </span>
-      <div class="flex gap-2">
-        <Button variant="ghost" on:click={() => (selected = new Set())}>
-          {t($locale, 'dlq.bulk.clear')}
-        </Button>
-        <Button variant="outline" on:click={askBulkDelete}>
-          {t($locale, 'dlq.bulk.deleteAll')}
-        </Button>
-        <Button on:click={askBulkRetry}>{t($locale, 'dlq.bulk.retryAll')}</Button>
-      </div>
-    </section>
-  {:else if filterActive && total > entries.length}
-    <!-- When a filter is active and matches more rows than fit on the
-         current page, surface the server-side bulk affordance — the
-         only way to act on the entire match-set in one go. -->
-    <section class="dlq-bulk-bar" aria-label="Bulk on filter">
-      <span class="dlq-bulk-count" aria-live="polite">
-        <Badge variant="neutral">{total}</Badge>
-        rows match this filter — apply to all?
-      </span>
-      <div class="flex gap-2">
-        <Button variant="outline" on:click={askBulkDeleteMatching}>
-          Delete all matching
-        </Button>
-        <Button on:click={askBulkRetryMatching}>Retry all matching</Button>
-      </div>
-    </section>
-  {/if}
-
-  <Card>
-    {#if entries.length === 0}
-      <!--
-        Empty-state copy was deliberately tightened in this pass:
-        "your pipelines are processing cleanly" reads as a positive
-        confirmation rather than "the queue is empty" (which sounds
-        like something is broken). The helper slot points at /metrics
-        for per-pipeline health so an operator who lands here looking
-        for trouble still has somewhere to drill.
-      -->
-      <EmptyState
-        illustration="dlq"
-        title={t($locale, 'empty.dlq.title')}
-        body={t($locale, 'empty.dlq.body')}
-      >
-        <svelte:fragment slot="helper">
-          <a class="dlq-empty-link" href="/metrics">
-            {t($locale, 'empty.dlq.subtitle')}
-          </a>
-        </svelte:fragment>
-      </EmptyState>
-    {:else if filtered.length === 0}
-      <p style="color: var(--text-muted)">{t($locale, 'dlq.emptyFiltered')}</p>
-    {:else}
-      <table class="table dlq-table" aria-label={t($locale, 'dlq.title')}>
-        <thead>
-          <tr>
-            <th class="dlq-checkbox-cell">
-              <input
-                type="checkbox"
-                checked={allVisibleSelected}
-                indeterminate={someVisibleSelected}
-                on:change={toggleAllVisible}
-                aria-checked={someVisibleSelected
-                  ? 'mixed'
-                  : allVisibleSelected
-                    ? 'true'
-                    : 'false'}
-                aria-label={t($locale, 'dlq.selectAll')}
-              />
-            </th>
-            <th>{t($locale, 'common.when')}</th>
-            <th>{t($locale, 'dlq.pipeline')}</th>
-            <th>{t($locale, 'dlq.sourceQueue')}</th>
-            <th>{t($locale, 'common.reason')}</th>
-            <th>{t($locale, 'dlq.retries')}</th>
-            <th><span class="sr-only">{t($locale, 'common.actions')}</span></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each filtered as e (e.id)}
-            {@const pipeName = pipelineLabelOrDeleted(e.pipeline_id, pipelineMap, deletedLabel)}
-            {@const relWhen = formatRelative(e.created_at, $locale)}
-            <tr class:dlq-selected={selected.has(e.id)} aria-selected={selected.has(e.id)}>
-              <td class="dlq-checkbox-cell">
-                <input
-                  type="checkbox"
-                  checked={selected.has(e.id)}
-                  on:change={() => toggleOne(e.id)}
-                  on:click|stopPropagation
-                  aria-label="{t($locale, 'dlq.selectRow')} {e.id}"
-                />
-              </td>
-              <!--
-                Single row-trigger button: it owns the row's "open detail"
-                affordance for both mouse and keyboard. Its accessible
-                name folds in pipeline name + reason so a screen-reader
-                user hears the row context in one announcement instead
-                of tabbing through three redundant buttons.
-
-                Display: the absolute timestamp is the title attribute
-                so a hover reveals exact precision while the visible
-                line shows the friendlier "2 minutes ago" form. Both
-                are kept in the <time datetime=...> for screen readers.
-              -->
-              <td style="color: var(--text-muted)">
-                <button
-                  class="dlq-row-button"
-                  type="button"
-                  on:click={() => openDetail(e)}
-                  aria-label="{t($locale, 'dlq.detail.viewRow')} — {pipeName}, {e.created_at}, {e.error_reason}"
-                >
-                  <time datetime={e.created_at} title={e.created_at}>
-                    {#if relWhen}
-                      <span class="dlq-when-rel">{relWhen}</span>
-                      <span class="dlq-when-abs">{e.created_at}</span>
-                    {:else}
-                      <span>{e.created_at}</span>
-                    {/if}
-                  </time>
-                </button>
-              </td>
-              <td style="color: var(--text)" title={e.pipeline_id ?? ''}>{pipeName}</td>
-              <td style="color: var(--text-muted)">{e.source_queue || '—'}</td>
-              <td style="color: var(--text)">{e.error_reason}</td>
-              <td>
-                <!--
-                  Retry pill: when the row has been retried at least
-                  once, render a small badge with the count + a refresh
-                  glyph so the operator can spot retry-heavy rows at
-                  a glance. The backend MaxRetries is configured
-                  globally (server side), so there's no per-entry
-                  denominator to render — "Retry 2" reads honestly.
-                -->
-                {#if e.retry_count > 0}
-                  <span class="dlq-retry-pill" title={e.last_retry_at ?? ''}>
-                    <RefreshCw size={11} aria-hidden="true" />
-                    {t($locale, 'dlq.row.retryBadge').replace('{n}', String(e.retry_count))}
-                  </span>
-                {:else}
-                  <Badge variant="neutral">0</Badge>
-                {/if}
-              </td>
-              <td>
-                <div class="flex gap-2 justify-end">
-                  <Button variant="ghost" on:click={() => retry(e.id)}>
-                    {t($locale, 'common.retry')}
-                  </Button>
-                  <Button variant="outline" on:click={() => askRemove(e.id)}>
-                    {t($locale, 'common.delete')}
+        <div class="cluster-list" aria-label="Clusters">
+          {#if clustersLoading && clusters.length === 0}
+            <Skeleton height="64px" />
+            <Skeleton height="64px" />
+            <Skeleton height="64px" />
+          {:else if clusters.length === 0}
+            <Card>
+              {#if hasClusterFilters}
+                <p class="cluster-empty-title">
+                  {t($locale, 'dlq.clusters.empty.filtered.title')}
+                </p>
+                <p class="cluster-empty-body">
+                  {t($locale, 'dlq.clusters.empty.filtered.body')}
+                </p>
+                <div class="cluster-empty-actions">
+                  <Button variant="outline" on:click={resetClusterFilters}>
+                    {t($locale, 'dlq.clusters.empty.filtered.reset')}
                   </Button>
                 </div>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+              {:else}
+                <p class="cluster-empty-title">
+                  {t($locale, 'dlq.clusters.empty.title')}
+                </p>
+                <p class="cluster-empty-body">
+                  {t($locale, 'dlq.clusters.empty.body')}
+                </p>
+              {/if}
+            </Card>
+          {:else}
+            {#each clusters as cluster (cluster.fingerprint)}
+              <ClusterCard
+                {cluster}
+                selected={selectedCluster?.fingerprint === cluster.fingerprint}
+                on:select={selectCluster}
+              />
+            {/each}
+          {/if}
+        </div>
+      </aside>
 
-      {#if pages > 1}
-        <div class="flex items-center justify-between mt-4">
-          <span class="text-xs" style="color: var(--text-muted)">
-            {pageNum} / {pages} · {total}
+      <!-- ── Center pane: cluster detail ── -->
+      <section class="cluster-center" aria-label="Cluster detail">
+        {#if selectedCluster}
+          <ClusterDetail
+            cluster={selectedCluster}
+            representative={representativeEntry}
+            {recentEntries}
+            selectedEntryId={selectedEntry?.id ?? null}
+            {pipelineMap}
+            {deletedLabel}
+            on:selectEntry={selectTimelineEntry}
+          />
+        {:else if clusters.length === 0 && !clustersLoading}
+          <EmptyState
+            illustration="dlq"
+            title={t($locale, 'empty.dlq.title')}
+            body={t($locale, 'empty.dlq.body')}
+          />
+        {:else}
+          <Card>
+            <p class="cluster-empty-title">
+              {t($locale, 'dlq.clusters.empty.selected.title')}
+            </p>
+            <p class="cluster-empty-body">
+              {t($locale, 'dlq.clusters.empty.selected.body')}
+            </p>
+          </Card>
+        {/if}
+      </section>
+
+      <!-- ── Right pane: action drawer ── -->
+      <aside class="cluster-right" aria-label="Action drawer">
+        <ActionDrawer
+          entry={selectedEntry}
+          {otherRecentIds}
+          {replaySim}
+          diff={diffResult}
+          {busySim}
+          {busyDiff}
+          bind:compareId
+          on:runReplaySim={onRunReplaySim}
+          on:pickCompare={onPickCompare}
+          on:retry={onDrawerRetry}
+          on:askDelete={onDrawerAskDelete}
+        />
+      </aside>
+    </div>
+  {:else}
+    <!-- ─── ALL ENTRIES TAB (legacy flat list) ───────────────── -->
+    <div role="tabpanel" aria-label="All entries" class="space-y-6">
+      {#if listError}
+        <Alert variant="error" dismissible on:dismiss={() => (listError = '')}>
+          {listError}
+        </Alert>
+      {/if}
+
+      <!-- Filters -->
+      <section aria-label={t($locale, 'dlq.filters')}>
+        <Card>
+          <div class="dlq-filters">
+            <div class="dlq-filter-field">
+              <Select
+                bind:value={filterPipeline}
+                options={pipelineOptions}
+                label={t($locale, 'dlq.filter.pipeline')}
+              />
+            </div>
+            <div class="dlq-filter-field">
+              <Input
+                bind:value={filterError}
+                label={t($locale, 'dlq.filter.error')}
+                placeholder={t($locale, 'dlq.filter.errorPlaceholder')}
+              />
+            </div>
+            <div class="dlq-filter-field">
+              <Select
+                bind:value={filterWindow}
+                options={windowOptions}
+                label={t($locale, 'dlq.filter.window')}
+              />
+            </div>
+            {#if anyFilter}
+              <div class="dlq-filter-field dlq-filter-clear">
+                <Button variant="ghost" on:click={clearFilters}>
+                  {t($locale, 'dlq.filter.clear')}
+                </Button>
+              </div>
+            {/if}
+          </div>
+        </Card>
+      </section>
+
+      <!-- Top error patterns -->
+      {#if groups.length > 0}
+        <section class="dlq-groups" aria-label="DLQ top error patterns">
+          <header class="dlq-groups-header">
+            <h2>Top error patterns</h2>
+            <span class="dlq-groups-hint">click to filter</span>
+          </header>
+          <ul class="dlq-groups-list">
+            {#each groups as g}
+              <li>
+                <button
+                  type="button"
+                  class="dlq-group-pill"
+                  on:click={() => adoptGroupAsFilter(g.pattern.slice(0, 40))}
+                >
+                  <span class="dlq-group-pattern" title={g.pattern}>{g.pattern}</span>
+                  <Badge variant="neutral">{g.count}</Badge>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
+
+      <!-- Bulk action bar -->
+      {#if selected.size > 0}
+        <section class="dlq-bulk-bar" aria-label={t($locale, 'dlq.bulk.region')}>
+          <span class="dlq-bulk-count" aria-live="polite">
+            <Badge variant="neutral">{selected.size}</Badge>
+            {t($locale, 'dlq.bulk.selected')}
           </span>
           <div class="flex gap-2">
-            <Button
-              variant="ghost"
-              disabled={pageNum <= 1}
-              on:click={() => {
-                pageNum--;
-                refresh();
-              }}
-            >
-              {t($locale, 'common.previous')}
+            <Button variant="ghost" on:click={() => (selected = new Set())}>
+              {t($locale, 'dlq.bulk.clear')}
             </Button>
-            <Button
-              variant="ghost"
-              disabled={pageNum >= pages}
-              on:click={() => {
-                pageNum++;
-                refresh();
-              }}
-            >
-              {t($locale, 'common.next')}
+            <Button variant="outline" on:click={askBulkDelete}>
+              {t($locale, 'dlq.bulk.deleteAll')}
             </Button>
+            <Button on:click={askBulkRetry}>{t($locale, 'dlq.bulk.retryAll')}</Button>
           </div>
-        </div>
+        </section>
+      {:else if filterActive && total > entries.length}
+        <section class="dlq-bulk-bar" aria-label="Bulk on filter">
+          <span class="dlq-bulk-count" aria-live="polite">
+            <Badge variant="neutral">{total}</Badge>
+            rows match this filter — apply to all?
+          </span>
+          <div class="flex gap-2">
+            <Button variant="outline" on:click={askBulkDeleteMatching}>
+              Delete all matching
+            </Button>
+            <Button on:click={askBulkRetryMatching}>Retry all matching</Button>
+          </div>
+        </section>
       {/if}
-    {/if}
-  </Card>
+
+      <Card>
+        {#if entries.length === 0}
+          <EmptyState
+            illustration="dlq"
+            title={t($locale, 'empty.dlq.title')}
+            body={t($locale, 'empty.dlq.body')}
+          >
+            <svelte:fragment slot="helper">
+              <a class="dlq-empty-link" href="/metrics">
+                {t($locale, 'empty.dlq.subtitle')}
+              </a>
+            </svelte:fragment>
+          </EmptyState>
+        {:else if filtered.length === 0}
+          <p style="color: var(--text-muted)">{t($locale, 'dlq.emptyFiltered')}</p>
+        {:else}
+          <table class="table dlq-table" aria-label={t($locale, 'dlq.title')}>
+            <thead>
+              <tr>
+                <th class="dlq-checkbox-cell">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    indeterminate={someVisibleSelected}
+                    on:change={toggleAllVisible}
+                    aria-checked={someVisibleSelected
+                      ? 'mixed'
+                      : allVisibleSelected
+                        ? 'true'
+                        : 'false'}
+                    aria-label={t($locale, 'dlq.selectAll')}
+                  />
+                </th>
+                <th>{t($locale, 'common.when')}</th>
+                <th>{t($locale, 'dlq.pipeline')}</th>
+                <th>{t($locale, 'dlq.sourceQueue')}</th>
+                <th>{t($locale, 'common.reason')}</th>
+                <th>{t($locale, 'dlq.retries')}</th>
+                <th><span class="sr-only">{t($locale, 'common.actions')}</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each filtered as e (e.id)}
+                {@const pipeName = pipelineLabelOrDeleted(
+                  e.pipeline_id,
+                  pipelineMap,
+                  deletedLabel
+                )}
+                {@const relWhen = formatRelative(e.created_at, $locale)}
+                <tr class:dlq-selected={selected.has(e.id)} aria-selected={selected.has(e.id)}>
+                  <td class="dlq-checkbox-cell">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(e.id)}
+                      on:change={() => toggleOne(e.id)}
+                      on:click|stopPropagation
+                      aria-label="{t($locale, 'dlq.selectRow')} {e.id}"
+                    />
+                  </td>
+                  <td style="color: var(--text-muted)">
+                    <button
+                      class="dlq-row-button"
+                      type="button"
+                      on:click={() => openDetail(e)}
+                      aria-label="{t(
+                        $locale,
+                        'dlq.detail.viewRow'
+                      )} — {pipeName}, {e.created_at}, {e.error_reason}"
+                    >
+                      <time datetime={e.created_at} title={e.created_at}>
+                        {#if relWhen}
+                          <span class="dlq-when-rel">{relWhen}</span>
+                          <span class="dlq-when-abs">{e.created_at}</span>
+                        {:else}
+                          <span>{e.created_at}</span>
+                        {/if}
+                      </time>
+                    </button>
+                  </td>
+                  <td style="color: var(--text)" title={e.pipeline_id ?? ''}>{pipeName}</td>
+                  <td style="color: var(--text-muted)">{e.source_queue || '—'}</td>
+                  <td style="color: var(--text)">{e.error_reason}</td>
+                  <td>
+                    {#if e.retry_count > 0}
+                      <span class="dlq-retry-pill" title={e.last_retry_at ?? ''}>
+                        <RefreshCw size={11} aria-hidden="true" />
+                        {t($locale, 'dlq.row.retryBadge').replace(
+                          '{n}',
+                          String(e.retry_count)
+                        )}
+                      </span>
+                    {:else}
+                      <Badge variant="neutral">0</Badge>
+                    {/if}
+                  </td>
+                  <td>
+                    <div class="flex gap-2 justify-end">
+                      <Button variant="ghost" on:click={() => retry(e.id)}>
+                        {t($locale, 'common.retry')}
+                      </Button>
+                      <Button variant="outline" on:click={() => askRemove(e.id)}>
+                        {t($locale, 'common.delete')}
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+
+          {#if pages > 1}
+            <div class="flex items-center justify-between mt-4">
+              <span class="text-xs" style="color: var(--text-muted)">
+                {pageNum} / {pages} · {total}
+              </span>
+              <div class="flex gap-2">
+                <Button
+                  variant="ghost"
+                  disabled={pageNum <= 1}
+                  on:click={() => {
+                    pageNum--;
+                    refresh();
+                  }}
+                >
+                  {t($locale, 'common.previous')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={pageNum >= pages}
+                  on:click={() => {
+                    pageNum++;
+                    refresh();
+                  }}
+                >
+                  {t($locale, 'common.next')}
+                </Button>
+              </div>
+            </div>
+          {/if}
+        {/if}
+      </Card>
+    </div>
+  {/if}
 </div>
 
-<!-- ─── Per-row delete confirm ──────────────────────────────────── -->
+<!-- ─── Per-row delete confirm (shared between drawer + flat list) ── -->
 <Dialog
   open={pendingDeleteId !== null}
   title={t($locale, 'common.confirmDelete')}
@@ -818,7 +1221,7 @@
   <p>{t($locale, 'dlq.delete.confirm')}</p>
 </Dialog>
 
-<!-- ─── Bulk confirm ────────────────────────────────────────────── -->
+<!-- ─── Bulk confirm (All entries tab only) ────────────────────── -->
 <Dialog
   open={bulkAction !== null}
   title={t($locale, 'common.confirmDelete')}
@@ -840,19 +1243,12 @@
   </p>
 </Dialog>
 
-<!-- ─── Detail drawer ───────────────────────────────────────────── -->
-<!--
-  Escape + Tab trap live on a single window listener so the handler
-  fires regardless of which element inside the drawer has focus.
-  Guarded by `viewing` inside onDrawerKey.
--->
+<!-- ─── Legacy detail drawer (All entries tab) ─────────────────── -->
 <svelte:window on:keydown={onDrawerKey} />
 
 {#if viewing}
   {@const decoded = decodePayload(viewing.original_msg)}
   {@const viewingId = viewing.id}
-  <!-- Scrim — visual-only, click closes. aria-hidden because the
-       dialog itself carries all semantics. -->
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="dlq-scrim" aria-hidden="true" on:click={closeDetail}></div>
@@ -864,13 +1260,10 @@
     aria-labelledby="dlq-detail-title"
   >
     <div class="dlq-drawer-head">
-      <!--
-        Drawer title shows the human pipeline name; the source queue
-        becomes the subtitle. Raw pipeline UUID moves into the meta
-        block below where copy-by-id is the explicit affordance.
-      -->
       <div>
-        <p id="dlq-detail-title" class="section-heading">{t($locale, 'dlq.detail.title')}</p>
+        <p id="dlq-detail-title" class="section-heading">
+          {t($locale, 'dlq.detail.title')}
+        </p>
         <p class="dlq-drawer-subtitle">
           <span class="dlq-drawer-pipe" title={viewing.pipeline_id ?? ''}>
             {pipelineLabelOrDeleted(viewing.pipeline_id, pipelineMap, deletedLabel)}
@@ -897,9 +1290,9 @@
         {#if viewing.last_retry_at}
           <div class="dlq-meta-row">
             <span class="dlq-meta-label">{t($locale, 'dlq.detail.lastRetry')}</span>
-            <time class="dlq-meta-value" datetime={viewing.last_retry_at}
-              >{viewing.last_retry_at}</time
-            >
+            <time class="dlq-meta-value" datetime={viewing.last_retry_at}>
+              {viewing.last_retry_at}
+            </time>
           </div>
         {/if}
         <div class="dlq-meta-row">
@@ -932,8 +1325,6 @@
             </Button>
           </div>
         </div>
-        <!-- aria-live region for the copy confirmation. Visual badge
-             above is for sighted users; this is the SR equivalent. -->
         <span class="sr-only" aria-live="polite">
           {copied ? t($locale, 'dlq.detail.copied') : ''}
         </span>
@@ -942,12 +1333,6 @@
             {t($locale, 'dlq.detail.binary')}
           </p>
         {/if}
-        <!-- role="region" + tabindex="0" gives keyboard users a focus
-             stop so they can scroll the payload with arrow keys / Page
-             Up/Down; SRs announce it as a labelled landmark. The lint
-             rule fires on the <pre> element type regardless of the
-             explicit role — a scrollable labelled region is a valid
-             tab stop per WAI-ARIA APG. -->
         <!-- svelte-ignore a11y-no-noninteractive-tabindex -->
         <pre
           class="dlq-payload"
@@ -968,11 +1353,135 @@
 {/if}
 
 <style>
+  .dlq-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    /* The cluster console fills the available width — wider than the
+       6xl cap on the legacy page because we now show three columns
+       side-by-side instead of one column. */
+    max-width: 1600px;
+  }
+
+  /* ─── Tab strip ───────────────────────────────────────────────
+     Bottom-border on active, soft underline on hover. The badge is
+     inline so the active tab carries its own count. */
+  .dlq-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 1.5rem;
+    border-block-end: 1px solid var(--border);
+    margin-block-end: 0.25rem;
+  }
+  .dlq-tab {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    padding-block: 0.625rem;
+    padding-inline: 0.125rem;
+    margin-block-end: -1px;
+    border-block-end: 2px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: color 120ms ease, border-color 120ms ease;
+  }
+  .dlq-tab:hover {
+    color: var(--text);
+    border-block-end-color: var(--border-strong);
+  }
+  .dlq-tab.is-active {
+    color: var(--text);
+    border-block-end-color: var(--accent);
+  }
+  .dlq-tab:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* ─── Cluster console grid ─────────────────────────────────────
+     Three columns: 300 (cluster list) | 1fr (detail) | 360 (drawer).
+     Collapses to a single column under the breakpoint so the page
+     stays usable on narrow viewports — at that width the operator
+     gets the list first, then detail, then drawer, scrolled. */
+  .cluster-console {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr) 360px;
+    gap: 1rem;
+    align-items: start;
+  }
+  @media (max-width: 1200px) {
+    .cluster-console {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  .cluster-left {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-inline-size: 0;
+  }
+  .cluster-center {
+    min-inline-size: 0;
+  }
+  .cluster-right {
+    min-inline-size: 0;
+  }
+
+  /* Filter row — stacks under the breakpoint. */
+  .cluster-filter-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+  .cluster-filter-reset {
+    margin-block-start: 0.5rem;
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .cluster-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    max-block-size: calc(100vh - 22rem);
+    overflow-y: auto;
+    /* Keep the scrollbar gutter reserved so a card hover doesn't
+       shift the rest of the list as a scrollbar appears. */
+    scrollbar-gutter: stable;
+    padding-inline-end: 0.25rem;
+  }
+
+  .cluster-empty-title {
+    margin: 0;
+    color: var(--text);
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  .cluster-empty-body {
+    margin: 0.25rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.5;
+  }
+  .cluster-empty-actions {
+    margin-block-start: 0.5rem;
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  /* ─── All entries tab styles (preserved from the legacy page) ─── */
   td:last-child {
     text-align: end;
   }
 
-  /* ─── Filter bar ─────────────────────────────────────────────── */
   .dlq-filters {
     display: grid;
     grid-template-columns: 1fr;
@@ -991,7 +1500,6 @@
     align-self: end;
   }
 
-  /* ─── Bulk action bar ───────────────────────────────────────── */
   .dlq-bulk-bar {
     display: flex;
     align-items: center;
@@ -1010,7 +1518,6 @@
     font-size: 14px;
   }
 
-  /* ─── Top error patterns panel ──────────────────────────────── */
   .dlq-groups {
     display: flex;
     flex-direction: column;
@@ -1070,19 +1577,6 @@
     font-size: 13px;
   }
 
-  /* ─── Table ──────────────────────────────────────────────────── */
-  /*
-   * Row-level virtualization via the browser. content-visibility: auto
-   * lets the engine skip layout + paint for rows outside the viewport;
-   * contain-intrinsic-size reserves the right height so the scrollbar
-   * doesn't jump as rows scroll into view. Together they keep DLQ snappy
-   * up to a few thousand rows without a windowing library.
-   *
-   * For datasets beyond what content-visibility comfortably handles
-   * (~5–10k rows), the proper fix is the VirtualTable component in
-   * lib/components/VirtualTable.svelte. The pagination cap (per_page
-   * <= 500) keeps us well below that here.
-   */
   .dlq-table tbody tr {
     content-visibility: auto;
     contain-intrinsic-size: auto 48px;
@@ -1095,26 +1589,13 @@
     accent-color: var(--primary);
     cursor: pointer;
   }
-  /*
-   * Selected-row indicator: 14% gold tint gets us above the 3:1 non-text
-   * contrast threshold vs. the unselected row; the inset stripe is a
-   * second, redundant cue for low-vision users. Logical inset so the
-   * stripe flips to the trailing edge under RTL.
-   */
   .dlq-selected {
     background: color-mix(in srgb, var(--primary) 14%, transparent);
     box-shadow: inset 3px 0 0 var(--primary);
   }
-  /* :global is required: [dir] is on <html>, outside this component's
-     scope, so Svelte's scoped CSS otherwise drops the rule. */
   :global([dir='rtl']) .dlq-selected {
     box-shadow: inset -3px 0 0 var(--primary);
   }
-  /*
-   * Make the timestamp / pipeline / reason cells act as the row-detail
-   * trigger. Kept as <button> children rather than a row-level click
-   * so checkbox + action buttons remain independently clickable.
-   */
   .dlq-row-button {
     background: transparent;
     border: none;
@@ -1131,16 +1612,6 @@
     text-underline-offset: 3px;
   }
 
-  /* ─── "when" cell — relative time + absolute timestamp ────────
-     Layout: the relative form is the headline ("2 minutes ago"),
-     with the absolute timestamp tucked underneath in monospace
-     muted text. The full title= attribute on the <time> still
-     reveals exact ISO on hover for power users.
-
-     Slight font shift: relative uses the row body face for
-     scannability; absolute switches to monospace so timestamps
-     vertically align across rows even when they straddle a
-     digit-width boundary. */
   .dlq-when-rel {
     display: block;
     color: var(--text);
@@ -1156,11 +1627,6 @@
     margin-block-start: 2px;
   }
 
-  /* ─── retry pill ────────────────────────────────────────────
-     Labelled chip ("Retry 2") with a small refresh glyph. Soft
-     warning tint matches the existing failure-rate pills on the
-     /metrics page so retry-heavy rows read the same on both
-     surfaces. */
   .dlq-retry-pill {
     display: inline-flex;
     align-items: center;
@@ -1176,10 +1642,6 @@
     line-height: 1.3;
   }
 
-  /* ─── empty-state subtitle link ────────────────────────────
-     Sits in the EmptyState helper slot. Underline-on-hover only
-     so the resting state stays soft — the eye should land on the
-     headline first, then drift to the link. */
   .dlq-empty-link {
     color: var(--text-muted);
     text-decoration: none;
@@ -1192,7 +1654,7 @@
     border-block-end-color: var(--border-strong, var(--border));
   }
 
-  /* ─── Detail drawer ─────────────────────────────────────────── */
+  /* ─── Detail drawer (legacy) ─────────────────────────────────── */
   .dlq-scrim {
     position: fixed;
     inset: 0;
@@ -1220,8 +1682,6 @@
     padding: 16px 20px;
     border-bottom: 1px solid var(--border);
   }
-  /* Drawer subtitle: pipeline name first (carries the eye), then
-     a dot separator, then the source queue in monospace. */
   .dlq-drawer-subtitle {
     display: flex;
     align-items: center;
