@@ -26,6 +26,46 @@ This section accumulates changes between tagged releases. Move entries into a ne
 
 ---
 
+## 1.7.1 — Kafka sampler fix + dependency sweep — 2026-08-10
+
+### Fixed
+
+- **`pipeline`: skip depth sampler for Kafka sources.** The periodic depth sampler was invoking a metadata call that the Kafka connector does not implement, producing a recurring `not supported` warn line with no useful telemetry attached. The sampler now short-circuits when the source connector is Kafka; RabbitMQ and IBM MQ paths are unchanged and continue to report queue depth.
+
+### Security — Go modules
+
+Upstream patch releases with security fixes:
+
+- `golang.org/x/crypto` 0.49.0 → 0.52.0 (SSH source-address critical-option bypass; channel-response deadlock; incorrect operator order)
+- `golang.org/x/net` 0.52.0 → 0.55.0 (html: escape greater-than in doctype identifiers; foreign-content render fix; Noah's Ark clause performance)
+- `google.golang.org/grpc` 1.80.0 → 1.82.1 (grpc-go security release)
+- Transitive: `x/sys` 0.42.0 → 0.45.0, `x/text` 0.35.0 → 0.37.0, `genproto/googleapis/{api,rpc}` refreshed to 2026-04-14
+
+### Changed — Frontend build toolchain
+
+Coordinated major-version bump of the Vite / Vitest / Svelte-plugin stack. **No source changes were required** — the SvelteKit boundary absorbed the internal Vite churn.
+
+- `vite` 7.3.3 → 8.2.1
+- `vitest` + `@vitest/ui` 3.2.4 → 4.1.10
+- `@sveltejs/vite-plugin-svelte` 6.2.4 → 7.3.0
+- `@sveltejs/kit` 2.60.1 → 2.70.2
+- `postcss` 8.4.47 → 8.5.26 (fixes visitor-API regression introduced in 8.5.17)
+- `form-data` 4.0.5 → 4.0.6 (transitive via jsdom; lockfile-only)
+
+`npm audit` now reports **0 vulnerabilities** (was 7 before the sweep).
+
+### Verification
+
+- `go test ./...` — every package passes
+- `svelte-check` — 0 errors, 0 warnings
+- `npm run build` — clean (5.2 s)
+- `vitest` — 259 / 259 tests pass across 51 files
+- `./scripts/build.sh` — single-binary build succeeds
+
+### No breaking changes
+
+---
+
 ## 1.7.0 — Observability Drilldown + Explainers + SLO evaluator — 2026-05-26
 
 ### Added — Operator experience
